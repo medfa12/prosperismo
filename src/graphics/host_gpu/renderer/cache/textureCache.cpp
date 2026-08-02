@@ -1771,6 +1771,115 @@ void TextureCache::DownloadImage(ImageId id) {
 	m_scheduler.DrainPriorityOperations();
 }
 
+TextureCache::DebugImageByteStats TextureCache::DebugDownloadByteStats(ImageId id) {
+	DebugImageByteStats stats {};
+	auto measure = [&stats](const uint8_t* begin, uint64_t size) {
+		stats.valid = true;
+		stats.size  = size;
+		stats.hash  = 1469598103934665603ull;
+		for (uint64_t i = 0; i < size; i++) {
+			stats.nonzero_bytes += begin[i] != 0 ? 1u : 0u;
+			stats.hash ^= begin[i];
+			stats.hash *= 1099511628211ull;
+		}
+	};
+	auto&      image = GetImage(id);
+	const auto range = image.info.data;
+	if (!range.Valid()) {
+		return stats;
+	}
+	if (image.backing.image == nullptr || image.backing.samples != 1 ||
+	    image.backing.format == vk::Format::eUndefined) {
+		return stats;
+	}
+	const auto block_extent = vk::blockExtent(image.backing.format);
+	const auto block_bytes  = vk::blockSize(image.backing.format);
+	if (block_extent[0] == 0 || block_extent[1] == 0 || block_bytes == 0) {
+		return stats;
+	}
+	const uint64_t blocks_x =
+	    (image.backing.extent.width + block_extent[0] - 1u) / block_extent[0];
+	const uint64_t blocks_y =
+	    (image.backing.extent.height + block_extent[1] - 1u) / block_extent[1];
+	if (blocks_x == 0 || blocks_y > UINT64_MAX / blocks_x ||
+	    blocks_x * blocks_y > UINT64_MAX / block_bytes) {
+		return stats;
+	}
+	const uint64_t size   = blocks_x * blocks_y * block_bytes;
+	auto [mapped, offset] = MapDownload(size, std::max<uint64_t>(block_bytes, 4u));
+	auto& download        = m_buffer_cache.GetUtilityBuffer(MemoryUsage::Download);
+	vk::BufferImageCopy copy {};
+	copy.bufferOffset     = offset;
+	copy.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+	copy.imageExtent      = image.backing.extent;
+	image.Download(std::span<const vk::BufferImageCopy>(&copy, 1), download.Handle(), offset, size);
+	m_scheduler.FinishCurrent();
+	download.Invalidate(offset, size);
+	measure(mapped, size);
+	if (image.backing.format == vk::Format::eR16G16B16A16Sfloat &&
+	    size == static_cast<uint64_t>(image.backing.extent.width) *
+	                image.backing.extent.height * 8u) {
+		for (uint32_t y = 0; y < image.backing.extent.height; y++) {
+			for (uint32_t x = 0; x < image.backing.extent.width; x++) {
+				uint16_t pixel[4] {};
+				std::memcpy(pixel,
+				            mapped + (static_cast<uint64_t>(y) * image.backing.extent.width + x) * 8u,
+				            sizeof(pixel));
+				const bool rgb = (pixel[0] & 0x7fffu) != 0 || (pixel[1] & 0x7fffu) != 0 ||
+				                 (pixel[2] & 0x7fffu) != 0;
+				if (rgb) {
+					stats.rgb_nonzero_pixels++;
+					stats.rgb_min_x = std::min(stats.rgb_min_x, x);
+					stats.rgb_min_y = std::min(stats.rgb_min_y, y);
+					stats.rgb_max_x = std::max(stats.rgb_max_x, x);
+					stats.rgb_max_y = std::max(stats.rgb_max_y, y);
+				}
+				stats.alpha_nonzero_pixels += (pixel[3] & 0x7fffu) != 0 ? 1u : 0u;
+			}
+		}
+	}
+	return stats;
+}
+
+std::vector<uint32_t> TextureCache::DebugDownloadBufferWords(vk::Buffer source,
+                                                             uint64_t source_offset,
+                                                             uint64_t size) {
+	std::vector<uint32_t> words;
+	if (size == 0 || (size % 4u) != 0 || source == nullptr) {
+		return words;
+	}
+	auto [mapped, offset] = MapDownload(size, 4);
+	auto& download        = m_buffer_cache.GetUtilityBuffer(MemoryUsage::Download);
+	m_scheduler.EndRendering();
+	auto command = m_scheduler.Current().Handle();
+	VulkanMemoryBarrier before {};
+	before.sType         = vk::StructureType::eMemoryBarrier;
+	before.srcAccessMask = vk::AccessFlagBits::eMemoryWrite | vk::AccessFlagBits::eShaderWrite;
+	before.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+	command.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+	                        vk::PipelineStageFlagBits::eTransfer, {}, 1, &before, 0, nullptr, 0,
+	                        nullptr);
+	const vk::BufferCopy copy {source_offset, offset, size};
+	command.copyBuffer(source, download.Handle(), 1, &copy);
+	vk::BufferMemoryBarrier after {};
+	after.sType               = vk::StructureType::eBufferMemoryBarrier;
+	after.srcAccessMask       = vk::AccessFlagBits::eTransferWrite;
+	after.dstAccessMask       = vk::AccessFlagBits::eHostRead;
+	after.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	after.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	after.buffer              = download.Handle();
+	after.offset              = offset;
+	after.size                = size;
+	command.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+	                        vk::PipelineStageFlagBits::eHost, {}, 0, nullptr, 1, &after, 0,
+	                        nullptr);
+	m_scheduler.FinishCurrent();
+	download.Invalidate(offset, size);
+	words.resize(size / 4u);
+	std::memcpy(words.data(), mapped, size);
+	return words;
+}
+
 bool TextureCache::InvalidateMemoryFromGPU(uint64_t address, uint64_t size,
                                            bool formatted_buffer_write) {
 	if (!GuestRange {address, size}.Valid()) {

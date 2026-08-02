@@ -1428,6 +1428,98 @@ bool RenderExecutor::TryExecuteGeometryReplayDraw(uint64_t submit_id, RenderComm
 	const DrawIndexBufferSource index_source {};
 	ExecutePreparedDraw(submit_id, buffer, draw, state, vk::PrimitiveTopology::eTriangleList, emit,
 	                    index_source, false, false, false);
+	// Falsification probe: read the replay draw's color target back and count
+	// nonzero RGB pixels, so replay output can be separated from later writers.
+	if (const auto* probe = std::getenv("PROSPERISMO_TRACE_REPLAY_RT");
+	    probe != nullptr && std::strcmp(probe, "1") == 0 && state.color_count != 0 &&
+	    state.color_info[0].image_id) {
+		static std::atomic<uint32_t> probe_count {0};
+		const auto sample = probe_count.fetch_add(1, std::memory_order_relaxed);
+		if (sample < 4 || sample % 512u == 0) {
+			auto& texture_cache = m_context.GetTextureCache();
+			const auto stats =
+			    texture_cache.DebugDownloadByteStats(state.color_info[0].image_id);
+			LOGF("GeometryReplayTarget: sample=%u addr=0x%010" PRIx64 " extent=%ux%u fmt=%d "
+			     "size=%" PRIu64 " nonzero_bytes=%" PRIu64 " hash=0x%016" PRIx64
+			     " valid=%s rgb_pixels=%" PRIu64 " alpha_pixels=%" PRIu64
+			     " rgb_bbox=%u,%u-%u,%u\n",
+			     sample, state.color_info[0].base_addr, state.color_info[0].extent.width,
+			     state.color_info[0].extent.height, static_cast<int>(state.color_info[0].format),
+			     stats.size, stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false",
+			     stats.rgb_nonzero_pixels, stats.alpha_nonzero_pixels, stats.rgb_min_x,
+			     stats.rgb_min_y, stats.rgb_max_x, stats.rgb_max_y);
+			const uint64_t block_words =
+			    ShaderRecompiler::IR::GeometryReplayLayout::HeaderDwords + layout.BlockStride();
+			const auto words = texture_cache.DebugDownloadBufferWords(
+			    replay_handle, 0, block_words * 4ull);
+			if (words.size() == block_words) {
+				const auto* base = words.data() + ShaderRecompiler::IR::GeometryReplayLayout::HeaderDwords;
+				uint32_t live_prims = 0;
+				for (uint32_t i = 0; i < layout.primitive_slots; i++) {
+					live_prims += base[layout.PrimitiveOffset() + i] != 0x80000000u ? 1u : 0u;
+				}
+				uint32_t nonzero_pos = 0;
+				for (uint32_t i = 0; i < layout.vertex_slots; i++) {
+					const auto* p = base + layout.PositionOffset() + i * 4u;
+					nonzero_pos += (p[0] | p[1] | p[2] | p[3]) != 0 ? 1u : 0u;
+				}
+				auto f = [&](uint32_t w) {
+					float v = 0;
+					std::memcpy(&v, &w, 4);
+					return v;
+				};
+				LOGF("GeometryReplayBuffer: sample=%u header=%u,%u,%u,%u counts=0x%08x,0x%08x "
+				     "live_prims=%u/%u nonzero_pos=%u/%u prim0=0x%08x prim1=0x%08x "
+				     "pos0=%g,%g,%g,%g pos1=%g,%g,%g,%g\n",
+				     sample, words[0], words[1], words[2], words[3],
+				     base[layout.CountsOffset()], base[layout.CountsOffset() + 1u], live_prims,
+				     layout.primitive_slots, nonzero_pos, layout.vertex_slots,
+				     base[layout.PrimitiveOffset()], base[layout.PrimitiveOffset() + 1u],
+				     f(base[0]), f(base[1]), f(base[2]), f(base[3]), f(base[4]), f(base[5]),
+				     f(base[6]), f(base[7]));
+			}
+			// Trace the guest-side gate: V#0 from the GS SRT table, and the
+			// float at record offset 0x2c that the GS requires to be > 0.
+			{
+				const uint64_t table = static_cast<uint64_t>(vertex_info.gs_user_sgpr.value[0]) |
+				                       (static_cast<uint64_t>(vertex_info.gs_user_sgpr.value[1])
+				                        << 32u);
+				uint32_t vsharp[4] = {};
+				bool     ok        = table != 0;
+				for (uint32_t i = 0; ok && i < 4; i++) {
+					ok = ShaderReadMappedGuestDword(nullptr, table + i * 4ull, &vsharp[i]);
+				}
+				if (ok) {
+					const uint64_t rec_base =
+					    static_cast<uint64_t>(vsharp[0]) |
+					    ((static_cast<uint64_t>(vsharp[1]) & 0xffffull) << 32u);
+					const uint32_t stride      = (vsharp[1] >> 16u) & 0x3fffu;
+					const uint32_t num_records = vsharp[2];
+					auto           read_f32    = [&](uint64_t addr) {
+                        uint32_t w = 0;
+                        float    v = 0;
+                        if (ShaderReadMappedGuestDword(nullptr, addr, &w)) {
+                            std::memcpy(&v, &w, 4);
+                        }
+                        return v;
+					};
+					LOGF("GeometryReplayGate: sample=%u srt=0x%016" PRIx64 " base=0x%010" PRIx64
+					     " stride=%u records=%u gate[0..7]=%g,%g,%g,%g,%g,%g,%g,%g\n",
+					     sample, table, rec_base, stride, num_records,
+					     read_f32(rec_base + 0x2c), read_f32(rec_base + stride + 0x2c),
+					     read_f32(rec_base + 2ull * stride + 0x2c),
+					     read_f32(rec_base + 3ull * stride + 0x2c),
+					     read_f32(rec_base + 4ull * stride + 0x2c),
+					     read_f32(rec_base + 5ull * stride + 0x2c),
+					     read_f32(rec_base + 6ull * stride + 0x2c),
+					     read_f32(rec_base + 7ull * stride + 0x2c));
+				} else {
+					LOGF("GeometryReplayGate: sample=%u srt=0x%016" PRIx64 " unreadable\n", sample,
+					     table);
+				}
+			}
+		}
+	}
 	ResetBindings();
 	return true;
 }
