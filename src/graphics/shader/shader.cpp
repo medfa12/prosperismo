@@ -865,6 +865,8 @@ static void ShaderGetStaticInputInfoCS(const HW::ComputeShaderInfo& regs,
 	info.group_id[1]    = regs.cs_regs.tgid_y_en != 0;
 	info.group_id[2]    = regs.cs_regs.tgid_z_en != 0;
 	info.wave_size      = regs.cs_regs.wave_size;
+	info.lds_dword_count =
+	    regs.cs_regs.lds_size != 0 ? static_cast<uint32_t>(regs.cs_regs.lds_size) * 128u : 1024u;
 	info.thread_ids_num = regs.cs_regs.tidig_comp_cnt + 1;
 	info.tg_size_en     = regs.cs_regs.tg_size_en != 0;
 
@@ -1510,6 +1512,7 @@ bool ShaderCompileSpirvCS(const HW::ComputeShaderInfo& regs, const HW::ShaderReg
 	options.push_constant_offset = 0;
 	options.compute_input_info   = &input_info;
 	options.wave_size            = input_info.wave_size;
+	options.lds_dword_count      = input_info.lds_dword_count;
 	options.dump_ir              = ShaderRecompilerTextDumpEnabled();
 	options.early_dump           = options.dump_ir;
 	options.dump_label           = "ShaderRecompiler CS";
@@ -1673,6 +1676,7 @@ ShaderId ShaderGetIdCS(const HW::ComputeShaderInfo& regs, const ShaderComputeInp
 
 	ret.ids.push_back(input_info.workgroup_register);
 	ret.ids.push_back(input_info.wave_size);
+	ret.ids.push_back(input_info.lds_dword_count);
 	ret.ids.push_back(input_info.thread_ids_num);
 
 	for (int i = 0; i < 3; i++) {

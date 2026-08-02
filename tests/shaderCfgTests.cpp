@@ -137,6 +137,42 @@ uint32_t SpirvInstructionOpcodeCount(const std::vector<uint32_t>& binary, uint32
 	return count;
 }
 
+bool SpirvContainsArrayLength(const std::vector<uint32_t>& binary, uint32_t expected_length) {
+	auto ConstantValue = [&](uint32_t id, uint32_t* value) {
+		for (size_t i = 5; i < binary.size();) {
+			const uint32_t word       = binary[i];
+			const uint32_t op         = word & 0xffffu;
+			const uint32_t word_count = word >> 16u;
+			if (word_count == 0 || i + word_count > binary.size()) {
+				return false;
+			}
+			if (op == 43u && word_count >= 4u && binary[i + 2] == id) {
+				*value = binary[i + 3];
+				return true;
+			}
+			i += word_count;
+		}
+		return false;
+	};
+
+	for (size_t i = 5; i < binary.size();) {
+		const uint32_t word       = binary[i];
+		const uint32_t op         = word & 0xffffu;
+		const uint32_t word_count = word >> 16u;
+		if (word_count == 0 || i + word_count > binary.size()) {
+			return false;
+		}
+		if (op == 28u && word_count >= 4u) {
+			uint32_t length = 0;
+			if (ConstantValue(binary[i + 3], &length) && length == expected_length) {
+				return true;
+			}
+		}
+		i += word_count;
+	}
+	return false;
+}
+
 bool SpirvContainsAtomicWithScopeAndSemantics(const std::vector<uint32_t>& binary,
                                               uint32_t opcode, uint32_t scope,
                                               uint32_t semantics) {
@@ -5106,8 +5142,9 @@ void TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain() {
 	};
 
 	ShaderRecompiler::CompileOptions options;
-	options.stage   = ShaderType::Compute;
-	options.dump_ir = true;
+	options.stage           = ShaderType::Compute;
+	options.lds_dword_count = 3072;
+	options.dump_ir         = true;
 
 	ShaderRecompiler::CompileResult result;
 	std::string                     error;
@@ -5128,6 +5165,8 @@ void TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain() {
 	      "mixed LDS program does not contain the DS OpAtomicIAdd");
 	Check(SpirvContainsOpcode(result.spirv, 250),
 	      "ordinary LDS write is not guarded by the active EXEC mask");
+	Check(result.program.lds_dword_count == 3072 && SpirvContainsArrayLength(result.spirv, 3072),
+	      "declared 12-KiB LDS allocation was not preserved in SPIR-V");
 	CheckSpirvBinaryValidates(result.spirv);
 }
 

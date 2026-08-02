@@ -323,6 +323,7 @@ struct EmitterState {
 	const ShaderComputeInputInfo*                    compute_input_info = nullptr;
 	ShaderType                                       stage              = ShaderType::Unknown;
 	uint32_t                                         wave_size          = 64;
+	uint32_t                                         lds_dword_count    = 1024;
 	bool                                             exact_subgroup_operations    = false;
 	bool                                             per_invocation_masks         = false;
 	uint32_t                                         void_type                    = 0;

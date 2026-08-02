@@ -152,7 +152,7 @@ independent blockers before it could reach that boundary:
   unexecuted writer boundary; it is not yet proof that the draw itself would
   produce nonblack colour.
 - **CAPTURED -- the exact skipped merged ES/GS programs are retained:** run
-  `20260802-122955-native-ge-fixed-unmap` captured 224 bytes at
+  `20260802-125515-native-ge-target-state` captured 224 bytes at
   `es=0x500704F00`, 3,408 bytes at `gs=0x500705600`, and the complete launch
   state. The state confirms wave64, a three-primitive hardware group ceiling,
   an ESGS ring item size of four dwords, 216 maximum output vertices and 210
@@ -173,6 +173,25 @@ independent blockers before it could reach that boundary:
   primitive count and vertex count; the exact draw packet must still provide
   topology, index count, instance count and therefore the actual per-wave
   counts. No additional live ALU opcode hole is proven at this boundary.
+- **PACKET-MEASURED -- both observed launch shapes are required full-resolution
+  writers:** the pair is submitted as a point-list auto draw with one vertex and
+  one instance, and as a point-list indexed draw with one 16-bit index and 512
+  explicit instances. Both use `ps=0x500707600`, MRT mask `0x7`, and first write
+  the DCC-enabled `0x514080000` target before the same state appears at
+  `0x5168C0000`. `GE_CNTL=0x00003003` enables multiple instances per wave;
+  `VGT_GS_ONCHIP_CNTL=0x00C01818` supplies 24/3/3 capacity fields. The direct
+  auto-draw packet path had also been discarding persistent `IT_NUM_INSTANCES`;
+  `cd84068` now preserves that state. A correct replay must support both packet
+  shapes and derive live per-wave counts rather than substituting the capacity
+  fields.
+- **OFFLINE BLOCKER MEASURED -- the replay needs 12 KiB of Workgroup LDS:** the
+  exact GS uses static byte offsets through at least `0x2C48`, and its Sony
+  `GS_RSRC2.LDS_SIZE` field is 24, or `0xC00` dwords. This checkpoint removes
+  the former 1,024-dword compute hard-code: the register-derived allocation now
+  reaches IR, SPIR-V Workgroup array sizing, LDS bounds and the shader cache key.
+  The compute-to-raster handoff still needs ShaderWrite visibility to both
+  VertexInput reads and DrawIndirect/IndirectCommandRead; the existing generic
+  shader-write barrier omits the indirect-command half.
 - **VISUALLY NEGATIVE -- the corrected-drain run still has no recognizable
   guest scene:** `PrintWindow(PW_RENDERFULLCONTENT)` at frame 590 is retained as
   `checkpoint-frame-current.png`. Excluding the Windows title bar, all 943,488
@@ -188,7 +207,7 @@ independent blockers before it could reach that boundary:
   writer or the previously fixed unmap stall.
 
 The retained current run artifact is
-`artifacts/astro-runs/20260802-122955-native-ge-fixed-unmap`; failed diagnostic
+`artifacts/astro-runs/20260802-125515-native-ge-target-state`; failed diagnostic
 launches and older large probe directories were deliberately pruned after their
 measurements were distilled into this handoff. The focused selector
 `shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
@@ -269,10 +288,9 @@ blank transition frames separate from the later title/world-map lifetime:
    or world-map colour is identified;
 2. retain the guest marker/state and shader addresses for that occurrence so a
    deliberately blank early frame is not mistaken for the persistent failure;
-3. capture this occurrence's `VGT_PRIMITIVE_TYPE`, index count,
-   `IT_NUM_INSTANCES` value and derived per-wave vertex/primitive counts. Do not
-   infer them from the clamped `GE_CNTL` fields, and do not assume instance ID
-   zero until the packet path is measured;
+3. carry the exact 12-KiB LDS allocation through compute compilation and bounds,
+   then add the compute-write to vertex/index/indirect-read barrier required by
+   the following indexed-indirect draw;
 4. replay the captured `0x500704F00` / `0x500705600` pair as a 256-invocation
    merged ES/GS compute pass. Preserve Workgroup LDS, barriers and EXEC; map the
    terminal ES `s_setpc_b64 s[6:7]` to the known GS phase; synthesize the exact
@@ -280,7 +298,9 @@ blank transition frames separate from the later title/world-map lifetime:
    wave-zero dynamic `GS_ALLOC_REQ`, target-20 connectivity, POS/PARAM exports
    and issue the resulting indexed-indirect draw. This exact shader needs no
    emit/cut lowering. A direct mesh-stage shortcut is unavailable on the
-   measured host, whose required-subgroup-size support is compute-only;
+   measured host, whose required-subgroup-size support is compute-only. Admit
+   both measured launch shapes: auto point-list 1x1 and indexed point-list
+   1x512;
 5. keep unsupported launch shapes fail-closed. A register classifier that
    recognizes the state is useful, but it is not a render fix without the
    ES/GS ring, output allocation, vertex/primitive export and indirect replay;

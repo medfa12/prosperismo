@@ -735,6 +735,13 @@ bool TryRecompile(std::span<const uint32_t> code, const CompileOptions& options,
 	}
 	ir.lane_mask_mode  = options.lane_mask_mode;
 	ir.shader_hash     = options.shader_hash;
+	if (options.lds_dword_count == 0 || options.lds_dword_count > 8192u) {
+		if (error != nullptr) {
+			*error = "LDS allocation must contain between 1 and 8192 dwords";
+		}
+		return false;
+	}
+	ir.lds_dword_count = options.lds_dword_count;
 	ir.user_data_base  = options.user_data_base;
 	ir.user_data_count = options.user_data_count;
 	LOGF("%s phase end: stage=%s hash=0x%016" PRIx64 " IR LowerProgram blocks=%" PRIu64

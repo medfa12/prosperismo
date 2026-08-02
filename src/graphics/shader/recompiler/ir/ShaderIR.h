@@ -771,6 +771,7 @@ struct Program {
 	ShaderLaneMaskMode      lane_mask_mode      = ShaderLaneMaskMode::NativeWave;
 	uint64_t                shader_hash         = 0;
 	uint32_t                wave_size           = 64;
+	uint32_t                lds_dword_count     = 1024;
 	uint32_t                user_data_base      = 0;
 	uint32_t                user_data_count     = 64;
 	bool                    dispatcher_fallback = false;

@@ -94,6 +94,7 @@ struct ShaderComputeInputInfo {
 	bool               group_id[3]                = {false, false, false};
 	bool               dispatch_thread_dimensions = false;
 	uint32_t           wave_size                  = 64;
+	uint32_t           lds_dword_count            = 1024;
 	int                thread_ids_num             = 0;
 	int                workgroup_register         = 0;
 	bool               tg_size_en                 = false;

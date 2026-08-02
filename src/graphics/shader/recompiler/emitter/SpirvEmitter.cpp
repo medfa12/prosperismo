@@ -467,6 +467,7 @@ bool EmitProgram(const IR::Program& program, const IR::ResourceSnapshot& resourc
 	state.compute_input_info   = compute_input_info;
 	state.stage                = program.stage;
 	state.wave_size            = program.wave_size;
+	state.lds_dword_count      = program.lds_dword_count;
 	state.per_invocation_masks = program.lane_mask_mode == ShaderLaneMaskMode::PerInvocation;
 	state.exact_subgroup_operations =
 	    !state.per_invocation_masks && ProgramRequiresExactSubgroupSize(program);
