@@ -2,6 +2,23 @@
 
 This directory preserves the complete tracked `docs/` snapshots that informed the Prosperismo migration. These are immutable research snapshots, not automatically current Prosperismo claims. Curated Prosperismo documents remain separately maintained under `docs/sony-shell/` and elsewhere in `docs/`; this import does not overwrite them.
 
+## How the archive is used
+
+The active Astro synthesis is
+[`../handoffs/astro-gpu-handoff-2026-08-02.md`](../handoffs/astro-gpu-handoff-2026-08-02.md).
+That handoff records which historical results have been reproduced in
+Prosperismo, which remain controls from a different renderer/allocation
+lifetime, and which hypotheses were retired by later paired measurements.
+
+For Astro GPU work, start with `sharpemu-home/astro-bot-boot.md`,
+`astrobot-bringup.md`, `astro-agc-conformance.md`, `gpu-surface-gap.md`,
+`methodology-execution.md`, and `what-the-firmware-taught-us.md`. The archive
+establishes useful high-confidence contracts—including final-tonemap nonblack
+control, unified LDS atomic semantics, Sony metadata ordering, writer identity,
+presentation retention, and native-primitive per-wave rules—but it must not be
+quoted as proof of current Prosperismo pixels without a current paired capture.
+Dead ends are intentionally preserved so future sessions do not repeat them.
+
 ## Preserved snapshots
 
 | Snapshot | Source repository | Source ref | Resolved commit | Imported payload | Manifest |

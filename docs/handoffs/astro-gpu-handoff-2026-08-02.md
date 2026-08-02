@@ -96,10 +96,17 @@ independent blockers before it could reach that boundary:
 - **CONFIRMED -- never-mapped unmaps do not drain the GPU:** a curated
   reference change demonstrated that Astro's wandering boot stall came from
   synchronously draining the GPU for ranges that had never acquired GPU
-  resources. Prosperismo had the same unconditional path. `UnmapMemory` now
-  proves that neither cache owns an intersecting range and performs the local
-  unmap without a GPU round trip. Range-intersection tests pass. This is a boot
-  reliability fix, not an explanation for zero RGB.
+  resources. Prosperismo had the same unconditional path. The first port
+  (`bcc4ff1`) avoided `SendCommandSync` but still called a shared closure whose
+  first operation was `FinishCurrent()`; that moved the drain to the guest
+  thread and raced the GPU recorder, producing either `VK_ERROR_UNKNOWN` from
+  `vkEndCommandBuffer` or `!m_recording`. `4da4524` is the complete fix: after
+  proving no cache overlap it performs only page/range bookkeeping, with no
+  scheduler or cache drain. The following targeted run passed the former
+  one-second failure, reached frame 1076 and captured the exact ES/GS pair. It
+  was stopped after the retained measurement rather than allowed to grow the
+  trace further. This is a boot-reliability fix, not an explanation for zero
+  RGB.
 - **CONFIRMED -- first observed half-resolution writer executes:** marker
   `resize_normal`, `cs=0x5006F7700`, dispatches `120x68x1`. It samples the
   full-resolution images at `0x510D10000` and `0x5104A0000`, then writes
@@ -144,6 +151,34 @@ independent blockers before it could reach that boundary:
   `max_out=216`, `gs_max_vert=72`, `gs_out_prim=2`. This is the current first
   unexecuted writer boundary; it is not yet proof that the draw itself would
   produce nonblack colour.
+- **CAPTURED -- the exact skipped merged ES/GS programs are retained:** run
+  `20260802-122955-native-ge-fixed-unmap` captured 224 bytes at
+  `es=0x500704F00`, 3,408 bytes at `gs=0x500705600`, and the complete launch
+  state. The state confirms wave64, a three-primitive hardware group ceiling,
+  an ESGS ring item size of four dwords, 216 maximum output vertices and 210
+  maximum triangle-strip primitives. `GE_CNTL.VERT_GRP_SIZE=24` is GFX10.1's
+  minimum clamp, not evidence of 24 live input vertices. Actual vertex and
+  primitive counts are per-wave launch values. These bytes, not analogy with an
+  older particle/native-primitive shader, are the next offline replay input.
+- **SONY-ORACLE DECODED -- the exact live replay contract is bounded:** the ES
+  has 11 live instructions through `s_setpc_b64`; it writes one dword per lane
+  to LDS with `ds_write_b32 v5, v8`, using SGPR3's wave index and the four-dword
+  ESGS item size. The GS is valid through `s_endpgm` at `+0xB74` and has no
+  `GS_EMIT` or `GS_CUT`. Wave zero packs dynamic vertex/primitive counts into
+  `m0` and sends `GS_ALLOC_REQ`; the tail exports target-20 connectivity from
+  `v12`, followed by POS0, PARAM0 and PARAM1. Bytes after the terminators are
+  padding/data and are not opcodes. Prosperismo currently treats `s_sendmsg` as
+  a no-op, drops target 20, has no geometry stage, and has no paired ES-to-LDS
+  GS launch. Sony's SGPR3 ABI supplies workgroup size, wave index, GS wave ID,
+  primitive count and vertex count; the exact draw packet must still provide
+  topology, index count, instance count and therefore the actual per-wave
+  counts. No additional live ALU opcode hole is proven at this boundary.
+- **VISUALLY NEGATIVE -- the corrected-drain run still has no recognizable
+  guest scene:** `PrintWindow(PW_RENDERFULLCONTENT)` at frame 590 is retained as
+  `checkpoint-frame-current.png`. Excluding the Windows title bar, all 943,488
+  client pixels are grayscale with channel values only 0 through 13 and zero
+  chromatic pixels. The faint patterned background is not title/world-map
+  rendering; the missing ES/GS writer remains live.
 - **CLASSIFIED, ROOT CAUSE OPEN -- frame-361 host termination:** Windows
   recorded `0xc0000409` with exception data `7`. Microsoft SDK `winnt.h`
   defines value 7 as `FAST_FAIL_FATAL_APP_EXIT`, not a stack-cookie failure.
@@ -152,10 +187,10 @@ independent blockers before it could reach that boundary:
   Do not conflate this explicit host termination with the skipped geometry
   writer or the previously fixed unmap stall.
 
-The retained validated run artifact is
-`artifacts/astro-runs/20260802-115409-sony-mip-view`; older large probe
-directories were deliberately pruned after their measurements were distilled
-into this handoff. The focused selector
+The retained current run artifact is
+`artifacts/astro-runs/20260802-122955-native-ge-fixed-unmap`; failed diagnostic
+launches and older large probe directories were deliberately pruned after their
+measurements were distilled into this handoff. The focused selector
 `shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
 borrow, trap, BVH-miss, 64-bit-FF1 and dynamic-SMEM GPU semantic tests. The unfiltered
 suite currently stops earlier in the pre-existing `ImageTransitionState`
@@ -163,24 +198,66 @@ depth/stencil mip-copy test; it is not claimed green.
 
 ## Established boundary
 
-- Historical SharpEmu captures contain nonblack full-resolution scene targets,
-  but they are controls from different runs and allocation lifetimes. They do
-  not establish the content of Prosperismo's current frame. In the current
+- Historical SharpEmu captures contain nonblack full-resolution scene targets
+  and one source-triggered final-tonemap control. At work sequence 992427 the
+  unmodified `ps=0x500640D00` read 2,146,458 nonblack RGBA16F source pixels and
+  wrote 4,951,550 nonblack A2R10G10B10 pixels; `PrintWindow` showed the dark
+  blue-strip PlayStation Studios image. All 350 PS and 69 VS instructions agreed
+  with Sony's ISA oracle by mnemonic and size. This proves that the inherited
+  pipeline can carry real RGB through the final tonemap, but it does not establish
+  the content of Prosperismo's current allocation lifetime. In the current
   frame-3 lifetime, `0x514080000` and the following `0x53AA00000` RGBA16F
   image are byte-identical and have zero nonblack RGB pixels; their nonzero-byte
   counts are alpha. Never use a byte count as a pixel finding.
 - The downstream 960x540 G-buffer/postprocess inputs examined at the clustered
   lighting boundary were all zero and were DCC-flagged.
-- The final tone-map pixel shader had complete scalar constants
-  (`smem_zero_filled=0`) and inherited black input. It was not the first stage
-  where pixels became zero.
+- In the measured current black lifetime, the final tone-map pixel shader had
+  complete scalar constants (`smem_zero_filled=0`) and inherited black input. It
+  was not the first stage where pixels became zero. Do not generalize that
+  occurrence into a claim that the shader or final chain is intrinsically black.
 - Sony's `agc-registerstructs.natvis` identifies `CB_COLOR_CONTROL` mode 6 as
   `kDccDecompress`. This remains a general correctness contract, but the
   current `0x500690F00` boundary does not implicate it: the exact expanded host
   image selected for sampling is genuinely black in RGB.
-- The historical slow `ps=0x5008F1400` loop walked a GPU-built linked list whose
-  producer had previously been absent. Performance must be remeasured after the
-  producer path is present before changing control-flow semantics.
+- The historical `ps=0x5008F1400` slowdown is closed. Ordinary LDS accesses had
+  a separate memory domain from DS atomics, and inactive lanes overwrote lane
+  zero's `0xFFFFFFFF` sentinel at byte `0x510`. Sharing the Workgroup atomic
+  domain and suppressing inactive stores changed the historical mean from
+  132.039 ms to 0.238 ms (about 560x). Prosperismo must still measure its own
+  shader timing, but the producer/list root cause is no longer open; `3249e35`
+  ports the shared LDS domain.
+
+### Preserved contracts and retired leads
+
+- Sony modes 5 and 6 are compositional metadata operations. Mode 5 performs
+  FMASK decompression plus fast-clear elimination; mode 6 adds DCC decompression.
+  An initialized newer GPU-authored expanded image must be preserved. Recognized
+  guest constant-metadata state is materialized in writer order; unknown or
+  partial compressed state remains fail-closed. `libSceAgcGpuAddress` is an exact
+  layout oracle, not a DCC/HTILE pixel decoder.
+- Pixel address, DCC/HTILE allocation, host representation and guest writer
+  serial are separate identity dimensions. Sampled, storage and render roles keep
+  the exact metadata lifetime. If multiple compatible color/storage/depth host
+  objects alias one guest range, select the newest initialized guest writer;
+  host-object initialization is not itself a guest write.
+- The presentation queue must retain a completed head while bounding the newer
+  incomplete tail. Dropping the oldest completed entry can freeze a stale frame
+  even while guest rendering advances; this remains an inherited audit item, not
+  a proven cause in the current run.
+- Native launch counts are per wave, physical local IDs include the wave index,
+  only one wave owns `GS_ALLOC_REQ`, and target 20 packs three 10-bit
+  subgroup-relative indices. A host path is valid only after checking the complete
+  output-memory limit, not just vertex/primitive counts. `GE_CNTL`'s 24-vertex
+  group field is a hardware minimum clamp and must not be used as the live count.
+- Do not revive the old unbound-SMEM/forced-exposure tonemap theory, blame
+  `0x500690F00` decode/NSA/store/ALU, infer pixels from nonzero bytes, or treat
+  `LevelDocument Loaded: worldmap` as visible/interactable worldmap. Those leads
+  are contradicted by later paired captures or measure only preload.
+- Sony ShaderIsa raw options are terminated `(id,value)` pairs; id 1 with value
+  2 selects the lowest generation accepting Astro's gfx1013 BVH form.
+  `GetInstructionSize` takes the raw zero-extended instruction value, not a byte
+  pointer. Firmware symbol-carrier ELFs with `SHT_NOBITS` text establish names and
+  `st_size`, not executable behavior.
 
 ## Next falsifiable checkpoint
 
@@ -192,18 +269,25 @@ blank transition frames separate from the later title/world-map lifetime:
    or world-map colour is identified;
 2. retain the guest marker/state and shader addresses for that occurrence so a
    deliberately blank early frame is not mistaken for the persistent failure;
-3. classify and replay the observed `0x500705600` draw without treating it as
-   the simpler point-to-triangle native sample. Its state is a classic
-   geometry-shader lowering: three input primitives, 24 input vertex slots,
-   72 output vertices per input and a 70-triangle strip amplification. Sony's
-   `agc_basic_geometry_shader/native_prim.pssl` defines the subgroup count,
-   allocation and packed-connectivity ABI, but the exact shader's emit/cut and
-   export loop must be decoded from its own bytes before it is admitted;
-4. keep unsupported launch shapes fail-closed. A register classifier that
+3. capture this occurrence's `VGT_PRIMITIVE_TYPE`, index count,
+   `IT_NUM_INSTANCES` value and derived per-wave vertex/primitive counts. Do not
+   infer them from the clamped `GE_CNTL` fields, and do not assume instance ID
+   zero until the packet path is measured;
+4. replay the captured `0x500704F00` / `0x500705600` pair as a 256-invocation
+   merged ES/GS compute pass. Preserve Workgroup LDS, barriers and EXEC; map the
+   terminal ES `s_setpc_b64 s[6:7]` to the known GS phase; synthesize the exact
+   topology-dependent ESGS offsets and vertex/instance inputs; then retain
+   wave-zero dynamic `GS_ALLOC_REQ`, target-20 connectivity, POS/PARAM exports
+   and issue the resulting indexed-indirect draw. This exact shader needs no
+   emit/cut lowering. A direct mesh-stage shortcut is unavailable on the
+   measured host, whose required-subgroup-size support is compute-only;
+5. keep unsupported launch shapes fail-closed. A register classifier that
    recognizes the state is useful, but it is not a render fix without the
-   ES/GS ring, output allocation, emit/cut and vertex/primitive export replay;
-5. only after a writer produces nonblack RGB, follow its exact host-image
-   identity through `6CB800 -> 690F -> 650600` and presentation.
+   ES/GS ring, output allocation, vertex/primitive export and indirect replay;
+6. only after a writer produces nonblack RGB, follow its exact host-image
+  identity and writer serial through the observed lifetime. Do not assume one
+  fixed route: preserved runs contain both `6CB800 -> 690F -> 650600` and
+  `6CB800 -> 6CE200 -> 68FA` lifetimes.
 
 This distinguishes the currently live root-cause classes:
 
