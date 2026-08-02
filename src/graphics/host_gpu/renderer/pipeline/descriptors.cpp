@@ -298,13 +298,16 @@ bool IsSupportedDepthTextureEncoding(const ShaderTextureResource& descriptor, co
 	                                     (static_cast<uint32_t>(descriptor.TileMode()) << 20u) |
 	                                     (static_cast<uint32_t>(descriptor.Type()) << 28u);
 	const uint32_t     field4_expected = descriptor.Depth() | (descriptor.BaseArray5() << 16u);
-	const uint32_t     field5_expected =
-	    0x00700000u | (static_cast<uint32_t>(descriptor.MaxMip()) << 4u);
+	// Sony exposes PERF_MOD as a programmable sampler-modulation factor. All eight
+	// encodings are valid, including zero (which disables the associated tweak),
+	// even though the SDK's texture constructors choose 7 by default.
+	constexpr uint32_t field5_perf_mod_mask = 0x00700000u;
+	const uint32_t     field5_expected = static_cast<uint32_t>(descriptor.MaxMip()) << 4u;
 	const bool common = (descriptor.fields[1] & field1_reserved_mask) == 0 &&
 	                    (descriptor.fields[2] & field2_reserved_mask) == 0 &&
 	                    descriptor.fields[3] == field3_expected &&
 	                    descriptor.fields[4] == field4_expected &&
-	                    descriptor.fields[5] == field5_expected;
+	                    (descriptor.fields[5] & ~field5_perf_mod_mask) == field5_expected;
 	if (!common || (descriptor.fields[6] == 0 && descriptor.fields[7] != 0)) {
 		return false;
 	}

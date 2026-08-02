@@ -15870,6 +15870,30 @@ void CheckSampledDepthDescriptor(RenderContext& renderer) {
 	        "valid uncompressed MSAA depth descriptor required an HTILE "
 	        "compatibility flag");
 
+	const ShaderTextureResource unmodulated_depth {{
+	    0x05135600u,
+	    0xc1600000u,
+	    0x010dc1dfu,
+	    0x91800924u,
+	    0x00000000u,
+	    0x00000000u,
+	    0x00000000u,
+	    0x00000000u,
+	}};
+	Image unmodulated_image(
+	    context, scheduler,
+	    make_info(1920, 1080, 1920, 1, vk::Format::eD32SfloatS8Uint,
+	              Prospero::ImageType::kColor2D));
+	unmodulated_image.usage.depth_target = true;
+	auto reserved_unmodulated            = unmodulated_depth;
+	reserved_unmodulated.fields[5] |= 1u << 27u;
+	Require("SampledDepthDescriptor", "unmodulated sampler factor",
+	        unmodulated_depth.PerfMod5() == 0 &&
+	            IsSupportedDepthTargetDescriptor(unmodulated_depth, unmodulated_image) &&
+	            IsSupportedDepthTextureEncoding(unmodulated_depth, unmodulated_image) &&
+	            !IsSupportedDepthTextureEncoding(reserved_unmodulated, unmodulated_image),
+	        "valid zero sampler-modulation factor or its reserved-bit guard was rejected");
+
 	descriptor.fields[3] = (descriptor.fields[3] & ~(0xfu << 28u)) |
 	                       (Prospero::GpuEnumValue(Prospero::ImageType::kColor2DArray) << 28u);
 	Require("SampledDepthDescriptor", "singleton array descriptor",
