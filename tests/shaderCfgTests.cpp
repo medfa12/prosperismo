@@ -2811,6 +2811,7 @@ void TestNewShaderRecompilerScalarBitfieldAlu() {
 	    EncodeSop2(0x34, 9, 0, 1), // s_pack_hh_b32_b16 s9, s0, s1
 	    EncodeSopc(0x0c, 0, 1),    // s_bitcmp0_b32 s0, s1
 	    EncodeSopc(0x0d, 1, 0),    // s_bitcmp1_b32 s1, s0
+	    0xbf128002u,                // s_cmp_eq_u64 s[2:3], 0 (captured Astro encoding)
 	    EncodeSopc(0x13, 0, 2),    // s_cmp_lg_u64 s[0:1], s[2:3]
 	    0xbf810000u,
 	};
@@ -2838,6 +2839,8 @@ void TestNewShaderRecompilerScalarBitfieldAlu() {
 	      "new decoder did not decode S_BITCMP0_B32");
 	Check(Common::ContainsStr(result.decoded_dump, "s_bitcmp1_b32"),
 	      "new decoder did not decode S_BITCMP1_B32");
+	Check(Common::ContainsStr(result.decoded_dump, "s_cmp_eq_u64"),
+	      "new decoder did not decode S_CMP_EQ_U64");
 	Check(Common::ContainsStr(result.decoded_dump, "s_cmp_lg_u64"),
 	      "new decoder did not decode S_CMP_LG_U64");
 	Check(Common::ContainsStr(result.ir_dump, "SelectU32 s2"), "S_CSELECT_B32 did not lower to IR");
@@ -2858,6 +2861,8 @@ void TestNewShaderRecompilerScalarBitfieldAlu() {
 	      "S_BITCMP0_B32 did not lower to IR");
 	Check(Common::ContainsStr(result.ir_dump, "BitCompare1B32"),
 	      "S_BITCMP1_B32 did not lower to IR");
+	Check(Common::ContainsStr(result.ir_dump, "CompareEqU64"),
+	      "S_CMP_EQ_U64 did not lower to IR");
 	Check(Common::ContainsStr(result.ir_dump, "CompareNeU64"), "S_CMP_LG_U64 did not lower to IR");
 	Check(SpirvContainsOpcode(result.spirv, 126), "SPIR-V binary does not contain OpSNegate");
 	Check(SpirvContainsOpcode(result.spirv, 169), "SPIR-V binary does not contain OpSelect");
@@ -2866,6 +2871,8 @@ void TestNewShaderRecompilerScalarBitfieldAlu() {
 	Check(SpirvContainsOpcode(result.spirv, 203),
 	      "SPIR-V binary does not contain OpBitFieldUExtract");
 	Check(SpirvContainsOpcode(result.spirv, 171), "SPIR-V binary does not contain OpINotEqual");
+	Check(SpirvContainsOpcode(result.spirv, 170), "SPIR-V binary does not contain OpIEqual");
+	Check(SpirvContainsOpcode(result.spirv, 167), "SPIR-V binary does not contain OpLogicalAnd");
 	Check(SpirvContainsOpcode(result.spirv, 166), "SPIR-V binary does not contain OpLogicalOr");
 	Check(SpirvContainsOpcode(result.spirv, 204), "SPIR-V binary does not contain OpBitReverse");
 	CheckSpirvBinaryValidates(result.spirv);
@@ -7402,10 +7409,18 @@ void TestNewShaderRecompilerFlatAddressProvenanceBoundaries() {
 } // namespace
 } // namespace Libs::Graphics
 
-int main() {
+int main(int argc, char** argv) {
 	using namespace Libs::Graphics;
 
 	EnsureConfigInitialized();
+	if (argc == 2 && std::strcmp(argv[1], "--scalar-u64-compare-only") == 0) {
+		TestNewShaderRecompilerScalarBitfieldAlu();
+		return 0;
+	}
+	if (argc != 1) {
+		std::fprintf(stderr, "unknown test selector: %s\n", argv[1]);
+		return 2;
+	}
 	TestResourceDescriptorClassification();
 	TestNativeShaderResourceDependencies();
 	TestNormalizedImageContracts();

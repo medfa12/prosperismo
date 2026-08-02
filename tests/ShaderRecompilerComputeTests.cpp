@@ -9153,9 +9153,10 @@ TestCase ScalarCompareOps() {
 	append_compare(0x08, 4, 3);
 	append_compare(0x09, 4, 4);
 	append_compare(0x0b, 3, 4);
+	append_compare(0x12, 10, 10);
 	append_compare(0x13, 10, 12);
 
-	for (u32 i = 0; i < 11u; i++) {
+	for (u32 i = 0; i < 12u; i++) {
 		AppendStoreSgpr(&code, 20u + i, i);
 	}
 	AppendEnd(&code);
@@ -9163,10 +9164,10 @@ TestCase ScalarCompareOps() {
 	return {"ScalarCompareOps",
 	        code,
 	        {},
-	        std::vector<u32>(11, 1),
+	        std::vector<u32>(12, 1),
 	        {O::SMovB32, O::SCmpEqI32, O::SCmpLgI32, O::SCmpGtI32, O::SCmpGeI32, O::SCmpLtI32,
-	         O::SCmpLeI32, O::SCmpLgU32, O::SCmpGtU32, O::SCmpGeU32, O::SCmpLeU32, O::SCmpLgU64,
-	         O::SCselectB32, O::VMovB32, O::BufferStoreDword, O::SEndpgm}};
+	         O::SCmpLeI32, O::SCmpLgU32, O::SCmpGtU32, O::SCmpGeU32, O::SCmpLeU32, O::SCmpEqU64,
+	         O::SCmpLgU64, O::SCselectB32, O::VMovB32, O::BufferStoreDword, O::SEndpgm}};
 }
 
 TestCase ScalarShiftAddAndMaskOps() {
@@ -17549,6 +17550,11 @@ int main(int argc, char** argv) {
 		RunCase(&vulkan, ImageBvhIntersectRayUsesGuestMissSentinelOnGpu());
 		RunCase(&vulkan, ScalarFf1I32B64AstroEncodingOnGpu());
 		RunCase(&vulkan, ScalarDynamicSLoadDwordx4PreservesAddressOnGpu());
+		return 0;
+	}
+	if (argc == 2 && std::strcmp(argv[1], "--scalar-u64-compare-only") == 0) {
+		VulkanHarness vulkan;
+		RunCase(&vulkan, ScalarCompareOps());
 		return 0;
 	}
 	if (argc == 2 && std::strcmp(argv[1], "--clip-control-only") == 0) {
