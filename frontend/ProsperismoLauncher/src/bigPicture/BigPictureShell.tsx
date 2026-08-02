@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import type {GameInstall, LauncherSettings} from '../core/models';
-import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame} from './shellState';
+import {INITIAL_SHELL_STATE, isShellCardFocused, reduceShellState, selectedShellBackground, selectedShellGame} from './shellState';
 import {
   SHELL_FOCUSED_TILE_RADIUS,
   SHELL_FOCUSED_TILE_SCALE,
@@ -59,15 +59,23 @@ function easeOutBreeze(value: number): number {
   return 1 - Math.pow(1 - value, 4.6);
 }
 
-function useFocusPhase(focused: boolean, delay = 0): Animated.Value {
+function focusInOutCurve(value: number): number {
+  return value > 0 ? 1 - Math.pow(1 - value * 0.5, 10) : 0;
+}
+
+function easeOutBlast(value: number): number {
+  return 1 - Math.pow(1 - value, 10);
+}
+
+function useFocusPhase(focused: boolean, delay = 200): Animated.Value {
   const phase = useRef(new Animated.Value(focused ? 1 : 0)).current;
   useEffect(() => {
     const animation = focused
       ? Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(phase, {toValue: 1, duration: 300, easing: easeOutBreeze, useNativeDriver: true}),
+          Animated.timing(phase, {toValue: 1, duration: 300, easing: focusInOutCurve, useNativeDriver: true}),
         ])
-      : Animated.timing(phase, {toValue: 0, duration: 300, easing: easeOutBreeze, useNativeDriver: true});
+      : Animated.timing(phase, {toValue: 0, duration: 300, easing: focusInOutCurve, useNativeDriver: true});
     animation.start();
     return () => animation.stop();
   }, [delay, focused, phase]);
@@ -83,8 +91,8 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
     // RN fallback for the unrecovered shimmer texture, not a substitute shader.
     const animation = Animated.loop(Animated.sequence([
       Animated.delay(3000),
-      Animated.timing(shimmer, {toValue: 1, duration: 1000, easing: Easing.sin, useNativeDriver: true}),
-      Animated.timing(shimmer, {toValue: 0, duration: 1000, easing: Easing.in(Easing.sin), useNativeDriver: true}),
+      Animated.timing(shimmer, {toValue: 1, duration: 1000, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
+      Animated.timing(shimmer, {toValue: 0, duration: 1000, easing: Easing.inOut(Easing.sin), useNativeDriver: true}),
     ]));
     animation.start();
     return () => animation.stop();
@@ -94,7 +102,6 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
     <Animated.View pointerEvents="none" style={[shellStyles.focusFrame, {opacity: phase}]}>
       <View style={shellStyles.focusLine} />
       <View style={shellStyles.focusWashClip}>
-        <View style={shellStyles.focusWash} />
         <Animated.View style={[shellStyles.focusShimmer, {opacity: shimmer, transform: [{translateX: shimmerTranslate}, {rotate: '-24deg'}]}]} />
       </View>
     </Animated.View>
@@ -114,11 +121,12 @@ function FocusLine({active, radius = 16}: {active: boolean; radius?: number}) {
   </Animated.View>;
 }
 
-function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress, onOptions, onRef}: {
+function ExperienceTile({game, focused, index, selectedIndex, selected, onFocus, onPress, onOptions, onRef}: {
   game: GameInstall;
   index: number;
   selectedIndex: number;
   selected: boolean;
+  focused: boolean;
   onFocus(): void;
   onPress(): void;
   onOptions(): void;
@@ -127,7 +135,7 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
   const baseX = shellTileBaseX(index, selectedIndex);
   const x = useRef(new Animated.Value(baseX)).current;
   const scale = useRef(new Animated.Value(selected ? SHELL_FOCUSED_TILE_SCALE : 1)).current;
-  const focusPhase = useFocusPhase(selected);
+  const focusPhase = useFocusPhase(focused);
   useEffect(() => {
     const animation = Animated.spring(x, {...SHELL_METRICS.strandSpring, toValue: shellTileBaseX(index, selectedIndex), useNativeDriver: true});
     animation.start();
@@ -152,7 +160,7 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
           {game.artworkPath ? <Image source={{uri: `file:///${game.artworkPath.replace(/\\/g, '/')}`}} style={shellStyles.tileImage} /> : <View style={shellStyles.tileFallback}><Text style={shellStyles.tileMonogram}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}
         </Pressable>
       </Animated.View>
-      {selected && <CardFocusPass phase={focusPhase} />}
+      {focused && <CardFocusPass phase={focusPhase} />}
     </Animated.View>
   );
 }
@@ -185,8 +193,8 @@ function SystemIconButton({label, glyph, focused, sourcePath, onFocus, onPress, 
   const phase = useRef(new Animated.Value(focused ? 1 : 0)).current;
   useEffect(() => {
     const animation = focused
-      ? Animated.sequence([Animated.delay(100), Animated.timing(phase, {toValue: 1, duration: 500, easing: easeOutBreeze, useNativeDriver: false})])
-      : Animated.timing(phase, {toValue: 0, duration: 200, easing: easeOutBreeze, useNativeDriver: false});
+      ? Animated.sequence([Animated.delay(100), Animated.timing(phase, {toValue: 1, duration: 500, easing: easeOutBlast, useNativeDriver: false})])
+      : Animated.timing(phase, {toValue: 0, duration: 200, easing: easeOutBlast, useNativeDriver: false});
     animation.start();
     return () => animation.stop();
   }, [focused, phase]);
@@ -271,9 +279,10 @@ function ReactiveBackground({backgroundPath, fallback, dimmed, suppressFallback}
   </>;
 }
 
-function HomeSurface({games, selectedIndex, libraryIconPath, onSelect, onLaunch, onOptions, onLibrary, strandRefs}: {
+function HomeSurface({games, selectedIndex, libraryIconPath, onSelect, onLaunch, onOptions, onLibrary, strandFocused, strandRefs}: {
   games: readonly GameInstall[];
   selectedIndex: number;
+  strandFocused: boolean;
   libraryIconPath?: string;
   onSelect(index: number): void;
   onLaunch(game: GameInstall): void;
@@ -286,7 +295,7 @@ function HomeSurface({games, selectedIndex, libraryIconPath, onSelect, onLaunch,
   return (
     <>
       <View style={shellStyles.strand}>
-        {visibleGames.map((game, index) => <ExperienceTile game={game} index={index} key={game.gamePath} selectedIndex={selectedIndex} onRef={node => { strandRefs.current[index] = node; }} onFocus={() => onSelect(index)} onOptions={() => onOptions(game)} onPress={() => onLaunch(game)} selected={index === selectedIndex} />)}
+        {visibleGames.map((game, index) => <ExperienceTile game={game} focused={strandFocused && index === selectedIndex} index={index} key={game.gamePath} selectedIndex={selectedIndex} onRef={node => { strandRefs.current[index] = node; }} onFocus={() => onSelect(index)} onOptions={() => onOptions(game)} onPress={() => onLaunch(game)} selected={index === selectedIndex} />)}
         <Pressable accessibilityLabel="Game Library" accessibilityRole="button" onPress={onLibrary} style={shellStyles.libraryShortcut}>
           {libraryIconPath
             ? <Image source={fileImageSource(libraryIconPath)} style={shellStyles.libraryShortcutImage} />
@@ -336,7 +345,7 @@ function SettingsSurface({selectedIndex, settings, onSelect, onActivate, onRef}:
     ['Prosperismo', 'React Native Windows shell'],
     ['Oracle', 'Firmware-derived presentation contracts'],
   ];
-  return <View style={shellStyles.settingsStage}><Text style={shellStyles.settingsStageTitle}>Settings</Text><View style={shellStyles.settingsRail}>{SETTINGS_CATEGORIES.map(([name], index) => <Pressable ref={node => onRef(index, node)} accessibilityRole="button" key={name} onFocus={() => onSelect(index)} onPress={() => onActivate(index)} style={shellStyles.settingsRailRow}><Text style={[shellStyles.settingsRailText, index === selectedIndex && shellStyles.settingsRailTextSelected]}>{name}</Text></Pressable>)}</View><View style={shellStyles.settingsLane}><Text style={shellStyles.settingsLaneTitle}>{category[0]}</Text><Text style={shellStyles.settingsLaneIntro}>{category[1]}</Text>{preview.map(([label, value], index) => <View key={label} style={shellStyles.settingsLaneRow}>{index === 0 && <FocusLine active radius={0} />}<Text style={shellStyles.settingsLaneLabel}>{label}</Text><Text numberOfLines={1} style={shellStyles.settingsLaneValue}>{value}</Text></View>)}<Text style={shellStyles.settingsLaneHint}>Press Enter to change these Prosperismo settings.</Text></View></View>;
+  return <View style={shellStyles.settingsStage}><Text style={shellStyles.settingsStageTitle}>Settings</Text><View style={shellStyles.settingsRail}>{SETTINGS_CATEGORIES.map(([name], index) => <Pressable ref={node => onRef(index, node)} accessibilityRole="button" key={name} onFocus={() => onSelect(index)} onPress={() => onActivate(index)} style={shellStyles.settingsRailRow}><FocusLine active={index === selectedIndex} radius={0} /><Text style={[shellStyles.settingsRailText, index === selectedIndex && shellStyles.settingsRailTextSelected]}>{name}</Text></Pressable>)}</View><View style={shellStyles.settingsLane}><Text style={shellStyles.settingsLaneTitle}>{category[0]}</Text><Text style={shellStyles.settingsLaneIntro}>{category[1]}</Text>{preview.map(([label, value]) => <View key={label} style={shellStyles.settingsLaneRow}><Text style={shellStyles.settingsLaneLabel}>{label}</Text><Text numberOfLines={1} style={shellStyles.settingsLaneValue}>{value}</Text></View>)}<Text style={shellStyles.settingsLaneHint}>Press Enter to change these Prosperismo settings.</Text></View></View>;
 }
 
 type SettingRow = {label: string; value: string; onPress?: () => void};
@@ -390,7 +399,7 @@ function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect, onRef}: {
   onRef(index: number, node: any): void;
 }) {
   const phase = useRef(new Animated.Value(0)).current;
-  useEffect(() => { const animation = Animated.sequence([Animated.delay(50), Animated.timing(phase, {toValue: 1, duration: 250, easing: easeOutBreeze, useNativeDriver: true})]); animation.start(); return () => animation.stop(); }, [phase]);
+  useEffect(() => { const animation = Animated.sequence([Animated.delay(50), Animated.timing(phase, {toValue: 1, duration: 250, easing: easeOutBlast, useNativeDriver: true})]); animation.start(); return () => animation.stop(); }, [phase]);
   return <View style={shellStyles.modalLayer}><Pressable accessibilityLabel="Close options" onPress={onClose} style={shellStyles.optionsDismissArea} /><Animated.View style={[shellStyles.optionsPanel, {opacity: phase}]}><Text style={shellStyles.optionsTitle}>{game.titleName}</Text><Pressable ref={node => onRef(0, node)} onFocus={() => onSelect(0)} onPress={onPlay} style={shellStyles.optionRow}><FocusLine active={selectedIndex === 0} /><Text style={shellStyles.optionText}>Play</Text></Pressable><Pressable ref={node => onRef(1, node)} onFocus={() => onSelect(1)} onPress={onClose} style={shellStyles.optionRow}><FocusLine active={selectedIndex === 1} /><Text style={shellStyles.optionText}>Cancel</Text></Pressable></Animated.View></View>;
 }
 
@@ -480,6 +489,20 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
       focusNative(dialogRef.current);
     }
   }, [errorMessage]);
+  useEffect(() => {
+    if (optionsGame || errorMessage || settingsDetail !== undefined) {
+      return;
+    }
+    if (state.surface === 'settings') {
+      focusNative(settingsRefs.current[state.settingsIndex]);
+      return;
+    }
+    if (state.surface === 'home') {
+      focusNative(shellGames.length > 0
+        ? strandRefs.current[Math.min(state.selectedIndex, shellGames.length - 1)]
+        : spaceRefs.current[0]);
+    }
+  }, [errorMessage, optionsGame, settingsDetail, shellGames.length, state.selectedIndex, state.settingsIndex, state.surface]);
   const handleKeyDown = (event: any) => {
     const key = event?.nativeEvent?.key;
     if (errorMessage) {
@@ -506,7 +529,7 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
     <NativeFrameBackground frameMs={nativeBackgroundFrameMs} framePaths={nativeBackgroundFrames} visible={state.surface === 'home'} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} suppressFallback={nativeBackgroundFrames.length > 0 && state.surface === 'home'} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
     {state.surface !== 'settings' && <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} sourcePath={action.glyph === 'settings' ? firmwareShellIcons.settings : action.glyph === 'profile' ? firmwareShellIcons.desktop : undefined} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>}
     {state.surface !== 'home' && state.surface !== 'settings' && settingsDetail === undefined && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
-    {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
+    {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandFocused={isShellCardFocused(state, state.selectedIndex)} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
     {state.surface === 'library' && <LibrarySurface games={games} onLaunch={launch} />}
     {state.surface === 'settings' && settingsDetail === undefined && <SettingsSurface settings={settings} onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={setSettingsDetail} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
     {state.surface === 'settings' && settingsDetail !== undefined && <SettingsDetailSurface categoryIndex={settingsDetail} onBack={() => setSettingsDetail(undefined)} onSave={onSaveSettings} settings={settings} />}
@@ -535,7 +558,7 @@ const shellStyles = StyleSheet.create({
   clock: {marginLeft: 40, color: '#fff', fontSize: 28, minWidth: 120, textAlign: 'right'},
   strand: {position: 'absolute', left: 0, top: 0, width: 1920, height: 294}, tilePosition: {position: 'absolute', left: 0, top: 157, width: 106, height: 106, alignItems: 'center', justifyContent: 'center'},
   tile: {width: 106, height: 106, borderRadius: 16, overflow: 'hidden', backgroundColor: '#292929'}, tileImage: {width: '100%', height: '100%', resizeMode: 'cover'}, tileFallback: {flex: 1, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, tileMonogram: {fontSize: 48, color: '#fff', fontWeight: '700'},
-  focusFrame: {position: 'absolute', left: -37, top: -37, width: 180, height: 180, borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)', borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset}, focusWashClip: {position: 'absolute', left: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, top: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, width: 168, height: 168, overflow: 'hidden', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusWash: {position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.13)'}, focusShimmer: {position: 'absolute', left: 68, top: -70, width: 32, height: 308, backgroundColor: 'rgba(255,255,255,0.17)'},
+  focusFrame: {position: 'absolute', left: -37, top: -37, width: 180, height: 180, borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)', borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset}, focusWashClip: {position: 'absolute', left: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, top: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, width: 168, height: 168, overflow: 'hidden', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusShimmer: {position: 'absolute', left: -44, top: -70, width: 256, height: 308, backgroundColor: 'rgba(255,255,255,0.13)'},
   libraryShortcut: {position: 'absolute', left: 1602, top: 157, width: 106, height: 106, borderRadius: 16, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, libraryShortcutGlyph: {fontSize: 44, color: '#fff'}, libraryShortcutImage: {width: 40, height: 32, resizeMode: 'contain'},
   experienceCaption: {position: 'absolute', top: SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', fontSize: 30, fontWeight: '600'}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', fontSize: 18}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
   backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},

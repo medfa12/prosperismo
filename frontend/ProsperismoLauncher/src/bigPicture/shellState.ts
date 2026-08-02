@@ -55,6 +55,12 @@ export function selectedShellGame(games: readonly GameInstall[], state: ShellSta
   return games[clamp(state.selectedIndex, games.length)];
 }
 
+/** Selection is remembered while focus visits Home's top band, but its card
+ * focus passes belong exclusively to the strand focus region. */
+export function isShellCardFocused(state: ShellState, index: number): boolean {
+  return state.surface === 'home' && state.focusRegion === 'strand' && state.selectedIndex === index;
+}
+
 /** The compact icon is never used as a wide title plate. */
 export function selectedShellBackground(game: GameInstall | undefined, surface: ShellSurface): string | undefined {
   return surface === 'home' ? game?.backgroundPath : undefined;

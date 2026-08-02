@@ -42,18 +42,25 @@ It currently provides:
   corner geometry, spring movement, caption placement, and eleven-card cap;
 - the native card-focus geometry: a 3px line offset 3px outside the card, with
   the observed cool-to-warm edge treatment, plus a separate translucent card
-  wash/shimmer pass;
+  shimmer pass. The area remains clear for the first three seconds of Sony's
+  five-second cycle and pulses only during the final two seconds;
 - a 56px circular system-icon focus surface with delayed glyph inversion;
 - real React Native Windows focus transfers between strand, spaces, and system
-  controls; Arrow Up/Down no longer leaves an old desktop target active;
+  controls; Arrow Up/Down no longer leaves an old desktop target active. The
+  remembered game selection stays enlarged when focus visits the top band, but
+  its card focus passes are hidden so card and system highlights cannot appear
+  simultaneously;
 - selected-title `pic0` composition with the recovered 633.333ms Normal HOME
   transition timing, while Settings returns to the shell plate;
-- a local-only native-frame bridge: when the user's oracle contains the
-  recovered `shell-shot-small-persistent` sequence, Big Picture plays its six
-  1920x1080 samples at their authored 100ms cadence in a ping-pong sequence
-  beneath title artwork. The later `shell-shot-bottom-shared-native-5` proof is
-  retained as a fallback, but two of its three samples are byte-identical and
-  it is therefore not preferred for visible motion.
+- a local-only native-frame bridge: Big Picture dynamically enumerates
+  timestamped renderer output instead of baking a frame count into the app.
+  The preferred oracle sequence is `rnw-native-bottom-shared-51-v2`: 51 unique
+  1920x1080 frames at 10fps, produced by the persistent original-shader player
+  for raw Bottom state 1 using the setter-proven shared `spread_expanded`
+  particle body. It runs 0→5s→0 as a ping-pong replay beneath title artwork.
+  The six-frame `shell-shot-small-persistent` sequence and the later
+  `shell-shot-bottom-shared-native-5` proof remain fallbacks; two of the latter
+  proof's three samples are byte-identical.
   The frames are not copied into source control or the application package;
   absence is a clean fallback, not an error. When the sequence is present the
   generic brand-art fallback is suppressed, so it cannot obscure the native
@@ -66,6 +73,9 @@ It currently provides:
 - Prosperismo-owned settings categories, an undimmed dark options popup using
   the recovered 652px/16px/190px control-menu geometry, and a transient
   in-app toast with the recovered 40px-icon and 300ms/3500ms/200ms lifecycle;
+- Settings category focus is attached to the actual focusable rail row rather
+  than a non-interactive preview value, and route entry transfers native focus
+  to that row;
 - keyboard/controller capture that keeps Home navigation inside Big Picture.
 - a native Big Picture presenter transition marshalled through React Native's
   UI dispatcher; changing the AppWindow presenter on the module thread can

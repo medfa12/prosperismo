@@ -53,6 +53,7 @@ import {
 } from './src/core/process';
 import {parseTrophyPackage, type TrophySet} from './src/core/trophies';
 import {BigPictureShell, type FirmwareShellIconPaths} from './src/bigPicture/BigPictureShell';
+import {findNativeBackgroundSequence} from './src/bigPicture/nativeBackground';
 import {
   hasNativeProsperismoHost,
   prosperismoHost,
@@ -68,26 +69,10 @@ const brandArtwork = {
 
 // These are user-local outputs from the recovered native particle renderer.
 // They are deliberately not copied into the repository or application package.
-const ORACLE_NATIVE_BACKGROUND_SEQUENCES = [
-  {
-    frameMs: 100,
-    frames: [
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent\\native-background_0000ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent\\native-background_0100ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent\\native-background_0200ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent\\native-background_0300ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent\\native-background_0400ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent\\native-background_0500ms.png',
-    ],
-  },
-  {
-    frameMs: 500,
-    frames: [
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_0000ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_0500ms.png',
-      'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_1000ms.png',
-    ],
-  },
+const ORACLE_NATIVE_BACKGROUND_DIRECTORIES = [
+  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\rnw-native-bottom-shared-51-v2',
+  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent',
+  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5',
 ] as const;
 
 const ORACLE_SHELL_ICON_PATHS: Required<FirmwareShellIconPaths> = {
@@ -388,14 +373,10 @@ export default function App() {
   useEffect(() => subscribeToProcessLifecycle(prosperismoHost, event => setSession(current => applyProcessEvent(current, event))), []);
   useEffect(() => {
     let mounted = true;
-    Promise.all(ORACLE_NATIVE_BACKGROUND_SEQUENCES.map(async sequence => ({
-      sequence,
-      found: await Promise.all(sequence.frames.map(path => prosperismoHost.fileExists(path))),
-    })))
-      .then(candidates => {
-        const available = candidates.find(candidate => candidate.found.every(Boolean));
-        if (mounted && available) {
-          setNativeBackground({frames: [...available.sequence.frames], frameMs: available.sequence.frameMs});
+    findNativeBackgroundSequence(prosperismoHost, ORACLE_NATIVE_BACKGROUND_DIRECTORIES)
+      .then(sequence => {
+        if (mounted && sequence) {
+          setNativeBackground({frames: sequence.frames, frameMs: sequence.frameMs});
         }
       })
       .catch(() => undefined);

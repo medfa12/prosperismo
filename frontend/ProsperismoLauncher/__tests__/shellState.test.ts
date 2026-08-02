@@ -1,4 +1,4 @@
-import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground} from '../src/bigPicture/shellState';
+import {INITIAL_SHELL_STATE, isShellCardFocused, reduceShellState, selectedShellBackground} from '../src/bigPicture/shellState';
 import {SHELL_FOCUSED_TILE_SCALE, SHELL_METRICS, shellTileBaseX} from '../src/bigPicture/shellMetrics';
 
 describe('Sony-grounded shell state', () => {
@@ -29,6 +29,8 @@ describe('Sony-grounded shell state', () => {
     const system = reduceShellState(selected, {type: 'select-system', index: 1});
     expect(system.selectedIndex).toBe(3);
     expect(system.focusRegion).toBe('system');
+    expect(isShellCardFocused(system, 3)).toBe(false);
+    expect(isShellCardFocused(selected, 3)).toBe(true);
   });
 
   it('keeps the native card line separate from the control-centre focus width', () => {
