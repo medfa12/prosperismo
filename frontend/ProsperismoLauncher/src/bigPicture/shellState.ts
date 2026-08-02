@@ -54,3 +54,8 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
 export function selectedShellGame(games: readonly GameInstall[], state: ShellState): GameInstall | undefined {
   return games[clamp(state.selectedIndex, games.length)];
 }
+
+/** The compact icon is never used as a wide title plate. */
+export function selectedShellBackground(game: GameInstall | undefined, surface: ShellSurface): string | undefined {
+  return surface === 'home' ? game?.backgroundPath : undefined;
+}

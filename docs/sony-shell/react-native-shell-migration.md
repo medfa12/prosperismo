@@ -40,8 +40,12 @@ It currently provides:
 - independent remembered game selection and top-bar focus;
 - the recovered 106→168 title-card scale, 8/16px strand gaps, scaled card
   corner geometry, spring movement, caption placement, and eleven-card cap;
-- a narrow card line pass plus a separate translucent card wash/shimmer pass;
+- the native card-focus geometry: a 3px line offset 3px outside the card, with
+  the observed cool-to-warm edge treatment, plus a separate translucent card
+  wash/shimmer pass;
 - a 56px circular system-icon focus surface with delayed glyph inversion;
+- selected-title `pic0` composition with the firmware default 1000ms
+  cross-fade, while Settings returns to the shell plate;
 - Prosperismo-owned settings categories, options dialog, and transient toast;
 - keyboard/controller capture that keeps Home navigation inside Big Picture.
 
@@ -65,3 +69,8 @@ integration task and must not be replaced with invented ambient motion.
 
 Run `npm run typecheck`, `npm run lint`, and `npm test -- --runInBand` from
 `frontend/ProsperismoLauncher` after shell changes.
+
+`npm run windows:bundle` is also part of the gate. The Metro configuration
+explicitly supports a worktree that shares a dependency cache through a Windows
+junction, so bundle resolution remains reproducible without duplicating the
+large dependency tree.

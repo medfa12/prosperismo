@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import type {GameInstall} from '../core/models';
-import {INITIAL_SHELL_STATE, reduceShellState, selectedShellGame, type ShellFocusRegion} from './shellState';
+import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame, type ShellFocusRegion} from './shellState';
 import {
   SHELL_FOCUSED_TILE_RADIUS,
   SHELL_FOCUSED_TILE_SCALE,
@@ -71,8 +71,10 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
   return (
     <Animated.View pointerEvents="none" style={[shellStyles.focusFrame, {opacity: phase}]}>
       <View style={shellStyles.focusLine} />
-      <View style={shellStyles.focusWash} />
-      <Animated.View style={[shellStyles.focusShimmer, {transform: [{translateX: shimmerTranslate}, {rotate: '-24deg'}]}]} />
+      <View style={shellStyles.focusWashClip}>
+        <View style={shellStyles.focusWash} />
+        <Animated.View style={[shellStyles.focusShimmer, {transform: [{translateX: shimmerTranslate}, {rotate: '-24deg'}]}]} />
+      </View>
     </Animated.View>
   );
 }
@@ -142,6 +144,41 @@ function SystemIconButton({label, symbol, focused, onFocus, onPress}: {
   );
 }
 
+function fileImageSource(path: string | undefined): ImageSourcePropType | undefined {
+  return path ? {uri: `file:///${path.replace(/\\/g, '/')}`} : undefined;
+}
+
+/**
+ * The HOME image transition has an exact 1000ms default cross-fade. Native
+ * ripple/blur paths remain out of scope until the renderer exposes them.
+ */
+function ReactiveBackground({backgroundPath, fallback, dimmed}: {
+  backgroundPath?: string;
+  fallback: ImageSourcePropType;
+  dimmed: boolean;
+}) {
+  const nextSource = fileImageSource(backgroundPath) ?? fallback;
+  const nextKey = backgroundPath ?? 'shell-default';
+  const [current, setCurrent] = useState({key: nextKey, source: nextSource});
+  const [previous, setPrevious] = useState<ImageSourcePropType>();
+  const crossFade = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (current.key === nextKey) {
+      return;
+    }
+    setPrevious(current.source);
+    setCurrent({key: nextKey, source: nextSource});
+    crossFade.setValue(0);
+    const animation = Animated.timing(crossFade, {toValue: 1, duration: 1000, easing: Easing.linear, useNativeDriver: true});
+    animation.start(({finished}) => { if (finished) { setPrevious(undefined); } });
+    return () => animation.stop();
+  }, [crossFade, current, nextKey, nextSource]);
+  return <>
+    {previous && <Animated.Image source={previous} style={[shellStyles.backgroundArtwork, {opacity: crossFade.interpolate({inputRange: [0, 1], outputRange: [dimmed ? 0.1 : 0.18, 0]})}]} />}
+    <Animated.Image source={current.source} style={[shellStyles.backgroundArtwork, {opacity: crossFade.interpolate({inputRange: [0, 1], outputRange: [0, dimmed ? 0.1 : 0.18]})}]} />
+  </>;
+}
+
 function HomeSurface({games, selectedIndex, onSelect, onLaunch, onOptions, onLibrary}: {
   games: readonly GameInstall[];
   selectedIndex: number;
@@ -196,13 +233,11 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
   const [toast, setToast] = useState<string>();
-  const backgroundOpacity = useRef(new Animated.Value(0.18)).current;
   const {width, height} = useWindowDimensions();
   const scale = Math.min(width / SHELL_METRICS.canvas.width, height / SHELL_METRICS.canvas.height);
   const selected = selectedShellGame(games, state);
   const shellGames = useMemo(() => games.slice(0, SHELL_METRICS.strand.maxItems), [games]);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
-  useEffect(() => { Animated.timing(backgroundOpacity, {toValue: state.surface === 'home' ? 0.18 : 0.1, duration: 300, easing: easeOutBreeze, useNativeDriver: true}).start(); }, [backgroundOpacity, state.surface]);
   useEffect(() => { if (!toast) { return undefined; } const timer = setTimeout(() => setToast(undefined), 2400); return () => clearTimeout(timer); }, [toast]);
   const focus = (region: ShellFocusRegion) => dispatch({type: 'focus', region});
   const launch = (game: GameInstall) => { setOptionsGame(undefined); setToast(`Launching ${game.titleName}`); onLaunch(game); };
@@ -217,7 +252,7 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
-    <Animated.Image source={artwork} style={[shellStyles.backgroundArtwork, {opacity: backgroundOpacity}]} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
+    <ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
     <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map(space => <Pressable key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>
     {state.surface !== 'home' && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
     {state.surface === 'home' && <HomeSurface games={shellGames} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={game => setOptionsGame(game)} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
@@ -243,7 +278,7 @@ const shellStyles = StyleSheet.create({
   clock: {marginLeft: 40, color: '#fff', fontSize: 28, minWidth: 120, textAlign: 'right'},
   strand: {position: 'absolute', left: 0, top: 0, width: 1920, height: 294}, tilePosition: {position: 'absolute', left: 0, top: 157, width: 106, height: 106, alignItems: 'center', justifyContent: 'center'},
   tile: {width: 106, height: 106, borderRadius: 16, overflow: 'hidden', backgroundColor: '#292929'}, tileImage: {width: '100%', height: '100%', resizeMode: 'cover'}, tileFallback: {flex: 1, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, tileMonogram: {fontSize: 48, color: '#fff', fontWeight: '700'},
-  focusFrame: {position: 'absolute', left: -31, top: -31, width: 168, height: 168, borderRadius: SHELL_FOCUSED_TILE_RADIUS, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: 2, borderColor: 'rgba(255,255,255,0.88)', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusWash: {position: 'absolute', inset: 2, backgroundColor: 'rgba(255,255,255,0.13)', borderRadius: SHELL_FOCUSED_TILE_RADIUS - 2}, focusShimmer: {position: 'absolute', left: 68, top: -70, width: 32, height: 308, backgroundColor: 'rgba(255,255,255,0.17)'},
+  focusFrame: {position: 'absolute', left: -37, top: -37, width: 180, height: 180, borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)', borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset}, focusWashClip: {position: 'absolute', left: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, top: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, width: 168, height: 168, overflow: 'hidden', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusWash: {position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.13)'}, focusShimmer: {position: 'absolute', left: 68, top: -70, width: 32, height: 308, backgroundColor: 'rgba(255,255,255,0.17)'},
   libraryShortcut: {position: 'absolute', left: 1602, top: 157, width: 106, height: 106, borderRadius: 16, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, libraryShortcutGlyph: {fontSize: 44, color: '#fff'},
   experienceCaption: {position: 'absolute', top: 106, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', fontSize: 30, fontWeight: '600'}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', fontSize: 18}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
   backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},

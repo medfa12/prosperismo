@@ -23,7 +23,10 @@ export const SHELL_METRICS = {
   },
   contentWidth: 1576,
   gridItemMargin: 20,
-  focusRingWidth: 8,
+  // FocusRenderManager defaults: 3px line + 3px exterior offset. The 8px
+  // control-centre constant is a different control family, not the card line.
+  focusLineWidth: 3,
+  focusLineOffset: 3,
   focusInset: 3,
   panelRadius: 16,
   colors: {

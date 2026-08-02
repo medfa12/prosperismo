@@ -1,5 +1,5 @@
-import {INITIAL_SHELL_STATE, reduceShellState} from '../src/bigPicture/shellState';
-import {SHELL_FOCUSED_TILE_SCALE, shellTileBaseX} from '../src/bigPicture/shellMetrics';
+import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground} from '../src/bigPicture/shellState';
+import {SHELL_FOCUSED_TILE_SCALE, SHELL_METRICS, shellTileBaseX} from '../src/bigPicture/shellMetrics';
 
 describe('Sony-grounded shell state', () => {
   it('clamps strand selection to installed games', () => {
@@ -28,5 +28,16 @@ describe('Sony-grounded shell state', () => {
     const system = reduceShellState(selected, {type: 'select-system', index: 1});
     expect(system.selectedIndex).toBe(3);
     expect(system.focusRegion).toBe('system');
+  });
+
+  it('keeps the native card line separate from the control-centre focus width', () => {
+    expect(SHELL_METRICS.focusLineWidth).toBe(3);
+    expect(SHELL_METRICS.focusLineOffset).toBe(3);
+  });
+
+  it('uses pic0 only for the selected Home title plate', () => {
+    const game = {backgroundPath: 'D:\\Games\\Astro\\sce_sys\\pic0.png'} as any;
+    expect(selectedShellBackground(game, 'home')).toBe(game.backgroundPath);
+    expect(selectedShellBackground(game, 'settings')).toBeUndefined();
   });
 });
