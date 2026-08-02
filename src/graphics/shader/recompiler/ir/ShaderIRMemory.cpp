@@ -62,6 +62,7 @@ Opcode LoweredImageOpcode(Decoder::Opcode opcode) {
 	switch (opcode) {
 		case Decoder::Opcode::ImageGetResinfo: return Opcode::ImageGetResinfo;
 		case Decoder::Opcode::ImageGetLod: return Opcode::ImageGetLod;
+		case Decoder::Opcode::ImageBvhIntersectRay: return Opcode::ImageBvhIntersectRay;
 		case Decoder::Opcode::ImageLoad:
 		case Decoder::Opcode::ImageLoadMip: return Opcode::ImageLoad;
 		case Decoder::Opcode::ImageGather4Lz:
@@ -475,6 +476,13 @@ bool LowerImageOperation(const Decoder::Instruction& decoded, BasicBlock& block,
                          std::string* error) {
 	Instruction inst;
 	inst.pc = decoded.pc;
+	if (decoded.opcode == Decoder::Opcode::ImageBvhIntersectRay) {
+		inst.op        = Opcode::ImageBvhIntersectRay;
+		inst.src_count = 0;
+		inst.memory    = MemoryInfoFromDecoded(decoded, ResourceKind::None);
+		return LowerRegisterOperand(decoded.dst, inst.dst, error) ?
+		           (block.instructions.push_back(inst), true) : false;
+	}
 	if (decoded.opcode == Decoder::Opcode::ImageStore ||
 	    decoded.opcode == Decoder::Opcode::ImageStoreMip) {
 		inst.op             = Opcode::ImageStore;
@@ -666,6 +674,7 @@ bool LowerMemoryInstruction(const Decoder::Instruction& decoded, BasicBlock& blo
 		case Decoder::Opcode::ImageGather4CO:
 		case Decoder::Opcode::ImageGather4CLzO:
 		case Decoder::Opcode::ImageGather4H:
+		case Decoder::Opcode::ImageBvhIntersectRay:
 		case Decoder::Opcode::ImageSample: return LowerImageOperation(decoded, block, error);
 		case Decoder::Opcode::ImageAtomicAdd:
 		case Decoder::Opcode::ImageAtomicUMin:
@@ -809,6 +818,7 @@ bool IsMemoryOpcode(Decoder::Opcode opcode) {
 		case Decoder::Opcode::ImageGather4CO:
 		case Decoder::Opcode::ImageGather4CLzO:
 		case Decoder::Opcode::ImageGather4H:
+		case Decoder::Opcode::ImageBvhIntersectRay:
 		case Decoder::Opcode::ImageSample: return true;
 		default: return false;
 	}

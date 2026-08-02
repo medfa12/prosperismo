@@ -246,6 +246,7 @@ Opcode DecodeMimgOpcode(uint32_t opcode, const MimgSampleInfo* sample, const Mim
 		case 0x09u: return Opcode::ImageStoreMip;
 		case 0x0eu: return Opcode::ImageGetResinfo;
 		case 0x60u: return Opcode::ImageGetLod;
+		case 0xe6u: return Opcode::ImageBvhIntersectRay;
 		default: return Opcode::Unsupported;
 	}
 }
@@ -273,7 +274,8 @@ uint32_t DecodeMimgAddressComponents(uint32_t opcode, ImageDimension dimension,
 		return ImageCoordComponents(dimension);
 	}
 
-	switch (opcode) {
+		switch (opcode) {
+		case 0xe6u: return 11u;
 		case 0x01u:
 		case 0x09u: return ImageCoordComponents(dimension) + 1u;
 		case 0x00u:
@@ -335,7 +337,8 @@ bool DecodeMimg(uint32_t pc, std::span<const uint32_t> code, uint32_t word_index
 	inst.opcode_id          = opcode;
 	inst.opcode             = DecodeMimgOpcode(opcode, sample, gather, atomic);
 	inst.dmask              = (word0 >> 8u) & 0xfu;
-	inst.data_dwords        = gather != nullptr ? 4u : CountDmaskComponents(inst.dmask);
+	inst.data_dwords = opcode == 0xe6u ? 4u :
+	                   (gather != nullptr ? 4u : CountDmaskComponents(inst.dmask));
 	inst.glc                = ((word0 >> 13u) & 1u) != 0;
 	inst.slc                = ((word0 >> 25u) & 1u) != 0;
 	inst.image_sample_flags = DecodeMimgSampleFlags(sample, gather);
@@ -358,12 +361,20 @@ bool DecodeMimg(uint32_t pc, std::span<const uint32_t> code, uint32_t word_index
 		SetUnsupported(inst, Family::MIMG, opcode,
 		               "MIMG image gather requires exactly one dmask bit");
 	}
+	if (opcode == 0xe6u && (a16 || inst.dmask != 0xfu)) {
+		SetUnsupported(inst, Family::MIMG, opcode,
+		               "gfx1013 BVH fallback requires the A16=0, dmask=0xf form");
+	}
 
 	DecodeVectorGpr(vdata, inst.dst, nullptr);
 	DecodeVectorGpr(vaddr, inst.src0, nullptr);
 	DecodeScalarSource(srsrc * 4u, pc, inst.src1, nullptr);
-	DecodeScalarSource(ssamp * 4u, pc, inst.src2, nullptr);
-	inst.src_count = 3;
+	if (opcode == 0xe6u) {
+		inst.src_count = 2;
+	} else {
+		DecodeScalarSource(ssamp * 4u, pc, inst.src2, nullptr);
+		inst.src_count = 3;
+	}
 	return true;
 }
 

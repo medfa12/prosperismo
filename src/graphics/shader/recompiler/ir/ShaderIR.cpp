@@ -1054,6 +1054,7 @@ bool IsControlOpcode(Decoder::Opcode opcode) {
 bool IsTerminatorOpcode(Decoder::Opcode opcode) {
 	switch (opcode) {
 		case Decoder::Opcode::SEndpgm:
+		case Decoder::Opcode::STrap:
 		case Decoder::Opcode::SBranch:
 		case Decoder::Opcode::SCbranchScc0:
 		case Decoder::Opcode::SCbranchScc1:

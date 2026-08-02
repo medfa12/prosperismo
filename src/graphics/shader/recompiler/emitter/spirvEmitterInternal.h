@@ -1090,6 +1090,8 @@ uint32_t ImageGatherComponent(uint32_t dmask);
 
 void EmitImageGather4(EmitterState& state, const IR::Instruction& inst);
 
+void EmitImageBvhIntersectRay(EmitterState& state, const IR::Instruction& inst);
+
 void EmitMoveU32(EmitterState& state, const IR::Instruction& inst);
 
 void EmitMoveF32Bits(EmitterState& state, const IR::Instruction& inst);
@@ -1133,6 +1135,8 @@ void EmitUnaryU32(EmitterState& state, const IR::Instruction& inst, uint32_t opc
 void EmitUnaryU64(EmitterState& state, const IR::Instruction& inst, uint32_t opcode);
 
 void EmitFindLsbU32(EmitterState& state, const IR::Instruction& inst);
+
+void EmitFindLsbU64(EmitterState& state, const IR::Instruction& inst);
 
 void EmitFindMsbFromHighU32(EmitterState& state, const IR::Instruction& inst);
 

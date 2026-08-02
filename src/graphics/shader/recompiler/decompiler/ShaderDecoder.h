@@ -43,6 +43,7 @@ enum class Opcode {
 	SBcnt1I32B32,
 	SBcnt1I32B64,
 	SFf1I32B32,
+	SFf1I32B64,
 	SFlbitI32B64,
 	SBitreplicateB64B32,
 	SGetpcB64,
@@ -515,6 +516,7 @@ enum class Opcode {
 	ImageGather4CO,
 	ImageGather4CLzO,
 	ImageGather4H,
+	ImageBvhIntersectRay,
 	VInterpP1F32,
 	VInterpP2F32,
 	VInterpMovF32,
@@ -534,6 +536,7 @@ enum class Opcode {
 	SSleep,
 	STtraceData,
 	SInstPrefetch,
+	STrap,
 	SEndpgm,
 	Exp
 };

@@ -240,6 +240,7 @@ std::string InstructionToString(const Instruction& inst) {
 		case Opcode::MaskedBitCountLowU32: text += "MaskedBitCountLowU32"; break;
 		case Opcode::MaskedBitCountHighU32: text += "MaskedBitCountHighU32"; break;
 		case Opcode::FindLsbU32: text += "FindLsbU32"; break;
+		case Opcode::FindLsbU64: text += "FindLsbU64"; break;
 		case Opcode::FindMsbFromHighU32: text += "FindMsbFromHighU32"; break;
 		case Opcode::FindMsbFromHighU64: text += "FindMsbFromHighU64"; break;
 		case Opcode::BitFieldMaskU32: text += "BitFieldMaskU32"; break;
@@ -495,6 +496,7 @@ std::string InstructionToString(const Instruction& inst) {
 		case Opcode::ImageStore: text += "ImageStore"; break;
 		case Opcode::ImageSample: text += "ImageSample"; break;
 		case Opcode::ImageGather4: text += "ImageGather4"; break;
+		case Opcode::ImageBvhIntersectRay: text += "ImageBvhIntersectRay"; break;
 		case Opcode::LoadInputF32: text += "LoadInputF32"; break;
 		case Opcode::Export: text += "Export"; break;
 	}

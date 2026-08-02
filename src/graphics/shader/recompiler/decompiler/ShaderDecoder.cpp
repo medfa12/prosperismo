@@ -436,6 +436,7 @@ std::string OpcodeToString(Opcode opcode) {
 		case Opcode::SBcnt1I32B32: return "s_bcnt1_i32_b32";
 		case Opcode::SBcnt1I32B64: return "s_bcnt1_i32_b64";
 		case Opcode::SFf1I32B32: return "s_ff1_i32_b32";
+		case Opcode::SFf1I32B64: return "s_ff1_i32_b64";
 		case Opcode::SFlbitI32B64: return "s_flbit_i32_b64";
 		case Opcode::SBitreplicateB64B32: return "s_bitreplicate_b64_b32";
 		case Opcode::SGetpcB64: return "s_getpc_b64";
@@ -906,6 +907,7 @@ std::string OpcodeToString(Opcode opcode) {
 		case Opcode::ImageGather4CO: return "image_gather4_c_o";
 		case Opcode::ImageGather4CLzO: return "image_gather4_c_lz_o";
 		case Opcode::ImageGather4H: return "image_gather4h";
+		case Opcode::ImageBvhIntersectRay: return "image_bvh_intersect_ray";
 		case Opcode::VInterpP1F32: return "v_interp_p1_f32";
 		case Opcode::VInterpP2F32: return "v_interp_p2_f32";
 		case Opcode::VInterpMovF32: return "v_interp_mov_f32";
@@ -924,6 +926,7 @@ std::string OpcodeToString(Opcode opcode) {
 		case Opcode::SSleep: return "s_sleep";
 		case Opcode::STtraceData: return "s_ttracedata";
 		case Opcode::SInstPrefetch: return "s_inst_prefetch";
+		case Opcode::STrap: return "s_trap";
 		case Opcode::SEndpgm: return "s_endpgm";
 		case Opcode::Exp: return "exp";
 		case Opcode::Unsupported: return "unsupported";
@@ -997,6 +1000,7 @@ std::string InstructionToString(const Instruction& inst) {
 		case Opcode::SBrevB32:
 		case Opcode::SBcnt1I32B32:
 		case Opcode::SFf1I32B32:
+		case Opcode::SFf1I32B64:
 		case Opcode::SNotB64:
 		case Opcode::SWqmB64:
 		case Opcode::SAndSaveexecB32:
@@ -1024,6 +1028,7 @@ std::string InstructionToString(const Instruction& inst) {
 		case Opcode::SSendmsg:
 		case Opcode::STtraceData:
 		case Opcode::SInstPrefetch:
+		case Opcode::STrap:
 			return WithUnsupportedReason(inst, fmt::format("0x{:08x}: {} {}", inst.pc,
 			                                               OpcodeToString(inst.opcode).c_str(),
 			                                               OperandToString(inst.src0).c_str()));
@@ -1063,7 +1068,8 @@ std::string InstructionToString(const Instruction& inst) {
 		case Opcode::ImageGather4LzO:
 		case Opcode::ImageGather4CO:
 		case Opcode::ImageGather4CLzO:
-		case Opcode::ImageGather4H: return WithUnsupportedReason(inst, FormatMimg(inst));
+		case Opcode::ImageGather4H:
+		case Opcode::ImageBvhIntersectRay: return WithUnsupportedReason(inst, FormatMimg(inst));
 		case Opcode::SLoadDword:
 		case Opcode::SLoadDwordx2:
 		case Opcode::SLoadDwordx4:

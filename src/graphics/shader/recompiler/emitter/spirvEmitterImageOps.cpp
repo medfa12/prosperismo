@@ -339,4 +339,15 @@ void EmitImageGather4(EmitterState& state, const IR::Instruction& inst) {
 	}
 }
 
+void EmitImageBvhIntersectRay(EmitterState& state, const IR::Instruction& inst) {
+	// Vulkan exposes ray queries through a different object model, so a raw Prospero BVH
+	// descriptor cannot be translated directly. Astro initializes and tests all four results
+	// against UINT_MAX as its no-child/miss sentinel; use that explicit guest path until the
+	// acceleration-structure bridge exists. This intentionally disables the RT effect.
+	const auto miss = ConstantU32(state, 0xffffffffu);
+	for (uint32_t i = 0; i < 4u; i++) {
+		EmitStoreU32(state, OffsetRegisterOperand(inst.dst, i), miss);
+	}
+}
+
 } // namespace Libs::Graphics::ShaderRecompiler::Spirv::Emitter

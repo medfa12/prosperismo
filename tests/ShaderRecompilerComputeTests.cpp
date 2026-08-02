@@ -8439,6 +8439,7 @@ CoverageClass ClassifyOpcode(ShaderOpcode opcode, const std::set<ShaderOpcode>& 
 		case Opcode::SSleep:
 		case Opcode::STtraceData:
 		case Opcode::SInstPrefetch:
+		case Opcode::STrap:
 		case Opcode::SEndpgm: return CoverageClass::ControlOrMarker;
 
 		case Opcode::VAddF32:
@@ -11148,6 +11149,33 @@ TestCase VectorVop3CompareNeU64OnGpu() {
 	         O::SEndpgm}};
 }
 
+TestCase ScalarFf1I32B64AstroEncodingOnGpu() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	AppendSMovLiteral(&code, 106, 0u);
+	AppendSMovLiteral(&code, 107, 0x10u);
+	code.push_back(0xbeeb146au); // Sony: s_ff1_i32_b64 vcc_hi, vcc
+	AppendStoreSgpr(&code, 107, 0);
+
+	AppendSMovLiteral(&code, 106, 0x8u);
+	AppendSMovLiteral(&code, 107, 0x10u);
+	code.push_back(0xbeeb146au);
+	AppendStoreSgpr(&code, 107, 1);
+
+	AppendSMovLiteral(&code, 106, 0u);
+	AppendSMovLiteral(&code, 107, 0u);
+	code.push_back(0xbeeb146au);
+	AppendStoreSgpr(&code, 107, 2);
+	AppendEnd(&code);
+
+	return {"ScalarFf1I32B64AstroEncodingOnGpu",
+	        code,
+	        {},
+	        {36u, 3u, 0xffffffffu},
+	        {O::SMovB32, O::SFf1I32B64, O::VMovB32, O::BufferStoreDword, O::SEndpgm}};
+}
+
 TestCase VectorVop3CompareGtU64OnGpu() {
 	using O = ShaderOpcode;
 
@@ -11218,6 +11246,45 @@ TestCase VectorSubrevBorrowCarryOnGpu() {
 	        {5, 0, 4, 0, 0xffffffffu, 1, 4, 0},
 	        {O::VMovB32, O::SMovB32, O::VSubrevCoCiU32, O::VCndmaskB32, O::BufferStoreDword,
 	         O::SMovB64, O::SEndpgm}};
+}
+
+TestCase ScalarTrapTerminatesInvocationOnGpu() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	AppendVMovU32(&code, 1, 7);
+	AppendStoreVgpr(&code, 1, 0);
+	code.push_back(0xbf920001u); // s_trap 1 / Sony _SCE_BREAK()
+	AppendVMovU32(&code, 2, 9);
+	AppendEnd(&code);
+
+	return {"ScalarTrapTerminatesInvocationOnGpu",
+	        code,
+	        {},
+	        {7},
+	        {O::VMovB32, O::BufferStoreDword, O::STrap, O::SEndpgm}};
+}
+
+TestCase ImageBvhIntersectRayUsesGuestMissSentinelOnGpu() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	for (u32 reg = 5; reg <= 8; reg++) {
+		AppendVMovU32(&code, reg, 0);
+	}
+	// Exact Astro gfx1013 instruction at shader PC 0x2190, verified with Sony's
+	// sceShaderIsaDisassembleRaw as IMAGE_BVH_INTERSECT_RAY (11 address VGPRs, NSA).
+	code.insert(code.end(), {0xf1989f07u, 0x00040505u, 0x4442413du, 0x4543403eu, 0x00004746u});
+	for (u32 reg = 5; reg <= 8; reg++) {
+		AppendStoreVgpr(&code, reg, reg - 5u);
+	}
+	AppendEnd(&code);
+
+	return {"ImageBvhIntersectRayUsesGuestMissSentinelOnGpu",
+	        code,
+	        {},
+	        {0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu},
+	        {O::VMovB32, O::ImageBvhIntersectRay, O::BufferStoreDword, O::SEndpgm}};
 }
 
 TestCase VectorCompareClassF32() {
@@ -14632,6 +14699,7 @@ std::vector<TestCase> MakeCases() {
 	AddCase(ScalarShiftAddAndMaskOps);
 	AddCase(ScalarNotB64UpdatesScc);
 	AddCase(ScalarFlbitI32B64Gpu);
+	AddCase(ScalarFf1I32B64AstroEncodingOnGpu);
 	AddCase(ScalarSaveExecOps);
 	AddCase(ScalarOrn2SaveexecUsesSourceOrNotExec);
 	AddCase(ScalarGetpcWritesNextInstructionPc);
@@ -14690,6 +14758,8 @@ std::vector<TestCase> MakeCases() {
 	AddCase(VectorVop3CompareNeU64OnGpu);
 	AddCase(VectorVop3CompareGtU64OnGpu);
 	AddCase(VectorSubrevBorrowCarryOnGpu);
+	AddCase(ScalarTrapTerminatesInvocationOnGpu);
+	AddCase(ImageBvhIntersectRayUsesGuestMissSentinelOnGpu);
 	AddCase(VectorCompareClassF32);
 	AddCase(VectorCompareF16Ops);
 	AddCase(Vop2SdwaCndmaskSourceModifier);
@@ -17421,6 +17491,9 @@ int main(int argc, char** argv) {
 		VulkanHarness vulkan;
 		RunCase(&vulkan, VectorVop3CompareGtU64OnGpu());
 		RunCase(&vulkan, VectorSubrevBorrowCarryOnGpu());
+		RunCase(&vulkan, ScalarTrapTerminatesInvocationOnGpu());
+		RunCase(&vulkan, ImageBvhIntersectRayUsesGuestMissSentinelOnGpu());
+		RunCase(&vulkan, ScalarFf1I32B64AstroEncodingOnGpu());
 		return 0;
 	}
 	if (argc == 2 && std::strcmp(argv[1], "--clip-control-only") == 0) {

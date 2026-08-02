@@ -207,7 +207,8 @@ void CollectRegisters(const IR::Program& program, std::vector<RegisterBinding>& 
 					CollectSequentialRegisters(registers, inst.src[i], 2);
 				}
 			}
-			if (inst.op == IR::Opcode::BitCountU64 || inst.op == IR::Opcode::FindMsbFromHighU64) {
+			if (inst.op == IR::Opcode::BitCountU64 || inst.op == IR::Opcode::FindLsbU64 ||
+			    inst.op == IR::Opcode::FindMsbFromHighU64) {
 				CollectSequentialRegisters(registers, inst.src[0], 2);
 			}
 			if (inst.op == IR::Opcode::CompareGtU64 || inst.op == IR::Opcode::CompareNeU64) {
@@ -246,6 +247,9 @@ void CollectRegisters(const IR::Program& program, std::vector<RegisterBinding>& 
 				CollectSequentialRegisters(registers, inst.dst, inst.memory.data_dwords);
 				CollectSequentialRegisters(registers, inst.src[0],
 				                           inst.memory.image_address_components);
+			}
+			if (inst.op == IR::Opcode::ImageBvhIntersectRay) {
+				CollectSequentialRegisters(registers, inst.dst, 4);
 			}
 			if (inst.op == IR::Opcode::ImageStore) {
 				CollectSequentialRegisters(registers, inst.src[0], inst.memory.data_dwords);

@@ -29,16 +29,44 @@ independent blockers before it could reach that boundary:
   corresponding VOP3B bytes as the same operation with an arbitrary scalar
   borrow mask. Both encodings now lower as `src1 - src0 - borrow_in`, produce
   the architectural borrow mask, and pass true/false/underflow GPU tests.
-- **CURRENT BLOCKER:** the same tiled-lighting compute shader now reaches PC
-  `0x1f80`, raw `01 00 92 bf`. Sony renders this as `_SCE_BREAK()` and LLVM's
-  byte-exact gfx10 tests identify it as `s_trap 1`. This requires an explicit
-  CFG and Vulkan trap policy; treating it as an ordinary no-op is not justified.
+- **CONFIRMED -- gfx1013 trap policy:** PC `0x1f80`, raw `01 00 92 bf`, is
+  Sony `_SCE_BREAK()` / LLVM `s_trap 1`. On the Windows/Vulkan path it now
+  terminates the invocation explicitly; it is neither ignored nor allowed to
+  fall through. A focused Vulkan regression pins the CFG behavior.
+- **CONFIRMED -- gfx1013 BVH decode and explicit capability fallback:** Sony's
+  ISA library identifies Astro's exact five-word MIMG at PC `0x2190` as
+  `image_bvh_intersect_ray ... dmask:0xf ... r128 nsa`. Prosperismo decodes the
+  11-address, four-result gfx1013 form. Vulkan has no direct raw-Prospero-BVH
+  descriptor equivalent, so the current capability policy writes four
+  `UINT_MAX` results. This is not claimed as ray-tracing implementation: Astro
+  itself initializes and tests all four results against `-1` as its miss/no-child
+  sentinel, so the policy deliberately disables the RT effect through a guest
+  path rather than inventing a hit.
+- **CONFIRMED -- gfx1013 `s_ff1_i32_b64`:** Sony disassembles raw `6a 14 eb be`
+  as `s_ff1_i32_b64 vcc_hi, vcc`. The 64-bit least-significant-set-bit operation
+  now handles low-half, high-half, zero and Astro's overlapping source/destination
+  form in a focused Vulkan regression.
+- **CURRENT BLOCKER -- GPU-dynamic raw SMEM address binding:** decode, CFG and IR
+  now complete for `cs=0x500571000`, but resource tracking rejects the
+  `s_load_dwordx4 s20, s8, null` at PC `0x20b8`: the traversal loop constructs
+  `s8:s9` from a GPU-dynamic node value, so descriptor source 29 contains an
+  unknown low dword. Prosperismo can materialize CPU-resolvable SRT addresses
+  and fixed address snapshots, but cannot yet bind/dereference a raw scalar
+  guest address selected by the running shader. SharpEmu is a useful proven
+  differential here: its scalar evaluator records a real guest-memory binding
+  for dynamic SMEM when it can recover one and only zero-fills when it cannot.
+  Port the binding/base-bias contract; do not make Prosperismo accept the shader
+  by fabricating zero memory.
 
 Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
 (pre-fix compare), `20260802-082506` (next VOP2 blocker),
-`20260802-082830` (next VOP3B blocker), and `20260802-082946` (current trap).
-The focused selector `shader_recompiler_compute_tests.exe
---vop3-u64-compare-only` passes both added GPU semantic tests. The unfiltered
+`20260802-082830` (next VOP3B blocker), `20260802-082946` (trap),
+`20260802-084504` (BVH), `20260802-085544` (`s_ff1_i32_b64`) and
+`20260802-090417` (current dynamic-SMEM boundary). The last run records executable
+SHA-256 `22AA47588AB5071F78826D8BDC75C4D487C7D1E4C759142D72C44EEDC11342BA`
+and embedded Git identity `6cc5c3a`. The focused selector
+`shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
+borrow, trap, BVH-miss and 64-bit-FF1 GPU semantic tests. The unfiltered
 suite currently stops earlier in the pre-existing `ImageTransitionState`
 depth/stencil mip-copy test; it is not claimed green.
 
@@ -60,7 +88,18 @@ depth/stencil mip-copy test; it is not claimed green.
 
 ## Next falsifiable checkpoint
 
-Capture one paired producer boundary where a known-nonblack full-resolution
+First make `cs=0x500571000` materialize without fabricated SMEM:
+
+1. recover a real guest allocation/binding base for the GPU-dynamic raw-SMEM
+   access at PC `0x20b8`, following the proven binding-plus-byte-bias shape;
+2. bind a range that covers the traversal's runtime addresses and preserve the
+   raw 48-bit guest address calculation in SPIR-V;
+3. add a focused test where the SGPR address changes on the GPU but remains
+   inside the captured guest allocation;
+4. confirm the shader compiles and dispatches with no unresolved or zero-filled
+   scalar loads.
+
+Then capture one paired producer boundary where a known-nonblack full-resolution
 source feeds the first required half-resolution target:
 
 1. record the source and destination guest descriptors, including tile mode,
