@@ -168,6 +168,32 @@ void ProsperismoHost::FileExists(
   }
 }
 
+void ProsperismoHost::ResolveShellAssets(
+    winrt::Microsoft::ReactNative::ReactPromise<ProsperismoShellAssetPaths> &&promise) noexcept {
+  try {
+    auto paths = prosperismo::host::ResolveShellAssets();
+    promise.Resolve({
+        paths.oracleRoot,
+        paths.firmwareRoot,
+        paths.ui3Rco,
+        paths.baseRco,
+        paths.bgLayerRco,
+        paths.npxs40087Eboot,
+        paths.particle0Gnf,
+        paths.particle1Gnf,
+        paths.homeSource,
+        paths.settingsIcon,
+        paths.libraryIcon,
+        paths.desktopIcon,
+        paths.searchIcon,
+        paths.genericGameIcon,
+        paths.nativeDrawCache,
+    });
+  } catch (...) {
+    RejectCurrentException(promise);
+  }
+}
+
 void ProsperismoHost::GetStartupRoute(
     winrt::Microsoft::ReactNative::ReactPromise<std::string> &&promise) noexcept {
   int argumentCount = 0;

@@ -23,7 +23,8 @@ import {
   shellHomeFocusTarget,
   shellTileBaseX,
 } from './shellMetrics';
-import NativeBackgroundSurface from './NativeBackgroundSurfaceNativeComponent';
+import {RecoveredHomeShell} from './RecoveredHomeShell';
+import {SHELL_CLOCK_TEXT_STYLE, shellTextStyle} from './shellTypography';
 import {
   PROSPERISMO_SETTINGS_CATEGORIES,
   ProsperismoSettingsDetail,
@@ -46,6 +47,8 @@ export interface FirmwareShellIconPaths {
   settings?: string;
   library?: string;
   desktop?: string;
+  search?: string;
+  genericGame?: string;
 }
 
 function formatClock(now: Date): string {
@@ -203,7 +206,7 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
 }
 
 type SystemGlyphKind = typeof SYSTEM_ACTIONS[number]['glyph'];
-type FocusableUIManager = typeof UIManager & {focus(reactTag: number): void};
+type FocusableUIManager = typeof UIManager & {focus?(reactTag: number): void};
 
 function SystemGlyph({kind, color, sourcePath}: {kind: SystemGlyphKind; color: Animated.AnimatedInterpolation<string>; sourcePath?: string}) {
   if (sourcePath) {
@@ -392,9 +395,14 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
   const shellGames = useMemo(() => games.slice(0, SHELL_METRICS.strand.maxItems), [games]);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
   const focusNative = (target: any) => {
+    if (typeof target?.focus === 'function') {
+      target.focus();
+      return;
+    }
     const tag = findNodeHandle(target);
-    if (tag !== null) {
-      (UIManager as FocusableUIManager).focus(tag);
+    const manager = UIManager as FocusableUIManager;
+    if (tag !== null && typeof manager.focus === 'function') {
+      manager.focus(tag);
     }
   };
   const launch = (game: GameInstall) => { setOptionsGame(undefined); setToast(`Launching ${game.titleName}`); onLaunch(game); };
@@ -460,8 +468,45 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
   // React Native Windows exposes this event at runtime, while the shared RN
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
+  if (state.surface === 'home' && !searchOpen && !profileOpen && !optionsGame && !errorMessage) {
+    return <View style={shellStyles.viewport} {...windowsKeyCapture}>
+      <RecoveredHomeShell
+        backgroundPath={selectedShellBackground(selected, state.surface)}
+        clock={formatClock(now)}
+        focusRegion={state.focusRegion}
+        games={shellGames}
+        libraryIconPath={firmwareShellIcons.library}
+        genericGameIconPath={firmwareShellIcons.genericGame}
+        onActivateSystem={action => {
+          if (action === 'search') {
+            setSearchOpen(true);
+          } else if (action === 'settings') {
+            dispatch({type: 'open-settings'});
+          } else {
+            setProfileOpen(true);
+          }
+        }}
+        onLaunch={launch}
+        onOpenLibrary={() => dispatch({type: 'open-library'})}
+        onOptions={openOptions}
+        onSelectGame={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})}
+        onSelectSpace={space => dispatch({type: 'set-space', space})}
+        onSelectSystem={index => dispatch({type: 'select-system', index})}
+        selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))}
+        selectedSpace={state.space}
+        selectedSystemIndex={state.systemIndex}
+        settingsIconPath={firmwareShellIcons.settings}
+        searchIconPath={firmwareShellIcons.search}
+        spaceRefs={spaceRefs}
+        strandRefs={strandRefs}
+        systemRefs={systemRefs}
+        viewportHeight={height}
+        viewportWidth={width}
+      />
+    </View>;
+  }
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
-    {state.surface === 'home' && <NativeBackgroundSurface collapsable={false} pointerEvents="none" style={shellStyles.nativeBackgroundSurface} />}<ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} />
+    <ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} />
     {state.surface !== 'settings' && <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} sourcePath={action.glyph === 'settings' ? firmwareShellIcons.settings : undefined} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 0) { setSearchOpen(true); } else if (index === 1) { dispatch({type: 'open-settings'}); } else { setProfileOpen(true); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>}
     {state.surface !== 'home' && state.surface !== 'settings' && settingsDetail === undefined && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
     {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
@@ -481,29 +526,26 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
 const shellStyles = StyleSheet.create({
   viewport: {flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#020408', overflow: 'hidden'},
   canvas: {position: 'absolute', width: 1920, height: 1080, backgroundColor: '#020408'},
-  nativeBackgroundSurface: {position: 'absolute', width: 1920, height: 1080},
   nativeFrameBackground: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'}, backgroundArtwork: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'},
   systemBand: {height: 126, marginHorizontal: 84, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 3},
   spaces: {flexDirection: 'row', alignItems: 'center', gap: 64}, spaceButton: {paddingVertical: 8},
-  spaceText: {color: 'rgba(255,255,255,0.6)', fontSize: 28, fontWeight: '400'}, spaceTextActive: {color: '#fff', fontWeight: '700'}, spaceTextFocused: {textDecorationLine: 'underline'},
+  spaceText: {color: 'rgba(255,255,255,0.6)', ...shellTextStyle('SizeLarge')}, spaceTextActive: {color: '#fff', fontWeight: '700'}, spaceTextFocused: {textDecorationLine: 'underline'},
   systemActions: {flexDirection: 'row', alignItems: 'center', gap: 48}, systemButton: {width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center'},
   systemImageGlyph: {width: 36, height: 32, resizeMode: 'contain'},
   searchGlyph: {width: 34, height: 34}, searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 4, borderRadius: 10}, searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 4, borderRadius: 2, transform: [{rotate: '47deg'}]},
   settingsGlyphIcon: {width: 34, height: 34, alignItems: 'center', justifyContent: 'center'}, settingsCore: {width: 15, height: 15, borderWidth: 4, borderRadius: 8}, settingsTooth: {position: 'absolute', width: 5, height: 9, borderRadius: 2}, settingsTooth0: {top: 0, left: 15}, settingsTooth1: {top: 4, right: 4, transform: [{rotate: '45deg'}]}, settingsTooth2: {top: 15, right: 0, transform: [{rotate: '90deg'}]}, settingsTooth3: {right: 4, bottom: 4, transform: [{rotate: '135deg'}]}, settingsTooth4: {bottom: 0, left: 15}, settingsTooth5: {bottom: 4, left: 4, transform: [{rotate: '45deg'}]}, settingsTooth6: {top: 15, left: 0, transform: [{rotate: '90deg'}]}, settingsTooth7: {top: 4, left: 4, transform: [{rotate: '135deg'}]},
   profileGlyph: {width: 42, height: 42, alignItems: 'center', justifyContent: 'center'}, profileFrame: {position: 'absolute', width: 42, height: 42, borderWidth: 1}, profileSlash: {width: 55, height: 1, transform: [{rotate: '45deg'}]},
-  clock: {marginLeft: 40, color: '#fff', fontSize: 28, minWidth: 120, textAlign: 'right'},
+  clock: {marginLeft: 40, color: '#fff', minWidth: 120, ...SHELL_CLOCK_TEXT_STYLE},
   strand: {position: 'absolute', left: 0, top: 0, width: 1920, height: 294}, tilePosition: {position: 'absolute', left: 0, top: 157, width: 106, height: 106, alignItems: 'center', justifyContent: 'center'},
-  tile: {width: 106, height: 106, borderRadius: 16, overflow: 'hidden', backgroundColor: '#292929'}, tileImage: {width: '100%', height: '100%', resizeMode: 'cover'}, tileFallback: {flex: 1, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, tileMonogram: {fontSize: 48, color: '#fff', fontWeight: '700'},
+  tile: {width: 106, height: 106, borderRadius: 16, overflow: 'hidden', backgroundColor: '#292929'}, tileImage: {width: '100%', height: '100%', resizeMode: 'cover'}, tileFallback: {flex: 1, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, tileMonogram: {color: '#fff', ...shellTextStyle('SizeXLarge', '700')},
   homeFocusOverlay: {position: 'absolute', zIndex: 2, overflow: 'hidden'}, homeFocusPass: {position: 'absolute', inset: 0}, homeSystemFocusPass: {position: 'absolute', inset: 0, backgroundColor: '#fff'},
   focusFrame: {position: 'absolute', inset: 0, borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)', borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset}, focusWashClip: {position: 'absolute', left: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, top: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, width: 168, height: 168, overflow: 'hidden', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusShimmer: {position: 'absolute', left: -44, top: -70, width: 256, height: 308, backgroundColor: 'rgba(255,255,255,0.13)'},
-  libraryShortcut: {position: 'absolute', left: 1602, top: 157, width: 106, height: 106, borderRadius: 16, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, libraryShortcutGlyph: {fontSize: 44, color: '#fff'}, libraryShortcutImage: {width: 40, height: 32, resizeMode: 'contain'},
-  experienceCaption: {position: 'absolute', top: SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', fontSize: 30, fontWeight: '600'}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', fontSize: 18}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
-  backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},
-  libraryGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 32, paddingBottom: 90}, libraryTile: {width: 370, marginBottom: 20}, libraryArt: {height: 220, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', resizeMode: 'cover'}, libraryMonogram: {color: '#fff', fontSize: 76, fontWeight: '700'}, libraryTitle: {color: '#fff', fontSize: 20, marginTop: 12},
+  libraryShortcut: {position: 'absolute', left: 1602, top: 157, width: 106, height: 106, borderRadius: 16, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, libraryShortcutGlyph: {color: '#fff', ...shellTextStyle('SizeXLarge')}, libraryShortcutImage: {width: 40, height: 32, resizeMode: 'contain'},
+  experienceCaption: {position: 'absolute', top: SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', ...shellTextStyle('SizeNormal', '600')}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
+  backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', ...shellTextStyle('Size2XSmall')}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', marginBottom: 32, ...shellTextStyle('SizeXLarge', '600')},
+  libraryGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 32, paddingBottom: 90}, libraryTile: {width: 370, marginBottom: 20}, libraryArt: {height: 220, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', resizeMode: 'cover'}, libraryMonogram: {color: '#fff', ...shellTextStyle('Size3XLarge', '700')}, libraryTitle: {color: '#fff', marginTop: 12, ...shellTextStyle('Size2XSmall')},
   genericFocusFrame: {position: 'absolute', left: 0, top: 3, right: 0, bottom: 5, zIndex: 1}, genericFocusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.92)'},
-  settingsSurface: {width: 1200}, settingsList: {padding: SHELL_METRICS.focusLineOffset, paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 6}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsChevron: {color: '#fff', fontSize: 34}, settingsStage: {position: 'absolute', inset: 0}, settingsStageTitle: {position: 'absolute', left: 96, top: 80, color: '#fff', fontSize: 42, fontWeight: '400'}, settingsRail: {position: 'absolute', left: 172, top: 188, width: 392}, settingsRailRow: {height: 110, justifyContent: 'center'}, settingsRailText: {color: 'rgba(255,255,255,0.62)', fontSize: 28}, settingsRailTextSelected: {color: '#fff', fontWeight: '600'}, settingsLane: {position: 'absolute', left: 656, top: 182, width: 1092}, settingsLaneTitle: {color: '#fff', fontSize: 30, marginLeft: 16, marginBottom: 14}, settingsLaneIntro: {color: 'rgba(255,255,255,0.65)', fontSize: 18, marginLeft: 16, marginBottom: 20}, settingsLaneRow: {height: 112, borderBottomWidth: 2, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center'}, settingsLaneLabel: {flex: 1, color: '#fff', fontSize: 28}, settingsLaneValue: {maxWidth: 460, color: 'rgba(255,255,255,0.72)', fontSize: 24, textAlign: 'right'}, settingsLaneHint: {marginTop: 28, marginLeft: 24, color: 'rgba(255,255,255,0.55)', fontSize: 18},
-  detailBack: {alignSelf: 'flex-start', paddingVertical: 12, paddingRight: 24, marginBottom: 12}, detailIntro: {maxWidth: 720, color: 'rgba(255,255,255,0.7)', fontSize: 20, marginTop: -18, marginBottom: 38}, detailRows: {padding: SHELL_METRICS.focusLineOffset}, detailRow: {width: 1040, minHeight: 86, borderRadius: 16, paddingHorizontal: 24, marginBottom: 10, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', fontSize: 24}, detailValue: {maxWidth: 440, color: 'rgba(255,255,255,0.72)', fontSize: 20, textAlign: 'right'},
-  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, dialogLayer: {position: 'absolute', inset: 0, zIndex: 30, alignItems: 'center', justifyContent: 'center'}, dialogPanel: {width: 764, height: 440, borderRadius: 16, backgroundColor: '#080A0F', overflow: 'hidden', justifyContent: 'space-between', alignItems: 'center', paddingTop: 58, paddingBottom: 40}, dialogBody: {width: 676, alignItems: 'center'}, dialogMessageIcon: {width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', marginBottom: 20}, dialogMessageMark: {width: 3, height: 15, borderRadius: 2, backgroundColor: '#fff'}, dialogTitle: {color: '#fff', fontSize: 30, fontWeight: '600', textAlign: 'center', marginBottom: 20}, dialogMessage: {color: 'rgba(255,255,255,0.7)', fontSize: 20, lineHeight: 28, textAlign: 'center'}, dialogButton: {width: 388, height: 72, borderRadius: 16, alignItems: 'center', justifyContent: 'center'}, dialogButtonText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
+  modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', ...shellTextStyle('SizeXSmall')}, dialogLayer: {position: 'absolute', inset: 0, zIndex: 30, alignItems: 'center', justifyContent: 'center'}, dialogPanel: {width: 764, height: 440, borderRadius: 16, backgroundColor: '#080A0F', overflow: 'hidden', justifyContent: 'space-between', alignItems: 'center', paddingTop: 58, paddingBottom: 40}, dialogBody: {width: 676, alignItems: 'center'}, dialogMessageIcon: {width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', marginBottom: 20}, dialogMessageMark: {width: 3, height: 15, borderRadius: 2, backgroundColor: '#fff'}, dialogTitle: {color: '#fff', textAlign: 'center', marginBottom: 20, ...shellTextStyle('SizeNormal', '600')}, dialogMessage: {color: 'rgba(255,255,255,0.7)', lineHeight: 28, textAlign: 'center', ...shellTextStyle('Size2XSmall')}, dialogButton: {width: 388, height: 72, borderRadius: 16, alignItems: 'center', justifyContent: 'center'}, dialogButtonText: {color: '#fff', ...shellTextStyle('SizeXSmall')}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', lineHeight: 22, ...shellTextStyle('Size3XSmall')},
 });
 
 const SYSTEM_GEAR_TOOTH_STYLES = [

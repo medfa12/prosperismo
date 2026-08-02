@@ -59,6 +59,97 @@ void AddCandidate(
   }
 }
 
+std::optional<std::filesystem::path> EnvironmentPath(wchar_t const *name) {
+  DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+  if (required == 0) {
+    return std::nullopt;
+  }
+  std::wstring value(required, L'\0');
+  DWORD length = GetEnvironmentVariableW(name, value.data(), required);
+  if (length == 0 || length >= required) {
+    return std::nullopt;
+  }
+  value.resize(length);
+  return std::filesystem::path{value};
+}
+
+bool IsDirectory(std::filesystem::path const &path) noexcept {
+  std::error_code error;
+  return std::filesystem::is_directory(path, error) && !error;
+}
+
+bool IsFile(std::filesystem::path const &path) noexcept {
+  std::error_code error;
+  return std::filesystem::is_regular_file(path, error) && !error;
+}
+
+std::string ExistingFile(std::filesystem::path const &path) {
+  return IsFile(path) ? WideToUtf8(AbsoluteNormalized(path).wstring()) : std::string{};
+}
+
+std::string ExistingDirectory(std::filesystem::path const &path) {
+  return IsDirectory(path) ? WideToUtf8(AbsoluteNormalized(path).wstring()) : std::string{};
+}
+
+void AddOracleCandidatesFromBase(
+    std::vector<std::filesystem::path> &candidates,
+    std::filesystem::path base) {
+  for (int depth = 0; depth != 10 && !base.empty(); ++depth) {
+    AddCandidate(candidates, base / L"ps5oracle");
+    // Development worktrees commonly sit beside the canonical Prosperismo
+    // checkout rather than inside it (for example C:\prosperismo-ui).
+    AddCandidate(candidates, base / L"prosperismo" / L"ps5oracle");
+    auto parent = base.parent_path();
+    if (parent == base) {
+      break;
+    }
+    base = std::move(parent);
+  }
+}
+
+std::optional<std::filesystem::path> LocateOracleRoot() {
+  std::vector<std::filesystem::path> candidates;
+  if (auto configured = EnvironmentPath(L"PROSPERISMO_PS5_ORACLE")) {
+    AddCandidate(candidates, *configured);
+  }
+
+  std::error_code error;
+  auto current = std::filesystem::current_path(error);
+  if (!error) {
+    AddOracleCandidatesFromBase(candidates, current);
+  }
+  AddOracleCandidatesFromBase(candidates, ExecutableDirectory());
+
+  for (auto const &candidate : candidates) {
+    if (IsDirectory(candidate / L"sony") && IsDirectory(candidate / L"evidence")) {
+      return AbsoluteNormalized(candidate);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::filesystem::path> LocateFirmwareRoot(
+    std::optional<std::filesystem::path> const &oracleRoot) {
+  std::vector<std::filesystem::path> candidates;
+  if (auto configured = EnvironmentPath(L"PROSPERISMO_FW_DUMP")) {
+    AddCandidate(candidates, *configured);
+  }
+  if (auto legacy = EnvironmentPath(L"SHARPEMU_FW_DUMP")) {
+    AddCandidate(candidates, *legacy);
+  }
+  if (oracleRoot) {
+    AddCandidate(candidates, *oracleRoot / L"sony" / L"PS5_4.03_reconstructed");
+    AddCandidate(candidates, *oracleRoot / L"sony" / L"300REC" / L"extracted");
+  }
+
+  for (auto const &candidate : candidates) {
+    if (IsDirectory(candidate / L"filesystems" / L"system_ex" / L"vsh_asset")) {
+      return AbsoluteNormalized(candidate);
+    }
+  }
+  return std::nullopt;
+}
+
 std::wstring ShellItemPath(IShellItem *item) {
   PWSTR rawPath = nullptr;
   auto result = item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath);
@@ -258,6 +349,76 @@ std::string CanonicalizePath(std::string const &path) {
 bool FileExists(std::string const &path) {
   std::error_code error;
   return std::filesystem::exists(std::filesystem::path{Utf8ToWide(path)}, error) && !error;
+}
+
+ShellAssetPaths ResolveShellAssets() {
+  ShellAssetPaths result;
+  auto oracleRoot = LocateOracleRoot();
+  auto firmwareRoot = LocateFirmwareRoot(oracleRoot);
+
+  if (oracleRoot) {
+    result.oracleRoot = WideToUtf8(oracleRoot->wstring());
+  }
+  if (firmwareRoot) {
+    result.firmwareRoot = WideToUtf8(firmwareRoot->wstring());
+
+    auto vshAsset = *firmwareRoot / L"filesystems" / L"system_ex" / L"vsh_asset";
+    result.ui3Rco = ExistingFile(vshAsset / L"Sce.PlayStation.PUI_UI3.rco");
+    result.particle0Gnf = ExistingFile(vshAsset / L"Sce.Vsh.ShellUI.BGLayer.Particle0.gnf");
+    result.particle1Gnf = ExistingFile(vshAsset / L"Sce.Vsh.ShellUI.BGLayer.Particle1.gnf");
+    result.npxs40087Eboot = ExistingFile(
+        *firmwareRoot / L"filesystems" / L"system_ex" / L"app" / L"NPXS40087" / L"eboot.bin");
+  }
+
+  std::filesystem::path resourceDirectory;
+  if (auto configured = EnvironmentPath(L"PROSPERISMO_PS5_SHELL_RESOURCE_DIR")) {
+    resourceDirectory = *configured;
+  } else if (auto legacy = EnvironmentPath(L"SHARPEMU_PS5_SHELL_RESOURCE_DIR")) {
+    resourceDirectory = *legacy;
+  } else if (firmwareRoot) {
+    resourceDirectory = *firmwareRoot / L"filesystems" / L"system_ex" / L"app" /
+        L"NPXS40087" / L"psm" / L"Application" / L"resource";
+  }
+  if (!resourceDirectory.empty()) {
+    result.baseRco = ExistingFile(resourceDirectory / L"Sce.Vsh.ShellUI.Base.rco");
+    result.bgLayerRco = ExistingFile(resourceDirectory / L"Sce.Vsh.ShellUI.BGLayer.rco");
+  }
+
+  if (auto configured = EnvironmentPath(L"PROSPERISMO_PS5_HOME_SOURCE")) {
+    result.homeSource = ExistingFile(*configured);
+  }
+  if (result.homeSource.empty()) {
+    if (auto legacy = EnvironmentPath(L"SHARPEMU_PS5_HOME_SOURCE")) {
+      result.homeSource = ExistingFile(*legacy);
+    }
+  }
+
+  if (oracleRoot) {
+    if (result.homeSource.empty()) {
+      result.homeSource = ExistingFile(
+          *oracleRoot / L"sony" / L"useful rnps" / L"readable_js_3.00" / L"NPXS40002.js");
+    }
+    auto runtimeIcons = *oracleRoot / L"evidence" / L"shell-icons-runtime" /
+        L"Sce.PlayStation.PUI_UI3";
+    result.settingsIcon = ExistingFile(runtimeIcons / L"emoji_settings.png");
+    result.libraryIcon = ExistingFile(runtimeIcons / L"emoji_game_and_apps.png");
+    result.desktopIcon = ExistingFile(runtimeIcons / L"emoji_system.png");
+    result.searchIcon = ExistingFile(runtimeIcons / L"iconid_search.svg");
+    result.genericGameIcon = ExistingFile(runtimeIcons / L"emoji_game.png");
+
+    std::filesystem::path drawCache;
+    if (auto configured = EnvironmentPath(L"PROSPERISMO_PS5_NATIVE_DRAW_CACHE")) {
+      drawCache = *configured;
+    } else if (auto legacy = EnvironmentPath(L"SHARPEMU_PS5_NATIVE_DRAW_CACHE")) {
+      drawCache = *legacy;
+    } else {
+      drawCache = *oracleRoot / L"evidence" / L"shell-rendering" /
+          L"native-small-bottom" / L"draw-cache";
+    }
+    result.nativeDrawCache = ExistingDirectory(drawCache);
+  }
+
+  return result;
 }
 
 void OpenPath(std::string const &path) {

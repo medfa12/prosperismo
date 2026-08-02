@@ -29,6 +29,46 @@ The RNW consumer must use additive composition for these zero-alpha colour
 deltas and hide this overlay in Settings. The room/ray owner remains an explicit
 recovery gap rather than a host-authored substitute.
 
+## Presentation-state contract
+
+Frame transport and presentation state are deliberately separate. The shell
+owns a 64-byte, versioned control mapping named
+`Local\ProsperismoShellBackgroundControl` and signals
+`Local\ProsperismoShellBackgroundControlChanged` after publishing a change.
+The only valid layer masks are:
+
+| Surface | Layer mask | Meaning |
+| --- | ---: | --- |
+| Home | `3` | persistent `FirstWaveBase` plus `ParticleOverlay` |
+| Settings | `1` | persistent `FirstWaveBase`; particles suppressed |
+
+There is intentionally no valid zero-layer state and no particle-only state.
+That invariant prevents route changes from unmounting or blanking the native
+FirstWave owner. The particle producer reads this mapping and suspends rendering
+without advancing its recovered animation clock while Settings is active. If a
+legacy shell does not expose the mapping, the producer defaults to Home for
+backwards compatibility.
+
+The control page layout is little-endian:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | `PS5BGCT\0` |
+| 8 | 4 | protocol version (`1`) |
+| 12 | 4 | header bytes (`64`) |
+| 16 | 4 | layer mask |
+| 20 | 4 | reserved |
+| 24 | 8 | seqlock counter |
+| 32 | 8 | QPC timestamp |
+| 40 | 24 | reserved |
+
+The shell writer increments the aligned sequence to an odd value, writes the
+mask and timestamp, increments it again to an even value with interlocked
+publication, then signals the changed event. Readers accept only equal even
+sequence values before and after copying the page. The native compositor must
+also hide its retained particle visual immediately on mask `1`; producer
+suspension alone cannot erase the last already-consumed overlay frame.
+
 Run the asset-free contract test with:
 
 ```powershell

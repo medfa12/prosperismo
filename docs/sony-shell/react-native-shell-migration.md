@@ -34,12 +34,15 @@ tests.
 The active shell source is:
 
 - `frontend/ProsperismoLauncher/src/bigPicture/BigPictureShell.tsx`
+- `frontend/ProsperismoLauncher/src/bigPicture/RecoveredHomeShell.tsx`
 - `frontend/ProsperismoLauncher/src/bigPicture/shellMetrics.ts`
 - `frontend/ProsperismoLauncher/src/bigPicture/shellState.ts`
 
 It currently provides:
 
-- fixed 1920x1080 design-space scaling;
+- fixed 1920x1080 design-space scaling. HOME multiplies every recovered metric
+  into the viewport instead of applying a root transform, because the latter
+  could detach the RNW visual tree and leave a white client area;
 - independent remembered game selection and top-bar focus;
 - the recovered 106→168 title-card scale, 8/16px strand gaps, scaled card
   corner geometry, spring movement, caption placement, and eleven-card cap;
@@ -52,10 +55,12 @@ It currently provides:
   controls; Arrow Up/Down no longer leaves an old desktop target active. The
   remembered game selection stays enlarged when focus visits the top band, but
   its card focus passes are hidden so card and system highlights cannot appear
-  simultaneously;
+  simultaneously. RNW 0.83 focuses the host ref directly; `UIManager.focus`
+  is guarded because that function is absent in this runtime and was the
+  concrete cause of the formerly responsive white Big Picture window;
 - selected-title `pic0` composition with the recovered 633.333ms Normal HOME
   transition timing, while Settings returns to the shell plate;
-- a local-only native-frame bridge: Big Picture dynamically enumerates
+- a retained local-only native-frame bridge that can dynamically enumerate
   timestamped renderer output instead of baking a frame count into the app.
   The preferred oracle sequence is `rnw-native-bottom-shared-51-v2`: 51 unique
   1920x1080 frames at 10fps, produced by the persistent original-shader player
@@ -65,13 +70,11 @@ It currently provides:
   The six-frame `shell-shot-small-persistent` sequence and the later
   `shell-shot-bottom-shared-native-5` proof remain fallbacks; two of the latter
   proof's three samples are byte-identical.
-  The frames are not copied into source control or the application package;
-  absence is a clean fallback, not an error. When the sequence is present the
-  generic brand-art fallback is suppressed, so it cannot obscure the native
-  particles; selected-title `pic0` artwork still crossfades above them. The
-  background owner remains mounted across Home, Library, and Prosperismo
-  Settings, matching the firmware evidence that Settings retains HomeScreen
-  preset 4 rather than selecting a Settings-only palette or static fallback;
+  The frames are not copied into source control or the application package.
+  The recovery HOME slice does not mount this bridge yet: it first proves a
+  stable React visual tree with the dark plate and selected-title art, then the
+  native base/particle owner can be reintroduced behind that tree without
+  reviving the white-client regression;
 - a code-generated React Native Windows Fabric/Composition surface and a
   versioned two-slot BGRA shared-memory protocol are prepared for the live
   renderer helper. The surface is deliberately not mounted in the product tree
@@ -79,10 +82,14 @@ It currently provides:
   currently visible animation is the recovered 51-frame renderer sequence
   above, not a claim of continuous shader execution;
 - a local-only firmware-icon bridge for the exact `emoji_settings`,
-  `emoji_game_and_apps`, and `emoji_system` PNG payloads extracted from the
+  `emoji_game_and_apps`, `emoji_system`, `emoji_game`, and `iconid_search`
+  payloads extracted from the
   user's `Sce.PlayStation.PUI_UI3.rco`. The files remain under
   `ps5oracle/evidence/shell-icons-runtime`, are never bundled or committed, and
-  retain the animated white-to-dark glyph inversion used by system focus;
+  retain the white-to-dark glyph inversion used by system focus. The native
+  host resolves these paths and the related RCO/GNF/Home-source inputs from a
+  configurable `PROSPERISMO_PS5_ORACLE`; no absolute developer path is kept in
+  TypeScript;
 - Prosperismo-owned settings categories, an undimmed dark options popup using
   the recovered 652px/16px/190px control-menu geometry, and a transient
   in-app toast with the recovered 40px-icon and 300ms/3500ms/200ms lifecycle;
@@ -100,6 +107,23 @@ uses only the settled geometry, colors, timing, and state contracts that the
 oracle exposes. The title/background composition is a state-responsive
 crossfade; native background execution remains a separate emulator-renderer
 integration task and must not be replaced with invented ambient motion.
+
+## Recovery checkpoint (2026-08-02)
+
+The earlier migration at `8711d9a` was a useful host/behavior checkpoint, not
+a visually proven port of the Avalonia shell. The complete prior control tree
+remains on `C:\sharpemu-home`, branch `feat/ps5-home-shell`. HOME is now being
+translated from that source into `RecoveredHomeShell.tsx` in bounded slices.
+The first slice includes the 126px top band, space switcher, system controls,
+clock, 106/168px title strand, selected caption, one exclusive focus owner,
+library shortcut, runtime oracle icons, and asset-free fallbacks.
+
+The Release executable builds and starts the Big Picture component without a
+React error after replacing the unsupported focus call. Native React logging
+is persisted to `%LOCALAPPDATA%\Prosperismo\launcher-startup.log`, and the root
+error boundary prevents future module/render faults from degrading to an
+unexplained white surface. A screenshot comparison is still required before
+calling this slice visually accepted.
 
 ## Next validation gate
 

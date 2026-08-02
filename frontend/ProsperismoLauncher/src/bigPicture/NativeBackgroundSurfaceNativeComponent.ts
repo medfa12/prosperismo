@@ -2,11 +2,14 @@
 import type {ViewProps} from 'react-native';
 import codegenNativeComponent from 'react-native/Libraries/Utilities/codegenNativeComponent';
 
-interface NativeBackgroundSurfaceProps extends ViewProps {}
+interface NativeBackgroundSurfaceProps extends ViewProps {
+  /** Home owns the recovered particle/ripple pass; every surface keeps FirstWave. */
+  particleOverlayEnabled: boolean;
+}
 
 /**
- * Transparent until a renderer publishes a valid shared BGRA particle frame.
- * The shell's base layer and selected-title artwork remain mounted beneath it.
+ * Always renders the translated 12.40 FirstWave plate. When enabled, the
+ * producer's recovered particle/ripple frame is additively composited above it.
  */
 export default codegenNativeComponent<NativeBackgroundSurfaceProps>(
   'ProsperismoNativeBackground',

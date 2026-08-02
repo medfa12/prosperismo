@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "NativeBackgroundFrameProtocol.h"
+#include "FirstWaveBackground.h"
 #include "ProsperismoNativeBackground.h"
 #include "codegen/react/components/ProsperismoShell/ProsperismoNativeBackground.g.h"
 
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -27,6 +29,10 @@ using DrawingSurface =
 using SpriteVisual =
     winrt::Microsoft::ReactNative::Composition::Experimental::ISpriteVisual;
 
+constexpr uint32_t FirstWaveRenderWidth = 960;
+constexpr uint32_t FirstWaveRenderHeight = 540;
+constexpr DWORD FirstWaveFrameIntervalMs = 33;
+
 struct FrameSnapshot {
   uint32_t width{};
   uint32_t height{};
@@ -34,6 +40,16 @@ struct FrameSnapshot {
   long long sequence{};
   std::vector<uint8_t> pixels;
 };
+
+void InitializeControlHeader(BackgroundControlHeader *header) noexcept {
+  if (!header) {
+    return;
+  }
+  std::memset(header, 0, sizeof(*header));
+  std::memcpy(header->magic, ControlMagic, sizeof(ControlMagic));
+  header->version = ControlVersion;
+  header->headerBytes = sizeof(BackgroundControlHeader);
+}
 
 bool HeaderIsValid(FrameHeader const &header, size_t mappedBytes) noexcept {
   if (std::memcmp(header.magic, Magic, sizeof(Magic)) != 0 ||
@@ -117,7 +133,23 @@ struct NativeBackgroundViewState
       m_visual.RelativeSizeWithOffset({0.0f, 0.0f}, {1.0f, 1.0f});
       m_visual.IsVisible(false);
       m_stopEvent.attach(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+      m_redrawEvent.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
       m_consumedEvent.attach(CreateEventW(nullptr, FALSE, FALSE, ConsumedEventName));
+      m_controlChangedEvent.attach(CreateEventW(nullptr, FALSE, FALSE, ControlChangedEventName));
+      m_controlMapping.attach(CreateFileMappingW(
+          INVALID_HANDLE_VALUE,
+          nullptr,
+          PAGE_READWRITE,
+          0,
+          sizeof(BackgroundControlHeader),
+          ControlMappingName));
+      if (m_controlMapping) {
+        m_controlHeader = static_cast<BackgroundControlHeader *>(MapViewOfFile(
+            m_controlMapping.get(), FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(BackgroundControlHeader)));
+        InitializeControlHeader(m_controlHeader);
+        PublishPresentationState(
+            m_particleOverlayEnabled.load() ? HomeLayerMask : SettingsLayerMask);
+      }
       auto weak = get_weak();
       m_destroying = view.Destroying([weak](auto const &, auto const &) noexcept {
         if (auto self = weak.get()) {
@@ -146,10 +178,29 @@ struct NativeBackgroundViewState
         MicrosoftCompositionContextHelper::InnerVisual(m_visual);
   }
 
+  void UpdateProps(
+      winrt::Microsoft::ReactNative::ComponentView const &view,
+      winrt::com_ptr<ProsperismoShellSpecs::ProsperismoNativeBackgroundProps> const &newProps,
+      winrt::com_ptr<ProsperismoShellSpecs::ProsperismoNativeBackgroundProps> const &oldProps) noexcept override {
+    ProsperismoShellSpecs::BaseProsperismoNativeBackground<
+        NativeBackgroundViewState>::UpdateProps(view, newProps, oldProps);
+    auto const enabled = !newProps || newProps->particleOverlayEnabled;
+    if (m_particleOverlayEnabled.exchange(enabled) != enabled) {
+      PublishPresentationState(enabled ? HomeLayerMask : SettingsLayerMask);
+      if (m_redrawEvent) {
+        SetEvent(m_redrawEvent.get());
+      }
+    }
+  }
+
  private:
   void Stop() noexcept {
     if (m_stopped.exchange(true)) {
       return;
+    }
+    PublishPresentationState(SettingsLayerMask);
+    if (m_visual) {
+      m_visual.IsVisible(false);
     }
     if (m_stopEvent) {
       SetEvent(m_stopEvent.get());
@@ -157,54 +208,78 @@ struct NativeBackgroundViewState
     if (m_worker.joinable()) {
       m_worker.join();
     }
+    if (m_controlHeader) {
+      UnmapViewOfFile(m_controlHeader);
+      m_controlHeader = nullptr;
+    }
+  }
+
+  void PublishPresentationState(uint32_t layers) noexcept {
+    if (!m_controlHeader) {
+      return;
+    }
+    InterlockedIncrement64(&m_controlHeader->sequence);
+    InterlockedExchange(&m_controlHeader->layerMask, static_cast<long>(layers));
+    LARGE_INTEGER timestamp{};
+    QueryPerformanceCounter(&timestamp);
+    m_controlHeader->timestampQpc = static_cast<uint64_t>(timestamp.QuadPart);
+    MemoryBarrier();
+    InterlockedIncrement64(&m_controlHeader->sequence);
+    if (m_controlChangedEvent) {
+      SetEvent(m_controlChangedEvent.get());
+    }
   }
 
   void Run() noexcept {
+    winrt::handle frameEvent;
+    winrt::handle mapping;
+    void *mapped{};
+    size_t mappedBytes{};
+    FrameSnapshot latest;
+
     while (WaitForSingleObject(m_stopEvent.get(), 0) == WAIT_TIMEOUT) {
-      winrt::handle frameEvent(OpenEventW(SYNCHRONIZE, FALSE, FrameEventName));
-      winrt::handle mapping(OpenFileMappingW(FILE_MAP_READ, FALSE, MappingName));
-      if (!frameEvent || !mapping) {
-        if (WaitForSingleObject(m_stopEvent.get(), 500) != WAIT_TIMEOUT) {
-          return;
-        }
-        continue;
-      }
-
-      void *mapped = MapViewOfFile(mapping.get(), FILE_MAP_READ, 0, 0, 0);
       if (!mapped) {
-        if (WaitForSingleObject(m_stopEvent.get(), 500) != WAIT_TIMEOUT) {
-          return;
+        frameEvent.attach(OpenEventW(SYNCHRONIZE, FALSE, FrameEventName));
+        mapping.attach(OpenFileMappingW(FILE_MAP_READ, FALSE, MappingName));
+        if (frameEvent && mapping) {
+          mapped = MapViewOfFile(mapping.get(), FILE_MAP_READ, 0, 0, 0);
+          if (mapped) {
+            MEMORY_BASIC_INFORMATION memoryInfo{};
+            mappedBytes = VirtualQuery(mapped, &memoryInfo, sizeof(memoryInfo))
+                ? memoryInfo.RegionSize
+                : 0;
+          }
         }
-        continue;
       }
-      MEMORY_BASIC_INFORMATION memoryInfo{};
-      auto mappedBytes = VirtualQuery(mapped, &memoryInfo, sizeof(memoryInfo))
-          ? memoryInfo.RegionSize
-          : 0;
 
-      FrameSnapshot latest;
-      while (!m_stopped.load()) {
-        if (TryReadLatestFrame(mapped, mappedBytes, latest)) {
-          // Composition drawing-surface interop is agile. Keeping BeginDraw /
-          // EndDraw on this worker avoids reposting it through React's JS/UI
-          // dispatcher, which is not the surface's drawing owner.
-          Draw(latest);
-        }
-        HANDLE waits[]{m_stopEvent.get(), frameEvent.get()};
-        auto result = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-        if (result != WAIT_OBJECT_0 + 1) {
-          break;
-        }
+      if (mapped) {
+        TryReadLatestFrame(mapped, mappedBytes, latest);
       }
+
+      // Composition drawing-surface interop is agile. Keeping BeginDraw /
+      // EndDraw on this worker avoids reposting it through React's JS/UI
+      // dispatcher, which is not the surface's drawing owner.
+      Draw(latest.sequence > 0 ? &latest : nullptr);
+
+      HANDLE waits[]{m_stopEvent.get(), m_redrawEvent.get(), frameEvent.get()};
+      auto const waitCount = frameEvent ? 3u : 2u;
+      auto result = WaitForMultipleObjects(
+          waitCount, waits, FALSE, FirstWaveFrameIntervalMs);
+      if (result == WAIT_OBJECT_0) {
+        break;
+      }
+    }
+
+    if (mapped) {
       UnmapViewOfFile(mapped);
     }
   }
 
-  void Draw(FrameSnapshot const &frame) noexcept {
+  void Draw(FrameSnapshot const *particleFrame) noexcept {
     try {
-      if (!m_surface || m_width != frame.width || m_height != frame.height) {
-        m_width = frame.width;
-        m_height = frame.height;
+      if (!m_surface) {
+        m_width = FirstWaveRenderWidth;
+        m_height = FirstWaveRenderHeight;
         m_surface = m_context.CreateDrawingSurfaceBrush(
             {static_cast<float>(m_width), static_cast<float>(m_height)},
             winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
@@ -223,33 +298,65 @@ struct NativeBackgroundViewState
         return;
       }
 
+      auto const elapsed = std::chrono::duration<float>(
+          std::chrono::steady_clock::now() - m_timeOrigin).count();
+      Prosperismo::FirstWave::Parameters firstWave{
+          1.0f,
+          1.0f,
+          1.0f,
+          elapsed,
+          Prosperismo::FirstWave::Firmware1240ResetPalette(),
+      };
+      auto const baseStride = m_width * 4u;
+      m_firstWavePixels.resize(static_cast<size_t>(baseStride) * m_height);
+      if (!Prosperismo::FirstWave::RenderBackgroundBgra8Premultiplied(
+              m_firstWavePixels.data(), m_width, m_height, baseStride, firstWave)) {
+        return;
+      }
+
       D2D1_BITMAP_PROPERTIES1 properties{};
       properties.pixelFormat = {
           DXGI_FORMAT_B8G8R8A8_UNORM,
           D2D1_ALPHA_MODE_PREMULTIPLIED};
       properties.dpiX = 96.0f;
       properties.dpiY = 96.0f;
-      winrt::com_ptr<ID2D1Bitmap1> bitmap;
+      winrt::com_ptr<ID2D1Bitmap1> firstWaveBitmap;
       winrt::check_hresult(target->CreateBitmap(
-          {frame.width, frame.height},
-          frame.pixels.data(),
-          frame.stride,
+          {m_width, m_height},
+          m_firstWavePixels.data(),
+          baseStride,
           &properties,
-          bitmap.put()));
+          firstWaveBitmap.put()));
       target->Clear(D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 0.0f});
-      target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
       D2D1_RECT_F destination{
           static_cast<float>(offset.x),
           static_cast<float>(offset.y),
-          static_cast<float>(offset.x + frame.width),
-          static_cast<float>(offset.y + frame.height)};
+          static_cast<float>(offset.x + m_width),
+          static_cast<float>(offset.y + m_height)};
+      target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
       target->DrawBitmap(
-          bitmap.get(),
+          firstWaveBitmap.get(),
           &destination,
           1.0f,
           D2D1_INTERPOLATION_MODE_LINEAR);
+
+      if (m_particleOverlayEnabled.load() && particleFrame) {
+        winrt::com_ptr<ID2D1Bitmap1> particleBitmap;
+        winrt::check_hresult(target->CreateBitmap(
+            {particleFrame->width, particleFrame->height},
+            particleFrame->pixels.data(),
+            particleFrame->stride,
+            &properties,
+            particleBitmap.put()));
+        target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
+        target->DrawBitmap(
+            particleBitmap.get(),
+            &destination,
+            1.0f,
+            D2D1_INTERPOLATION_MODE_LINEAR);
+      }
       m_visual.IsVisible(true);
-      if (m_consumedEvent) {
+      if (particleFrame && m_consumedEvent) {
         SetEvent(m_consumedEvent.get());
       }
     } catch (...) {
@@ -262,11 +369,18 @@ struct NativeBackgroundViewState
   SpriteVisual m_visual{nullptr};
   DrawingSurface m_surface{nullptr};
   winrt::handle m_stopEvent;
+  winrt::handle m_redrawEvent;
   winrt::handle m_readyEvent;
   winrt::handle m_consumedEvent;
+  winrt::handle m_controlChangedEvent;
+  winrt::handle m_controlMapping;
+  BackgroundControlHeader *m_controlHeader{};
   winrt::event_token m_destroying{};
   std::thread m_worker;
   std::atomic_bool m_stopped{false};
+  std::atomic_bool m_particleOverlayEnabled{true};
+  std::chrono::steady_clock::time_point m_timeOrigin{std::chrono::steady_clock::now()};
+  std::vector<uint8_t> m_firstWavePixels;
   uint32_t m_width{};
   uint32_t m_height{};
 };

@@ -127,6 +127,17 @@ int RunProsperismo() {
 
     EnterStartupPhase(L"configure React Native host");
     auto settings{reactNativeWin32App.ReactNativeHost().InstanceSettings()};
+    settings.NativeLogger(winrt::Microsoft::ReactNative::LogHandler{
+        [](winrt::Microsoft::ReactNative::LogLevel level, winrt::hstring const &message) noexcept {
+          wchar_t detail[1536]{};
+          StringCchPrintfW(
+              detail,
+              ARRAYSIZE(detail),
+              L"level=%d message=%s",
+              static_cast<int>(level),
+              message.c_str());
+          AppendStartupLog(L"react log", detail);
+        }});
     RegisterAutolinkedNativeModulePackages(settings.PackageProviders());
     if (!HostModuleDisabled()) {
       settings.PackageProviders().Append(winrt::make<CompReactPackageProvider>());

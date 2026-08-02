@@ -1110,6 +1110,18 @@ not recolour the 4.03 blue Plane2 shader or repurpose title art under a 1:1
 claim. Home may add the separately recovered particle overlay; Settings must
 gate that overlay off while retaining the animated FirstWave base.
 
+The RNW integration pins that ownership rule in a separate presentation-state
+protocol rather than encoding routes into either renderer. The shell-owned
+`Local\ProsperismoShellBackgroundControl` mapping permits only layer mask `3`
+(`FirstWaveBase | ParticleOverlay`) for Home and mask `1` (`FirstWaveBase`) for
+Settings. A particle-only or empty composition is invalid. Its aligned seqlock
+and `Local\ProsperismoShellBackgroundControlChanged` event let the particle
+producer suspend GPU work in Settings while the compositor retains the
+FirstWave visual. The compositor must hide its last consumed particle surface
+as soon as mask `1` is published; stopping new frames alone does not clear a
+retained Composition brush. The byte layout and publication order are recorded
+in `tools/Prosperismo.NativeBackgroundProducer/README.md`.
+
 ### Multi-firmware asset audit (2026-08-01)
 
 The missing-model result is not limited to the original 4.03 reconstruction.

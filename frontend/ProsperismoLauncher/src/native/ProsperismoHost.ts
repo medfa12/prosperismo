@@ -18,11 +18,30 @@ interface NativeProsperismoHost {
   saveLauncherSettings(json: string): Promise<void>;
   findEmulator(): Promise<string>;
   fileExists(path: string): Promise<boolean>;
+  resolveShellAssets(): Promise<ShellAssetPaths>;
   getStartupRoute(): Promise<'desktop' | 'big-picture'>;
   setBigPictureMode(enabled: boolean): Promise<void>;
   openPath(path: string): Promise<void>;
   removeDirectories(paths: string[], titleId: string, confirmed: boolean): Promise<string[]>;
   launch(executable: string, args: string[], workingDirectory: string): Promise<void>;
+}
+
+export interface ShellAssetPaths {
+  oracleRoot: string;
+  firmwareRoot: string;
+  ui3Rco: string;
+  baseRco: string;
+  bgLayerRco: string;
+  npxs40087Eboot: string;
+  particle0Gnf: string;
+  particle1Gnf: string;
+  homeSource: string;
+  settingsIcon: string;
+  libraryIcon: string;
+  desktopIcon: string;
+  searchIcon: string;
+  genericGameIcon: string;
+  nativeDrawCache: string;
 }
 
 const native = NativeModules.ProsperismoHost as NativeProsperismoHost | undefined;
@@ -73,3 +92,6 @@ export const setBigPictureMode = (enabled: boolean): Promise<void> =>
 
 export const getStartupRoute = (): Promise<'desktop' | 'big-picture'> =>
   native?.getStartupRoute() ?? Promise.resolve('desktop');
+
+export const resolveShellAssets = (): Promise<ShellAssetPaths | undefined> =>
+  native?.resolveShellAssets() ?? Promise.resolve(undefined);

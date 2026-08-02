@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import type {GameInstall} from '../core/models';
 import {SHELL_METRICS} from './shellMetrics';
+import {shellTextStyle} from './shellTypography';
 
 type FocusableUIManager = typeof UIManager & {focus(reactTag: number): void};
 
@@ -202,7 +203,7 @@ const styles = StyleSheet.create({
   avatarShoulders: {position: 'absolute', top: 22, width: 30, height: 22, borderRadius: 15},
   promptBar: {position: 'absolute', right: 84, bottom: 42, height: 36, flexDirection: 'row', alignItems: 'center', gap: 32},
   promptItem: {flexDirection: 'row', alignItems: 'center'},
-  promptLabel: {color: '#fff', fontFamily: 'Segoe UI', fontSize: 18, marginLeft: 10},
+  promptLabel: {color: '#fff', marginLeft: 10, ...shellTextStyle('Size3XSmall')},
   promptCircle: {width: 20, height: 20, borderWidth: 2, borderRadius: 10, borderColor: '#fff'},
   promptCross: {width: 20, height: 20},
   promptCrossA: {position: 'absolute', left: 9, top: 0, width: 2, height: 20, backgroundColor: '#fff', transform: [{rotate: '45deg'}]},
@@ -210,22 +211,22 @@ const styles = StyleSheet.create({
   promptOptions: {width: 22, height: 18, justifyContent: 'space-between', paddingVertical: 2},
   promptOptionsLine: {height: 2, width: 22, borderRadius: 1, backgroundColor: '#fff'},
   fullSurface: {position: 'absolute', inset: 0, zIndex: 15, backgroundColor: 'rgba(2,4,8,0.96)'},
-  pageTitle: {position: 'absolute', left: 304, top: 76, color: '#fff', fontFamily: 'Segoe UI', fontSize: 42, fontWeight: '400'},
+  pageTitle: {position: 'absolute', left: 304, top: 76, color: '#fff', ...shellTextStyle('SizeXLarge')},
   searchBox: {position: 'absolute', left: 304, top: 166, width: 1130, height: 72, borderRadius: 16, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.5)'},
   searchGlyph: {width: 34, height: 34, marginLeft: 24, marginRight: 20},
   searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 3, borderRadius: 10, borderColor: '#fff'},
   searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 3, borderRadius: 2, backgroundColor: '#fff', transform: [{rotate: '47deg'}]},
-  searchInput: {flex: 1, height: 68, paddingVertical: 0, paddingRight: 24, color: '#fff', fontFamily: 'Segoe UI', fontSize: 28},
-  resultHeading: {position: 'absolute', left: 304, top: 280, color: 'rgba(255,255,255,0.7)', fontFamily: 'Segoe UI', fontSize: 20},
+  searchInput: {flex: 1, height: 68, paddingVertical: 0, paddingRight: 24, color: '#fff', ...shellTextStyle('SizeNormal')},
+  resultHeading: {position: 'absolute', left: 304, top: 280, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size2XSmall')},
   resultsList: {position: 'absolute', left: 304, top: 318, width: 1130},
   resultRow: {height: 82, borderRadius: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center'},
   resultMonogram: {width: 56, height: 56, borderRadius: 10, marginRight: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center'},
-  resultMonogramText: {color: '#fff', fontSize: 26, fontWeight: '600'},
-  resultCopy: {flex: 1}, resultTitle: {color: '#fff', fontFamily: 'Segoe UI', fontSize: 24}, resultMeta: {marginTop: 3, color: 'rgba(255,255,255,0.62)', fontFamily: 'Segoe UI', fontSize: 16},
-  emptyText: {marginTop: 60, color: 'rgba(255,255,255,0.7)', fontFamily: 'Segoe UI', fontSize: 24},
+  resultMonogramText: {color: '#fff', ...shellTextStyle('SizeSmall', '600')},
+  resultCopy: {flex: 1}, resultTitle: {color: '#fff', ...shellTextStyle('SizeXSmall')}, resultMeta: {marginTop: 3, color: 'rgba(255,255,255,0.62)', ...shellTextStyle('Size4XSmall')},
+  emptyText: {marginTop: 60, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('SizeXSmall')},
   menuLayer: {position: 'absolute', inset: 0, zIndex: 25}, menuScrim: {position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)'},
   profilePanel: {position: 'absolute', top: 126, left: 1188, width: 652, minHeight: 306, maxHeight: 810, borderRadius: 16, overflow: 'hidden', padding: 8, backgroundColor: '#080a0f'},
   profileHeader: {height: 104, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center'}, profileAvatar: {width: 64, height: 64, borderRadius: 32, marginRight: 20, backgroundColor: '#39404a', alignItems: 'center', justifyContent: 'center'},
-  profileName: {color: '#fff', fontFamily: 'Segoe UI', fontSize: 24}, profileStatus: {marginTop: 3, color: 'rgba(255,255,255,0.62)', fontFamily: 'Segoe UI', fontSize: 16}, profileDivider: {height: 2, marginHorizontal: 8, marginBottom: 2, backgroundColor: 'rgba(255,255,255,0.1)'},
-  menuRow: {height: 90, paddingHorizontal: 24, justifyContent: 'center'}, menuRowText: {color: '#fff', fontFamily: 'Segoe UI', fontSize: 24},
+  profileName: {color: '#fff', ...shellTextStyle('SizeXSmall')}, profileStatus: {marginTop: 3, color: 'rgba(255,255,255,0.62)', ...shellTextStyle('Size4XSmall')}, profileDivider: {height: 2, marginHorizontal: 8, marginBottom: 2, backgroundColor: 'rgba(255,255,255,0.1)'},
+  menuRow: {height: 90, paddingHorizontal: 24, justifyContent: 'center'}, menuRowText: {color: '#fff', ...shellTextStyle('SizeXSmall')},
 });

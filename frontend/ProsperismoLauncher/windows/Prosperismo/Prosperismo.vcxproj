@@ -96,7 +96,7 @@
       </AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>ole32.lib;shell32.lib;user32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dwrite.lib;ole32.lib;shell32.lib;user32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
@@ -117,7 +117,9 @@
     <ClInclude Include="ProsperismoHost.h" />
     <ClInclude Include="ProsperismoHostSupport.h" />
     <ClInclude Include="NativeBackgroundFrameProtocol.h" />
+    <ClInclude Include="FirstWaveBackground.h" />
     <ClInclude Include="ProsperismoNativeBackground.h" />
+    <ClInclude Include="ShellTypography.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="AutolinkedNativeModules.g.h" />
     <ClInclude Include="pch.h" />
@@ -129,7 +131,9 @@
     <ClCompile Include="ProsperismoHostSupport.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="FirstWaveBackground.cpp" />
     <ClCompile Include="ProsperismoNativeBackground.cpp" />
+    <ClCompile Include="ShellTypography.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

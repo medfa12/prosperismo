@@ -57,18 +57,13 @@ import {
   hasNativeProsperismoHost,
   getStartupRoute,
   prosperismoHost,
+  resolveShellAssets,
   setBigPictureMode,
 } from './src/native/ProsperismoHost';
 
 const brandArtwork = {
   desktopDark: require('../../assets/branding/ps-iOS-ClearDark-1024.png'),
   desktopLight: require('../../assets/branding/ps-iOS-ClearLight-1024.png'),
-};
-
-const ORACLE_SHELL_ICON_PATHS: Required<FirmwareShellIconPaths> = {
-  settings: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_settings.png',
-  library: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_game_and_apps.png',
-  desktop: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_system.png',
 };
 
 type Route = 'desktop' | 'big-picture';
@@ -383,11 +378,16 @@ export default function App() {
   useEffect(() => subscribeToProcessLifecycle(prosperismoHost, event => setSession(current => applyProcessEvent(current, event))), []);
   useEffect(() => {
     let mounted = true;
-    const entries = Object.entries(ORACLE_SHELL_ICON_PATHS) as [keyof FirmwareShellIconPaths, string][];
-    Promise.all(entries.map(async ([key, path]) => [key, path, await prosperismoHost.fileExists(path)] as const))
-      .then(found => {
-        if (mounted) {
-          setFirmwareShellIcons(Object.fromEntries(found.filter(([, , exists]) => exists).map(([key, path]) => [key, path])));
+    resolveShellAssets()
+      .then(paths => {
+        if (mounted && paths) {
+          setFirmwareShellIcons({
+            settings: paths.settingsIcon || undefined,
+            library: paths.libraryIcon || undefined,
+            desktop: paths.desktopIcon || undefined,
+            search: paths.searchIcon || undefined,
+            genericGame: paths.genericGameIcon || undefined,
+          });
         }
       })
       .catch(() => undefined);

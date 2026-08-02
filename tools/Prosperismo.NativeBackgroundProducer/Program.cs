@@ -82,6 +82,7 @@ internal static class Program
         using var accessor = mapping.CreateViewAccessor(0, mappingBytes, MemoryMappedFileAccess.ReadWrite);
         using var frameEvent = new EventWaitHandle(false, EventResetMode.AutoReset, FrameEventName);
         using var consumedEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ConsumedEventName);
+        using var presentationState = new BackgroundPresentationStateReader();
 
         try
         {
@@ -106,6 +107,18 @@ internal static class Program
                 while (!cancellationToken.IsCancellationRequested &&
                        (options.FrameLimit is null || published < options.FrameLimit))
                 {
+                    if (!presentationState.ParticleOverlayEnabled)
+                    {
+                        // Settings keeps the FirstWave base alive but selects
+                        // NoParticle. Do not advance the recovered particle
+                        // clock or spend GPU work while that overlay is gated.
+                        presentationState.WaitForChangeOrTimeout(
+                            cancellationToken,
+                            TimeSpan.FromMilliseconds(250));
+                        deadline = clock.Elapsed;
+                        continue;
+                    }
+
                     indices.MoveNext();
                     var draws = LoadDraws(
                         cache.FrameRoots[indices.Current],
@@ -293,6 +306,54 @@ internal static class Program
         if (!indices.SequenceEqual(new[] { 0, 1, 2, 3, 2, 1, 0, 1, 2, 3 }))
         {
             throw new InvalidOperationException("ping-pong sequence is wrong");
+        }
+
+        var control = new byte[BackgroundPresentationProtocol.HeaderBytes];
+        BackgroundPresentationProtocol.EncodeForTest(
+            control,
+            BackgroundPresentationProtocol.HomeLayers,
+            sequence: 4,
+            timestampQpc: 123);
+        if (!BackgroundPresentationProtocol.TryDecode(
+                control,
+                stableSequence: 4,
+                out var homeLayers) ||
+            homeLayers != BackgroundPresentationProtocol.HomeLayers)
+        {
+            throw new InvalidOperationException("Home layer-mask protocol is wrong");
+        }
+
+        BackgroundPresentationProtocol.EncodeForTest(
+            control,
+            BackgroundPresentationProtocol.SettingsLayers,
+            sequence: 6);
+        if (!BackgroundPresentationProtocol.TryDecode(
+                control,
+                stableSequence: 6,
+                out var settingsLayers) ||
+            settingsLayers != BackgroundPresentationProtocol.SettingsLayers)
+        {
+            throw new InvalidOperationException("Settings layer-mask protocol is wrong");
+        }
+
+        // A state without the persistent base, an odd in-progress sequence,
+        // and a stale snapshot must all be rejected.
+        BackgroundPresentationProtocol.EncodeForTest(
+            control,
+            BackgroundLayerMask.ParticleOverlay,
+            sequence: 8);
+        if (BackgroundPresentationProtocol.TryDecode(control, 8, out _))
+        {
+            throw new InvalidOperationException("control accepted particles without FirstWave base");
+        }
+        BackgroundPresentationProtocol.EncodeForTest(
+            control,
+            BackgroundPresentationProtocol.HomeLayers,
+            sequence: 9);
+        if (BackgroundPresentationProtocol.TryDecode(control, 9, out _) ||
+            BackgroundPresentationProtocol.TryDecode(control, 10, out _))
+        {
+            throw new InvalidOperationException("control accepted a torn or stale sequence");
         }
     }
 

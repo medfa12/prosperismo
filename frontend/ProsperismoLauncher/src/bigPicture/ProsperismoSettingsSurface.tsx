@@ -2,6 +2,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import {Animated, Easing, findNodeHandle, Pressable, StyleSheet, Text, UIManager, View} from 'react-native';
 import type {LauncherSettings} from '../core/models';
 import {SHELL_METRICS} from './shellMetrics';
+import {shellTextStyle} from './shellTypography';
 
 export const PROSPERISMO_SETTINGS_CATEGORIES = [
   ['General', 'Game folders, library order, and launcher behavior'],
@@ -154,14 +155,14 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
 
 const styles = StyleSheet.create({
   stage: {position: 'absolute', inset: 0},
-  pageTitle: {position: 'absolute', left: 304, top: 80, color: '#fff', fontFamily: 'Segoe UI', fontSize: 42, fontWeight: '400'},
+  pageTitle: {position: 'absolute', left: 304, top: 80, color: '#fff', ...shellTextStyle('SizeXLarge')},
   categoryList: {position: 'absolute', left: 304, top: 186, width: 1312, height: 894},
   categoryRow: {height: 112, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center'},
   focus: {position: 'absolute', left: 0, top: 3, right: 0, bottom: 5, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)', borderRadius: 16},
   categoryGlyph: {width: 48, height: 48, marginRight: 20, alignItems: 'center', justifyContent: 'center'},
   glyphMark: {width: 28, height: 28, borderWidth: 3, borderColor: '#fff'}, glyphRound: {borderRadius: 14}, glyphDiamond: {transform: [{rotate: '45deg'}]}, glyphInner: {position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff'},
-  categoryCopy: {flex: 1}, categoryTitle: {color: '#fff', fontFamily: 'Segoe UI', fontSize: 28}, categoryDescription: {marginTop: 5, color: 'rgba(255,255,255,0.7)', fontFamily: 'Segoe UI', fontSize: 18}, chevron: {width: 52, color: '#fff', fontFamily: 'Segoe UI', fontSize: 42, textAlign: 'center'},
-  backTarget: {position: 'absolute', left: 304, top: 62, paddingVertical: 10, paddingRight: 28}, backText: {color: 'rgba(255,255,255,0.72)', fontFamily: 'Segoe UI', fontSize: 20},
-  detailTitle: {position: 'absolute', left: 304, top: 112, color: '#fff', fontFamily: 'Segoe UI', fontSize: 42}, detailDescription: {position: 'absolute', left: 304, top: 166, color: 'rgba(255,255,255,0.7)', fontFamily: 'Segoe UI', fontSize: 20},
-  detailList: {position: 'absolute', left: 304, top: 224, width: 1312}, detailRow: {height: 96, borderRadius: 16, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', fontFamily: 'Segoe UI', fontSize: 26}, detailValue: {maxWidth: 540, color: 'rgba(255,255,255,0.72)', fontFamily: 'Segoe UI', fontSize: 22, textAlign: 'right'},
+  categoryCopy: {flex: 1}, categoryTitle: {color: '#fff', ...shellTextStyle('SizeNormal')}, categoryDescription: {marginTop: 5, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')}, chevron: {width: 52, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXLarge')},
+  backTarget: {position: 'absolute', left: 304, top: 62, paddingVertical: 10, paddingRight: 28}, backText: {color: 'rgba(255,255,255,0.72)', ...shellTextStyle('Size2XSmall')},
+  detailTitle: {position: 'absolute', left: 304, top: 112, color: '#fff', ...shellTextStyle('SizeXLarge')}, detailDescription: {position: 'absolute', left: 304, top: 166, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size2XSmall')},
+  detailList: {position: 'absolute', left: 304, top: 224, width: 1312}, detailRow: {height: 96, borderRadius: 16, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', ...shellTextStyle('SizeSmall')}, detailValue: {maxWidth: 540, color: 'rgba(255,255,255,0.72)', textAlign: 'right', ...shellTextStyle('SizeXSmall')},
 });

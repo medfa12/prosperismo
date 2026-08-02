@@ -24,6 +24,40 @@ struct ProsperismoDirectoryEntry {
   bool symbolicLink{false};
 };
 
+REACT_STRUCT(ProsperismoShellAssetPaths)
+struct ProsperismoShellAssetPaths {
+  REACT_FIELD(oracleRoot)
+  std::string oracleRoot;
+  REACT_FIELD(firmwareRoot)
+  std::string firmwareRoot;
+  REACT_FIELD(ui3Rco)
+  std::string ui3Rco;
+  REACT_FIELD(baseRco)
+  std::string baseRco;
+  REACT_FIELD(bgLayerRco)
+  std::string bgLayerRco;
+  REACT_FIELD(npxs40087Eboot)
+  std::string npxs40087Eboot;
+  REACT_FIELD(particle0Gnf)
+  std::string particle0Gnf;
+  REACT_FIELD(particle1Gnf)
+  std::string particle1Gnf;
+  REACT_FIELD(homeSource)
+  std::string homeSource;
+  REACT_FIELD(settingsIcon)
+  std::string settingsIcon;
+  REACT_FIELD(libraryIcon)
+  std::string libraryIcon;
+  REACT_FIELD(desktopIcon)
+  std::string desktopIcon;
+  REACT_FIELD(searchIcon)
+  std::string searchIcon;
+  REACT_FIELD(genericGameIcon)
+  std::string genericGameIcon;
+  REACT_FIELD(nativeDrawCache)
+  std::string nativeDrawCache;
+};
+
 REACT_MODULE(ProsperismoHost, L"ProsperismoHost")
 struct ProsperismoHost {
   REACT_INIT(Initialize)
@@ -78,6 +112,10 @@ struct ProsperismoHost {
   void FileExists(
       std::string path,
       winrt::Microsoft::ReactNative::ReactPromise<bool> &&promise) noexcept;
+
+  REACT_METHOD(ResolveShellAssets, L"resolveShellAssets")
+  void ResolveShellAssets(
+      winrt::Microsoft::ReactNative::ReactPromise<ProsperismoShellAssetPaths> &&promise) noexcept;
 
   REACT_METHOD(GetStartupRoute, L"getStartupRoute")
   void GetStartupRoute(
