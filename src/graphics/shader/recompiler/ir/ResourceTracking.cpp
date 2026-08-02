@@ -114,6 +114,40 @@ bool ContainsUnknown(const ScalarProvenance& provenance, uint32_t id, std::vecto
 	return false;
 }
 
+bool FindMemoryReadBase(const ScalarProvenance& provenance, uint32_t id,
+	                    std::vector<uint8_t>& visited, uint32_t& low, uint32_t& high) {
+	if (id >= provenance.values.size() || visited[id] != 0) {
+		return false;
+	}
+	visited[id]       = 1;
+	const auto& value = provenance.values[id];
+	if (value.op == ScalarValueOp::ReadConst ||
+	    value.op == ScalarValueOp::ReadConstBuffer) {
+		low  = value.args[0];
+		high = value.args[1];
+		return true;
+	}
+	if (value.op == ScalarValueOp::Phi) {
+		for (const auto arg: value.phi_args) {
+			if (FindMemoryReadBase(provenance, arg, visited, low, high)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	for (uint32_t i = 0; i < ScalarValueArgCount(value.op); i++) {
+		if (FindMemoryReadBase(provenance, value.args[i], visited, low, high)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool DynamicDescriptorSource(const Program& program, uint32_t source) {
+	return std::find(program.srt.dynamic_sources.begin(), program.srt.dynamic_sources.end(),
+	                 source) != program.srt.dynamic_sources.end();
+}
+
 bool IsLoopInvariantValue(const ScalarProvenance& provenance, uint32_t id,
                           std::vector<uint8_t>& visiting) {
 	if (id <= ScalarProvenance::Unknown || id >= provenance.values.size()) {
@@ -345,7 +379,9 @@ private:
 		    inst.memory.resource_source == ScalarProvenance::Unknown ? 0 : std::min(immediate, 0);
 		for (uint32_t i = 0; i < m_info.addresses.size(); i++) {
 			auto& address = m_info.addresses[i];
-			if (address.source == inst.memory.resource_source && address.kind == inst.memory.kind) {
+			if (address.source == inst.memory.resource_source && address.kind == inst.memory.kind &&
+			    address.base_register == inst.memory.resource &&
+			    address.runtime_address == inst.memory.runtime_address) {
 				address.first_use_pc = std::min(address.first_use_pc, inst.pc);
 				address.min_offset   = std::min(address.min_offset, min_offset);
 				address.read         = address.read || !IsWrite(inst.op) || IsAtomic(inst.op);
@@ -358,7 +394,8 @@ private:
 			return UINT32_MAX;
 		}
 		AddressResource address {inst.memory.resource_source, inst.pc, inst.memory.kind,
-		                         min_offset};
+		                         inst.memory.resource, min_offset, 0,
+		                         inst.memory.runtime_address};
 		address.read    = !IsWrite(inst.op) || IsAtomic(inst.op);
 		address.written = IsWrite(inst.op);
 		address.atomic  = IsAtomic(inst.op);
@@ -404,7 +441,83 @@ private:
 
 	bool Collect(Instruction& inst, std::string* error) {
 		if (IsAddress(inst)) {
-			const bool unbased = inst.memory.resource_source == ScalarProvenance::Unknown;
+			bool unbased = inst.memory.resource_source == ScalarProvenance::Unknown ||
+			               DynamicDescriptorSource(m_program, inst.memory.resource_source);
+			if (!unbased && inst.memory.kind == ResourceKind::ScalarBuffer) {
+				const auto* descriptor =
+				    GetDescriptorSource(m_program, inst.memory.resource_source);
+				if (descriptor != nullptr) {
+					for (uint32_t i = 0; i < descriptor->dword_count && !unbased; i++) {
+						std::vector<uint8_t> visited(m_program.provenance.values.size());
+						std::vector<uint32_t> path;
+						unbased = ContainsUnknown(m_program.provenance, descriptor->dwords[i],
+						                          visited, path);
+					}
+				}
+			}
+			if (unbased && inst.op == Opcode::SLoadDword &&
+			    inst.memory.kind == ResourceKind::ScalarBuffer) {
+				// GFX1013 BVH traversal constructs node addresses in an SGPR pair on the GPU.
+				// Reuse the closest earlier real allocation bound through the same pair, while
+				// retaining the live address calculation in SPIR-V. This is not a zero-fill:
+				// out-of-range addresses remain invalid and loads return zero only through the
+				// existing robust bounds check.
+				for (auto it = m_info.addresses.rbegin(); it != m_info.addresses.rend(); ++it) {
+					if (it->kind == ResourceKind::ScalarBuffer &&
+					    it->base_register == inst.memory.resource &&
+					    it->source > ScalarProvenance::Unknown) {
+						inst.memory.resource_source = it->source;
+						inst.memory.runtime_address = true;
+						inst.memory.runtime_address_register = inst.memory.resource;
+						unbased                    = false;
+						break;
+					}
+				}
+				if (unbased) {
+					const auto* descriptor =
+					    GetDescriptorSource(m_program, inst.memory.resource_source);
+					uint32_t parent_low  = ScalarProvenance::Undefined;
+					uint32_t parent_high = ScalarProvenance::Undefined;
+					bool parent_found = false;
+					if (descriptor != nullptr) {
+						for (uint32_t i = 0; i < descriptor->dword_count && !parent_found; i++) {
+							std::vector<uint8_t> visited(m_program.provenance.values.size());
+							parent_found = FindMemoryReadBase(
+							    m_program.provenance, descriptor->dwords[i], visited, parent_low,
+							    parent_high);
+						}
+					}
+					if (parent_found) {
+						for (auto it = m_info.addresses.rbegin(); it != m_info.addresses.rend(); ++it) {
+							const auto* anchor = GetDescriptorSource(m_program, it->source);
+							if (it->kind == ResourceKind::ScalarBuffer && anchor != nullptr &&
+							    anchor->dword_count >= 2 && anchor->dwords[0] == parent_low &&
+							    anchor->dwords[1] == parent_high) {
+								inst.memory.resource_source = it->source;
+								inst.memory.runtime_address = true;
+								inst.memory.runtime_address_register = inst.memory.resource;
+								unbased = false;
+								break;
+							}
+						}
+					}
+				}
+				if (unbased) {
+					std::string candidates;
+					for (const auto& address: m_info.addresses) {
+						if (address.kind != ResourceKind::ScalarBuffer) {
+							continue;
+						}
+						candidates += fmt::format("{}pc=0x{:08x}/s{}/source={}",
+						                          candidates.empty() ? "" : ",", address.first_use_pc,
+						                          address.base_register, address.source);
+					}
+					return Fail(inst.pc, error,
+					            fmt::format("GPU-dynamic raw SMEM s{} has no prior allocation "
+					                        "anchor; candidates=[{}]",
+					                        inst.memory.resource, candidates));
+				}
+			}
 			if ((!unbased && !ValidateSource(inst.memory.resource_source, 2, inst.pc, error)) ||
 			    (unbased && inst.memory.kind != ResourceKind::Flat &&
 			     inst.memory.kind != ResourceKind::Global &&
@@ -417,6 +530,38 @@ private:
 			}
 			m_patches.push_back({std::ref(inst), resource, 0});
 			return true;
+		}
+		if (inst.op == Opcode::SBufferLoadDword &&
+		    inst.memory.kind == ResourceKind::ScalarBuffer) {
+			const auto* descriptor =
+			    GetDescriptorSource(m_program, inst.memory.resource_source);
+			bool dynamic = descriptor == nullptr ||
+			               DynamicDescriptorSource(m_program, inst.memory.resource_source);
+			if (descriptor != nullptr) {
+				for (uint32_t i = 0; i < descriptor->dword_count && !dynamic; i++) {
+					std::vector<uint8_t> visited(m_program.provenance.values.size());
+					std::vector<uint32_t> path;
+					dynamic = ContainsUnknown(m_program.provenance, descriptor->dwords[i],
+					                          visited, path);
+				}
+			}
+			if (dynamic) {
+				const auto base_register = inst.memory.resource * 4u;
+				for (uint32_t i = static_cast<uint32_t>(m_info.addresses.size()); i-- > 0;) {
+					const auto& address = m_info.addresses[i];
+					if (address.kind == ResourceKind::ScalarBuffer &&
+					    address.base_register == base_register && address.runtime_address) {
+						inst.memory.runtime_address          = true;
+						inst.memory.runtime_address_register = base_register;
+						m_patches.push_back({std::ref(inst), i, 0});
+						return true;
+					}
+				}
+				return Fail(inst.pc, error,
+				            fmt::format("GPU-dynamic s_buffer_load s{} has no raw-SMEM "
+				                        "allocation anchor",
+				                        base_register));
+			}
 		}
 		if (!IsBuffer(inst) && !IsImage(inst)) {
 			return true;

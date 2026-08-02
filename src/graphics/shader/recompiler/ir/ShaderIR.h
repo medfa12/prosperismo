@@ -441,6 +441,11 @@ struct MemoryInfo {
 	bool     slc             = false;
 	bool     idxen           = false;
 	bool     offen           = false;
+	// Raw SMEM normally specializes its SGPR pair to one CPU-resolved address. BVH
+	// traversal can replace that pair on the GPU; in that case retain the live pair
+	// and translate it relative to a real bound guest allocation at runtime.
+	bool     runtime_address          = false;
+	uint32_t runtime_address_register = UINT32_MAX;
 
 	bool operator==(const MemoryInfo& other) const = default;
 };
@@ -636,8 +641,10 @@ struct AddressResource {
 	uint32_t     source           = 0;
 	uint32_t     first_use_pc     = 0;
 	ResourceKind kind             = ResourceKind::Flat;
+	uint32_t     base_register    = UINT32_MAX;
 	int32_t      min_offset       = 0;
 	uint64_t     specialized_base = 0;
+	bool         runtime_address  = false;
 	bool         read             = false;
 	bool         written          = false;
 	bool         atomic           = false;

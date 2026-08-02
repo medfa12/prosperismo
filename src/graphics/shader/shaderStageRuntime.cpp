@@ -1,9 +1,19 @@
+#include "graphics/host_gpu/hostMemory.h"
 #include "graphics/shader/recompiler/ir/ResourceMaterialization.h"
 #include "graphics/shader/shader.h"
 
+#include <cstring>
 #include <utility>
 
 namespace Libs::Graphics {
+
+bool ShaderReadMappedGuestDword(void*, uint64_t address, uint32_t* value) {
+	if (value == nullptr || !HostMemoryRangeIsReadable(address, sizeof(*value))) {
+		return false;
+	}
+	std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+	return true;
+}
 
 bool ShaderMaterializeStageRuntime(std::shared_ptr<const ShaderRecompiler::IR::Program> program,
                                    std::span<const uint32_t> user_data, uint64_t shader_base,
@@ -17,6 +27,7 @@ bool ShaderMaterializeStageRuntime(std::shared_ptr<const ShaderRecompiler::IR::P
 	ShaderRecompiler::IR::SrtRuntime runtime;
 	runtime.user_data   = user_data;
 	runtime.shader_base = shader_base;
+	runtime.read_memory = ShaderReadMappedGuestDword;
 	ShaderRecompiler::IR::ResourceSnapshot snapshot;
 	if (!ShaderRecompiler::IR::MaterializeResources(*program, runtime, snapshot, error) ||
 	    !ShaderRecompiler::IR::ValidateResourceSpecialization(*program, snapshot, error)) {

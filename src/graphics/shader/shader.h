@@ -39,6 +39,11 @@ struct ShaderStageRuntime {
 	}
 };
 
+// Safe host-side reader for guest allocations used while materializing shader
+// resource tables. Invalid GPU-built addresses are reported as translation
+// failures instead of becoming host access violations.
+bool ShaderReadMappedGuestDword(void* userdata, uint64_t address, uint32_t* value);
+
 // Resolves an immutable native shader plan against current user data. The prior stage is preserved
 // if any ReadConst, snapshot, or specialization check fails.
 bool ShaderMaterializeStageRuntime(std::shared_ptr<const ShaderRecompiler::IR::Program> program,

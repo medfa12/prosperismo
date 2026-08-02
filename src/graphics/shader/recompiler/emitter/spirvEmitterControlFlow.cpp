@@ -724,7 +724,7 @@ void EmitInstruction(EmitterState& state, const IR::Instruction& inst) {
 		case IR::Opcode::FMed3F32: EmitMed3F32(state, inst); break;
 		case IR::Opcode::SLoadDword: EmitSLoadDword(state, inst); break;
 		case IR::Opcode::SBufferLoadDword:
-			EmitMemoryLoadU32(state, inst, IR::ResourceKind::ScalarBuffer, 0, 1);
+			EmitSBufferLoadDword(state, inst);
 			break;
 		case IR::Opcode::LoadSrtDword: EmitLoadSrtDword(state, inst); break;
 		case IR::Opcode::BufferLoadUbyte: EmitBufferLoadUbyte(state, inst); break;
@@ -1050,10 +1050,36 @@ size_t BufferLoadGroupSize(const IR::BasicBlock& block, size_t first_index) {
 	return count;
 }
 
+size_t RuntimeSLoadGroupSize(const IR::BasicBlock& block, size_t first_index) {
+	const auto& first = block.instructions[first_index];
+	if (first.op != IR::Opcode::SLoadDword || !first.memory.runtime_address ||
+	    first.memory.component_index != 0u || first.memory.component_count <= 1u) {
+		return 1u;
+	}
+
+	size_t count = 1u;
+	while (first_index + count < block.instructions.size() &&
+	       count < first.memory.component_count) {
+		const auto& next = block.instructions[first_index + count];
+		if (next.op != IR::Opcode::SLoadDword || !next.memory.runtime_address ||
+		    next.pc != first.pc || next.memory.component_index != count ||
+		    next.memory.component_count != first.memory.component_count ||
+		    next.memory.runtime_address_register != first.memory.runtime_address_register) {
+			break;
+		}
+		count++;
+	}
+	return count;
+}
+
 void EmitBlockInstructions(EmitterState& state, const IR::BasicBlock& block) {
 	for (size_t i = 0; i < block.instructions.size();) {
-		const auto count = BufferLoadGroupSize(block, i);
-		if (count > 1u) {
+		const auto scalar_count = RuntimeSLoadGroupSize(block, i);
+		const auto count = scalar_count > 1u ? scalar_count : BufferLoadGroupSize(block, i);
+		if (scalar_count > 1u) {
+			EmitSLoadDwordGroup(state, block.instructions.data() + i,
+			                    static_cast<uint32_t>(scalar_count));
+		} else if (count > 1u) {
 			EmitBufferLoadDwordGroup(state, block.instructions.data() + i,
 			                         static_cast<uint32_t>(count));
 		} else {

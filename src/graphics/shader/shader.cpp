@@ -1390,6 +1390,7 @@ bool ShaderCompileSpirvVS(const HW::VertexShaderInfo& regs, const HW::ShaderRegi
 	options.user_data_base       = 8;
 	options.user_data_count      = regs.gs_regs.rsrc2.user_sgpr;
 	options.user_data            = regs.gs_user_sgpr.value;
+	options.read_memory          = ShaderReadMappedGuestDword;
 	options.descriptor_set       = 0;
 	options.push_constant_offset = 0;
 	options.vertex_input_info    = &input_info;
@@ -1443,6 +1444,7 @@ bool ShaderCompileSpirvPS(const HW::PixelShaderInfo& regs, const HW::ShaderRegis
 	options.shader_base          = shader_addr;
 	options.user_data_count      = regs.ps_regs.rsrc2.user_sgpr;
 	options.user_data            = regs.ps_user_sgpr.value;
+	options.read_memory          = ShaderReadMappedGuestDword;
 	options.descriptor_set       = input_info.descriptor_set;
 	options.push_constant_offset = input_info.push_constant_offset;
 	options.pixel_input_info     = &input_info;
@@ -1492,6 +1494,7 @@ bool ShaderCompileSpirvCS(const HW::ComputeShaderInfo& regs, const HW::ShaderReg
 	options.shader_base          = shader_addr;
 	options.user_data_count      = regs.cs_regs.user_sgpr;
 	options.user_data            = regs.cs_user_sgpr.value;
+	options.read_memory          = ShaderReadMappedGuestDword;
 	options.descriptor_set       = 0;
 	options.push_constant_offset = 0;
 	options.compute_input_info   = &input_info;

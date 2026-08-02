@@ -11741,6 +11741,36 @@ TestCase ScalarLoadSignedImmediateOffsetAddsSoffset() {
 	        {O::SMovB32, O::SLoadDword, O::BufferStoreDword, O::SEndpgm}};
 }
 
+TestCase ScalarDynamicSLoadDwordx4PreservesAddressOnGpu() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	// Establish the real allocation behind s[8:9] before replacing that pair with a
+	// GPU-produced address, matching Astro's BVH traversal sequence.
+	code.push_back(EncodeSMovB32(8, 0));
+	code.push_back(EncodeSMovB32(9, 1));
+	code.push_back(EncodeSmem0(0x00u, 20, 4));
+	code.push_back(EncodeSmem1(0));
+	AppendVMovU32(&code, 0, 0);
+	AppendVMovU32(&code, 1, 0);
+	AppendVop3(&code, 0x360u, 8, Vgpr(0), InlineU32(0));
+	AppendVop3(&code, 0x360u, 9, Vgpr(1), InlineU32(0));
+	code.push_back(EncodeSmem0(0x02u, 8, 4));
+	code.push_back(EncodeSmem1(0));
+	AppendStoreSgpr(&code, 8, 4);
+	AppendStoreSgpr(&code, 9, 5);
+	AppendStoreSgpr(&code, 10, 6);
+	AppendStoreSgpr(&code, 11, 7);
+	AppendEnd(&code);
+
+	return {"ScalarDynamicSLoadDwordx4PreservesAddressOnGpu",
+	        code,
+	        {16u, 0u, 16u, 0u, 0x89abcdefu, 0u, 0u, 0u},
+	        {16u, 0u, 16u, 0u, 16u, 0u, 16u, 0u},
+	        {O::SMovB32, O::SLoadDword, O::VMovB32, O::VReadlaneB32, O::SLoadDwordx4,
+	         O::BufferStoreDword, O::SEndpgm}};
+}
+
 TestCase BufferLoadStore() {
 	using O = ShaderOpcode;
 
@@ -17494,6 +17524,7 @@ int main(int argc, char** argv) {
 		RunCase(&vulkan, ScalarTrapTerminatesInvocationOnGpu());
 		RunCase(&vulkan, ImageBvhIntersectRayUsesGuestMissSentinelOnGpu());
 		RunCase(&vulkan, ScalarFf1I32B64AstroEncodingOnGpu());
+		RunCase(&vulkan, ScalarDynamicSLoadDwordx4PreservesAddressOnGpu());
 		return 0;
 	}
 	if (argc == 2 && std::strcmp(argv[1], "--clip-control-only") == 0) {

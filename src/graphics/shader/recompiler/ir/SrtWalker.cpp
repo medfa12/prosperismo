@@ -175,8 +175,9 @@ public:
 		m_program.srt = {};
 		for (const auto& block: m_program.blocks) {
 			for (const auto& inst: block.instructions) {
-				if (!CollectDescriptor(inst.memory.resource_source, inst.pc, error) ||
-				    !CollectDescriptor(inst.memory.sampler_source, inst.pc, error)) {
+				const bool gpu_address = inst.op == Opcode::SLoadDword;
+				if (!CollectDescriptor(inst.memory.resource_source, inst.pc, gpu_address, error) ||
+				    !CollectDescriptor(inst.memory.sampler_source, inst.pc, false, error)) {
 					return false;
 				}
 			}
@@ -185,6 +186,14 @@ public:
 			for (const auto& inst: block.instructions) {
 				if (inst.op == Opcode::SLoadDword && inst.scalar_value < m_state.size() &&
 				    m_state[inst.scalar_value] == 0) {
+					if (std::find(m_program.srt.dynamic_sources.begin(),
+					              m_program.srt.dynamic_sources.end(),
+					              inst.memory.resource_source) !=
+					    m_program.srt.dynamic_sources.end()) {
+						MarkValue(inst.scalar_value);
+						AddDynamicRead(inst.scalar_value);
+						continue;
+					}
 					const auto& value   = m_program.provenance.values[inst.scalar_value];
 					uint32_t    ignored = 0;
 					if (value.op == ScalarValueOp::ReadConst &&
@@ -206,7 +215,44 @@ private:
 		return false;
 	}
 
-	bool CollectDescriptor(uint32_t source, uint32_t use_pc, std::string* error) {
+	bool ValueContainsMemoryRead(uint32_t id, std::vector<uint8_t>& visited) const {
+		if (id >= m_program.provenance.values.size() || visited[id] != 0) {
+			return false;
+		}
+		visited[id]       = 1;
+		const auto& value = m_program.provenance.values[id];
+		if (value.op == ScalarValueOp::ReadConst ||
+		    value.op == ScalarValueOp::ReadConstBuffer) {
+			return true;
+		}
+		if (value.op == ScalarValueOp::Phi) {
+			for (const auto arg: value.phi_args) {
+				if (ValueContainsMemoryRead(arg, visited)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		for (uint32_t i = 0; i < ScalarValueArgCount(value.op); i++) {
+			if (ValueContainsMemoryRead(value.args[i], visited)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool DescriptorContainsMemoryRead(const DescriptorValue& descriptor) const {
+		std::vector<uint8_t> visited(m_program.provenance.values.size());
+		for (uint32_t i = 0; i < descriptor.dword_count; i++) {
+			if (ValueContainsMemoryRead(descriptor.dwords[i], visited)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool CollectDescriptor(uint32_t source, uint32_t use_pc, bool gpu_address,
+	                       std::string* error) {
 		const auto* descriptor = GetDescriptorSource(m_program, source);
 		if (descriptor == nullptr) {
 			if (source <= ScalarProvenance::Unknown) {
@@ -214,7 +260,8 @@ private:
 			}
 			return Fail(use_pc, error, fmt::format("invalid descriptor source {}", source));
 		}
-		if (!DescriptorSourceResolved(m_program, source) ||
+		if ((gpu_address && DescriptorContainsMemoryRead(*descriptor)) ||
+		    !DescriptorSourceResolved(m_program, source) ||
 		    DescriptorNeedsControlFlow(*descriptor)) {
 			MarkDescriptor(*descriptor);
 			return AddDynamicSource(source);
@@ -286,6 +333,13 @@ private:
 		return true;
 	}
 
+	void AddDynamicRead(uint32_t value) {
+		if (std::find(m_program.srt.dynamic_reads.begin(), m_program.srt.dynamic_reads.end(),
+		              value) == m_program.srt.dynamic_reads.end()) {
+			m_program.srt.dynamic_reads.push_back(value);
+		}
+	}
+
 	bool CollectValue(uint32_t id, uint32_t use_pc, std::string* error) {
 		if (id >= m_program.provenance.values.size()) {
 			return Fail(use_pc, error, fmt::format("invalid scalar value {}", id));
@@ -318,7 +372,7 @@ private:
 				m_program.srt.reads.push_back(
 				    {id, static_cast<uint32_t>(m_program.srt.reads.size()), use_pc});
 			} else {
-				m_program.srt.dynamic_reads.push_back(id);
+				AddDynamicRead(id);
 			}
 		}
 		m_state[id] = 2;

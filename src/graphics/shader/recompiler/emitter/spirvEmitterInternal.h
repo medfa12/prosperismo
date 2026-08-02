@@ -1020,6 +1020,11 @@ void EmitAtomicU32(EmitterState& state, const IR::Instruction& inst, uint32_t op
 
 void EmitSLoadDword(EmitterState& state, const IR::Instruction& inst);
 
+void EmitSLoadDwordGroup(EmitterState& state, const IR::Instruction* instructions,
+                         uint32_t count);
+
+void EmitSBufferLoadDword(EmitterState& state, const IR::Instruction& inst);
+
 void EmitLoadSrtDword(EmitterState& state, const IR::Instruction& inst);
 
 void EmitBufferLoadUbyte(EmitterState& state, const IR::Instruction& inst);

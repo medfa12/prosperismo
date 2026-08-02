@@ -1181,16 +1181,71 @@ void EmitAtomicU32(EmitterState& state, const IR::Instruction& inst, uint32_t op
 	EmitStoreU32(state, inst.dst, old);
 }
 
-void EmitSLoadDword(EmitterState& state, const IR::Instruction& inst) {
-	if (state.address_memory_variable == 0) {
-		ExitDescriptorBindingFailure(state, IR::DescriptorBindingKind::AddressMemory,
-		                             inst.memory.resource,
-		                             "scalar memory descriptor array was not emitted");
+uint32_t EmitRuntimeScalarAddressFromBase(EmitterState& state, const IR::Instruction& inst,
+                                          bool buffer_descriptor, uint32_t low0,
+                                          uint32_t high0) {
+	if (buffer_descriptor) {
+		high0 = EmitBinaryU32(state, OpBitwiseAnd, high0, ConstantU32(state, 0xffffu));
 	}
+	auto dynamic = EmitValueLoad(state, inst.src[0]);
+	dynamic = EmitBinaryU32(state, OpBitwiseAnd, dynamic, ConstantU32(state, ~3u));
+	const auto immediate = ConstantU32(state, inst.memory.offset & ~3u);
+	const auto added     = EmitAddU32(state, dynamic, immediate);
+	const auto low       = EmitAddU32(state, low0, added);
+	uint32_t   high      = high0;
+	if (!buffer_descriptor) {
+		const auto carry0_bool = state.builder.AllocateId();
+		state.builder.AddFunction({OpULessThan, state.bool_type, carry0_bool, added, dynamic});
+		const auto carry0 = EmitSelectU32Value(
+		    state, carry0_bool, ConstantU32(state, 1), ConstantU32(state, 0));
+		const auto carry1_bool = state.builder.AllocateId();
+		state.builder.AddFunction({OpULessThan, state.bool_type, carry1_bool, low, low0});
+		const auto carry1 = EmitSelectU32Value(
+		    state, carry1_bool, ConstantU32(state, 1), ConstantU32(state, 0));
+		high = EmitAddU32(state, high0, EmitAddU32(state, carry0, carry1));
+	} else {
+		const auto carry_bool = state.builder.AllocateId();
+		state.builder.AddFunction({OpULessThan, state.bool_type, carry_bool, low, low0});
+		high = EmitAddU32(
+		    state, high,
+		    EmitSelectU32Value(state, carry_bool, ConstantU32(state, 1), ConstantU32(state, 0)));
+	}
+
+	const auto base = state.program.info.addresses[inst.memory.resource].specialized_base;
+	const auto relative_low = EmitBinaryU32(
+	    state, OpISub, low, ConstantU32(state, static_cast<uint32_t>(base)));
+	const auto borrow_bool = state.builder.AllocateId();
+	state.builder.AddFunction({OpULessThan, state.bool_type, borrow_bool, low,
+	                           ConstantU32(state, static_cast<uint32_t>(base))});
+	const auto borrow = EmitSelectU32Value(
+	    state, borrow_bool, ConstantU32(state, 1), ConstantU32(state, 0));
+	const auto relative_high = EmitBinaryU32(
+	    state, OpISub,
+	    EmitBinaryU32(state, OpISub, high,
+	                  ConstantU32(state, static_cast<uint32_t>(base >> 32u))),
+	    borrow);
+	const auto valid = state.builder.AllocateId();
+	state.builder.AddFunction(
+	    {OpIEqual, state.bool_type, valid, relative_high, ConstantU32(state, 0)});
+	return EmitSelectU32Value(state, valid, relative_low, ConstantU32(state, UINT32_MAX));
+}
+
+uint32_t EmitRuntimeScalarAddress(EmitterState& state, const IR::Instruction& inst,
+                                  bool buffer_descriptor) {
+	const auto low = EmitValueLoad(
+	    state, MakeRegisterOperand(IR::RegisterFile::Scalar,
+	                               inst.memory.runtime_address_register));
+	const auto high = EmitValueLoad(
+	    state, MakeRegisterOperand(IR::RegisterFile::Scalar,
+	                               inst.memory.runtime_address_register + 1u));
+	return EmitRuntimeScalarAddressFromBase(state, inst, buffer_descriptor, low, high);
+}
+
+void EmitSLoadDwordAtAddress(EmitterState& state, const IR::Instruction& inst,
+                             uint32_t address) {
 	const auto binding = ResourceForDescriptor(state, IR::DescriptorBindingKind::AddressMemory,
 	                                           inst.memory.resource);
-	const auto address = EmitRelativeAddress(state, inst, 0, 1, false, true);
-	const auto index   = state.builder.AllocateId();
+	const auto index = state.builder.AllocateId();
 	state.builder.AddFunction(
 	    {OpShiftRightLogical, state.uint_type, index, address, ConstantU32(state, 2)});
 	const auto object = state.builder.AllocateId();
@@ -1205,12 +1260,62 @@ void EmitSLoadDword(EmitterState& state, const IR::Instruction& inst) {
 		const auto pointer = state.builder.AllocateId();
 		const auto loaded  = state.builder.AllocateId();
 		state.builder.AddFunction(
-		    {OpAccessChain, state.ptr_storage_buffer_uint, pointer, state.address_memory_variable,
-		     ConstantU32(state, binding.array_index), ConstantU32(state, 0), index});
+		    {OpAccessChain, state.ptr_storage_buffer_uint, pointer,
+		     state.address_memory_variable, ConstantU32(state, binding.array_index),
+		     ConstantU32(state, 0), index});
 		state.builder.AddFunction({OpLoad, state.uint_type, loaded, pointer});
 		return loaded;
 	});
 	EmitStoreU32(state, inst.dst, value);
+}
+
+void EmitSLoadDword(EmitterState& state, const IR::Instruction& inst) {
+	if (state.address_memory_variable == 0) {
+		ExitDescriptorBindingFailure(state, IR::DescriptorBindingKind::AddressMemory,
+		                             inst.memory.resource,
+		                             "scalar memory descriptor array was not emitted");
+	}
+	uint32_t address = 0;
+	if (inst.memory.runtime_address) {
+		address = EmitRuntimeScalarAddress(state, inst, false);
+	} else {
+		address = EmitRelativeAddress(state, inst, 0, 1, false, true);
+	}
+	EmitSLoadDwordAtAddress(state, inst, address);
+}
+
+void EmitSBufferLoadDword(EmitterState& state, const IR::Instruction& inst) {
+	if (!inst.memory.runtime_address) {
+		EmitMemoryLoadU32(state, inst, IR::ResourceKind::ScalarBuffer, 0, 1);
+		return;
+	}
+	if (state.address_memory_variable == 0) {
+		ExitDescriptorBindingFailure(state, IR::DescriptorBindingKind::AddressMemory,
+		                             inst.memory.resource,
+		                             "dynamic scalar-buffer allocation was not emitted");
+	}
+	const auto address = EmitRuntimeScalarAddress(state, inst, true);
+	EmitSLoadDwordAtAddress(state, inst, address);
+}
+
+void EmitSLoadDwordGroup(EmitterState& state, const IR::Instruction* instructions,
+                         uint32_t count) {
+	if (count == 0u || state.address_memory_variable == 0) {
+		ExitDescriptorBindingFailure(state, IR::DescriptorBindingKind::AddressMemory,
+		                             count == 0u ? 0u : instructions[0].memory.resource,
+		                             "dynamic scalar-load group was not emitted");
+	}
+	const auto low = EmitValueLoad(
+	    state, MakeRegisterOperand(IR::RegisterFile::Scalar,
+	                               instructions[0].memory.runtime_address_register));
+	const auto high = EmitValueLoad(
+	    state, MakeRegisterOperand(IR::RegisterFile::Scalar,
+	                               instructions[0].memory.runtime_address_register + 1u));
+	for (uint32_t i = 0; i < count; i++) {
+		const auto address =
+		    EmitRuntimeScalarAddressFromBase(state, instructions[i], false, low, high);
+		EmitSLoadDwordAtAddress(state, instructions[i], address);
+	}
 }
 
 void EmitLoadSrtDword(EmitterState& state, const IR::Instruction& inst) {

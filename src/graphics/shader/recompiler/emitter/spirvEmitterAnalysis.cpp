@@ -248,6 +248,14 @@ void CollectRegisters(const IR::Program& program, std::vector<RegisterBinding>& 
 				CollectSequentialRegisters(registers, inst.src[0],
 				                           inst.memory.image_address_components);
 			}
+			if ((inst.op == IR::Opcode::SLoadDword ||
+			     inst.op == IR::Opcode::SBufferLoadDword) &&
+			    inst.memory.runtime_address) {
+				CollectSequentialRegisters(
+				    registers,
+				    MakeRegisterOperand(IR::RegisterFile::Scalar,
+				                        inst.memory.runtime_address_register), 2);
+			}
 			if (inst.op == IR::Opcode::ImageBvhIntersectRay) {
 				CollectSequentialRegisters(registers, inst.dst, 4);
 			}
