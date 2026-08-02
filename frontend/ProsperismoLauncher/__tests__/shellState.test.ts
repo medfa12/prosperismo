@@ -36,6 +36,10 @@ describe('Sony-grounded shell state', () => {
     expect(SHELL_METRICS.focusLineOffset).toBe(3);
   });
 
+  it('uses the recovered Normal HOME transition duration', () => {
+    expect(SHELL_METRICS.titleBackgroundTransitionMs).toBeCloseTo(633.33334, 4);
+  });
+
   it('uses pic0 only for the selected Home title plate', () => {
     const game = {backgroundPath: 'D:\\Games\\Astro\\sce_sys\\pic0.png'} as any;
     expect(selectedShellBackground(game, 'home')).toBe(game.backgroundPath);

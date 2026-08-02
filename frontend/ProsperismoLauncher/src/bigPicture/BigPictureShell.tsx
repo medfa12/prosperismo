@@ -209,8 +209,10 @@ function NativeFrameBackground({framePaths, visible}: {
 }
 
 /**
- * The HOME image transition has an exact 1000ms default cross-fade. Native
- * ripple/blur paths remain out of scope until the renderer exposes them.
+ * HOME selection requests the recovered Normal background transition degree:
+ * 633.333ms of linear image handoff. The native slide/ripple shader path has
+ * a separate renderer boundary, so this React Native bridge keeps only the
+ * proven timing rather than inventing a spatial substitute.
  */
 function ReactiveBackground({backgroundPath, fallback, dimmed}: {
   backgroundPath?: string;
@@ -229,7 +231,7 @@ function ReactiveBackground({backgroundPath, fallback, dimmed}: {
     setPrevious(current.source);
     setCurrent({key: nextKey, source: nextSource});
     crossFade.setValue(0);
-    const animation = Animated.timing(crossFade, {toValue: 1, duration: 1000, easing: Easing.linear, useNativeDriver: true});
+    const animation = Animated.timing(crossFade, {toValue: 1, duration: SHELL_METRICS.titleBackgroundTransitionMs, easing: Easing.linear, useNativeDriver: true});
     animation.start(({finished}) => { if (finished) { setPrevious(undefined); } });
     return () => animation.stop();
   }, [crossFade, current, nextKey, nextSource]);

@@ -29,6 +29,9 @@ export const SHELL_METRICS = {
   focusLineWidth: 3,
   focusLineOffset: 3,
   focusInset: 3,
+  // HOME selection requests degree Normal. The native transition owner derives
+  // 300ms + degree * 166.66667ms, therefore Normal (degree 2) is 633.333ms.
+  titleBackgroundTransitionMs: 633.3333435058594,
   panelRadius: 16,
   colors: {
     darkGrey: '#353535',

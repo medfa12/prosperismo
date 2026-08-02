@@ -46,8 +46,8 @@ It currently provides:
 - a 56px circular system-icon focus surface with delayed glyph inversion;
 - real React Native Windows focus transfers between strand, spaces, and system
   controls; Arrow Up/Down no longer leaves an old desktop target active;
-- selected-title `pic0` composition with the firmware default 1000ms
-  cross-fade, while Settings returns to the shell plate;
+- selected-title `pic0` composition with the recovered 633.333ms Normal HOME
+  transition timing, while Settings returns to the shell plate;
 - a local-only native-frame bridge: when the user's oracle contains the
   accepted `shell-shot-bottom-shared-native-5` sequence, Big Picture plays its
   1920x1080 recovered frames in a ping-pong sequence beneath title artwork.
