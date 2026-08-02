@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Image,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -286,7 +285,7 @@ function DesktopLauncher({
   };
 
   return (
-    <SafeAreaView style={styles.desktopRoot}>
+    <View style={styles.desktopRoot}>
       <View style={styles.desktopHeader}>
         <View style={styles.brandRow}><Image source={brandArtwork.desktopDark} style={styles.desktopBrandIcon} /><View><Text style={styles.wordmark}>Prosperismo</Text><Text style={styles.subtitle}>Desktop launcher</Text></View></View>
         <View style={styles.actionRow}><Button label="Add folders" onPress={onChooseFolders} /><Button label="Refresh" onPress={onRefresh} /><Button label="Big Picture" onPress={onBigPicture} primary /></View>
@@ -343,7 +342,7 @@ function DesktopLauncher({
         </View>
       </View>
       {busy && <View style={styles.busy}><ActivityIndicator color="#6da8ff" /><Text style={styles.muted}>Scanning…</Text></View>}
-    </SafeAreaView>
+    </View>
   );
 }
 
