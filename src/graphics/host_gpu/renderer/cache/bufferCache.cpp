@@ -221,6 +221,8 @@ BufferCache::BufferCache(GraphicContext& graphics, CommandScheduler& scheduler,
                          ResourceMutex& resource_mutex)
     : m_graphics(graphics), m_scheduler(scheduler),
       m_gds_buffer(graphics, scheduler, MemoryUsage::Stream, 0, AllFlags, GdsBufferSize),
+      m_geometry_replay_buffer(graphics, scheduler, MemoryUsage::DeviceLocal, 0, AllFlags,
+                               GEOMETRY_REPLAY_BUFFER_SIZE),
       m_memory_tracker(page_manager),
       m_staging_buffer(graphics, scheduler, MemoryUsage::Upload, 512 * MiB),
       m_stream_buffer(graphics, scheduler, MemoryUsage::Stream, 64 * MiB),

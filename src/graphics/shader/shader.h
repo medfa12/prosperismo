@@ -271,6 +271,29 @@ bool ShaderCompileSpirvPS(const HW::PixelShaderInfo& regs, const HW::ShaderRegis
                           std::vector<uint32_t>& spirv);
 bool ShaderCompileSpirvCS(const HW::ComputeShaderInfo& regs, const HW::ShaderRegisters& sh,
                           ShaderComputeInputInfo& input_info, std::vector<uint32_t>& spirv);
+
+// Merged ES/GS geometry replay compilation. The compute half consumes the
+// host-merged ES+GS instruction stream and redirects its exports into the
+// replay storage buffer; the vertex half compiles a synthetic passthrough
+// shader whose registers are seeded from that buffer.
+struct ShaderGeometryReplayCompileInfo {
+	uint64_t es_addr         = 0;
+	uint64_t gs_addr         = 0;
+	uint64_t gs_hash         = 0;
+	uint32_t vertex_slots    = 0;
+	uint32_t primitive_slots = 0;
+	uint32_t lds_dword_count = 0;
+	uint32_t threads_num     = 0;
+	// Derived from the compute half's exports; consumed by the vertex half.
+	uint32_t parameter_count = 0;
+};
+bool ShaderCompileGeometryReplayCS(std::span<const uint32_t> merged_code,
+                                   const HW::VertexShaderInfo&      regs,
+                                   ShaderGeometryReplayCompileInfo& replay,
+                                   ShaderComputeInputInfo& info, std::span<const uint32_t>& spirv);
+bool ShaderCompileGeometryReplayVS(const ShaderGeometryReplayCompileInfo& replay,
+                                   ShaderVertexInputInfo&                 input_info,
+                                   std::span<const uint32_t>&             spirv);
 bool ShaderAddressValid(uint64_t addr);
 
 } // namespace Libs::Graphics

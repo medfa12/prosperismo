@@ -217,6 +217,9 @@ private:
 	                         vk::PrimitiveTopology topology, const DrawEmitInfo& emit,
 	                         const DrawIndexBufferSource& index_source, bool log_pipeline_phase,
 	                         bool set_bind_debug, bool set_auto_debug);
+	bool TryExecuteGeometryReplayDraw(uint64_t submit_id, RenderCommandBuffer& buffer,
+	                                  uint32_t index_count, uint32_t instance_count,
+	                                  uint32_t render_target_slice_offset);
 	[[nodiscard]] RenderState AcquireRenderTargets(CommandBuffer& buffer, RenderColorInfo* colors,
 	                                               uint32_t color_count, RenderDepthInfo& depth);
 	[[nodiscard]] bool        ResolveColorTargets(uint64_t submit_id, RenderCommandBuffer& buffer,

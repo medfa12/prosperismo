@@ -1546,6 +1546,187 @@ bool ShaderCompileSpirvCS(const HW::ComputeShaderInfo& regs, const HW::ShaderReg
 	return true;
 }
 
+// Compute half of the merged ES/GS geometry replay. The merged instruction
+// stream is host-assembled per draw (cheap), but compilation is cached on the
+// pair identity + replay geometry; the cached program is revalidated against
+// live user data before reuse, exactly like the regular compute path.
+bool ShaderCompileGeometryReplayCS(std::span<const uint32_t> merged_code,
+                                   const HW::VertexShaderInfo&      regs,
+                                   ShaderGeometryReplayCompileInfo& replay,
+                                   ShaderComputeInputInfo& info, std::span<const uint32_t>& spirv) {
+	KYTY_PROFILER_FUNCTION(profiler::colors::CyanA700);
+	spirv = {};
+
+	info                                 = {};
+	info.threads_num[0]                  = replay.threads_num;
+	info.threads_num[1]                  = 1;
+	info.threads_num[2]                  = 1;
+	info.wave_size                       = 64;
+	info.lds_dword_count                 = replay.lds_dword_count;
+	info.geometry_replay.enabled         = true;
+	info.geometry_replay.vertex_slots    = replay.vertex_slots;
+	info.geometry_replay.primitive_slots = replay.primitive_slots;
+
+	const auto user_data =
+	    std::span<const uint32_t>(regs.gs_user_sgpr.value, regs.gs_regs.rsrc2.user_sgpr);
+
+	ShaderId program_id;
+	program_id.ids = {replay.vertex_slots, replay.primitive_slots, replay.lds_dword_count,
+	                  replay.threads_num,  static_cast<uint32_t>(replay.es_addr),
+	                  static_cast<uint32_t>(replay.es_addr >> 32u),
+	                  static_cast<uint32_t>(replay.gs_addr),
+	                  static_cast<uint32_t>(replay.gs_addr >> 32u)};
+	const auto key = MakeShaderStageProgramKey(ShaderType::Compute, replay.gs_hash, program_id,
+	                                           ShaderLaneMaskMode::NativeWave);
+
+	{
+		std::scoped_lock lock(g_shader_program_cache_mutex);
+		if (auto iter = g_shader_program_cache.find(key); iter != g_shader_program_cache.end()) {
+			for (const auto& permutation: iter->second) {
+				std::string error;
+				if (ShaderMaterializeStageRuntime(permutation->program, user_data, replay.gs_addr,
+				                                  info.stage, &error)) {
+					replay.parameter_count =
+					    ShaderRecompiler::IR::GeometryReplayParameterCount(*permutation->program);
+					spirv = MakeShaderSpirvView(permutation->spirv);
+					LogShaderProgramCacheHit("GeReplayCS", replay.gs_hash,
+					                         static_cast<uint64_t>(spirv.size()));
+					return true;
+				}
+				LogPermutationMismatch(*permutation, "GeReplayCS", replay.gs_hash, error);
+			}
+		}
+	}
+
+	ShaderRecompiler::CompileOptions options;
+	options.stage                = ShaderType::Compute;
+	options.shader_hash          = replay.gs_hash;
+	options.shader_base          = replay.gs_addr;
+	options.user_data_count      = regs.gs_regs.rsrc2.user_sgpr;
+	options.user_data            = regs.gs_user_sgpr.value;
+	options.read_memory          = ShaderReadMappedGuestDword;
+	options.descriptor_set       = 0;
+	options.push_constant_offset = 0;
+	options.compute_input_info   = &info;
+	options.wave_size            = info.wave_size;
+	options.lds_dword_count      = info.lds_dword_count;
+	options.dump_ir              = ShaderRecompilerTextDumpEnabled();
+	options.early_dump           = options.dump_ir;
+	options.dump_label           = "ShaderRecompiler GeReplayCS";
+
+	ShaderRecompiler::CompileResult result;
+	std::string                     error;
+	if (!ShaderRecompiler::TryRecompile(merged_code, options, result, &error)) {
+		ExitShaderRecompilerFailure("ShaderRecompiler GeReplayCS", options.shader_hash,
+		                            error.c_str());
+	}
+	if (!SpirvValidateBinary("ShaderRecompiler GeReplayCS", options.shader_hash, result.spirv)) {
+		DumpShaderRecompilerSpirv("gereplaycs", options.shader_hash, result.spirv);
+		ExitShaderRecompilerFailure("ShaderRecompiler GeReplayCS", options.shader_hash,
+		                            "SPIR-V validation failed");
+	}
+	replay.parameter_count = ShaderRecompiler::IR::GeometryReplayParameterCount(result.program);
+	info.stage.program =
+	    std::make_shared<const ShaderRecompiler::IR::Program>(std::move(result.program));
+	info.stage.resources =
+	    std::make_shared<const ShaderRecompiler::IR::ResourceSnapshot>(std::move(result.resources));
+
+	ShaderProgramPermutation permutation {};
+	permutation.spirv   = std::move(result.spirv);
+	permutation.program = info.stage.program;
+	spirv = AddShaderProgramPermutation("GeReplayCS", replay.gs_hash, key, std::move(permutation));
+	return true;
+}
+
+// Vertex half of the merged ES/GS geometry replay: a synthetic passthrough
+// shader (position + the compute half's parameter exports straight from
+// v0..v11) compiled with the replay fetch preamble enabled. It has no guest
+// resources, so cached programs never need runtime revalidation.
+bool ShaderCompileGeometryReplayVS(const ShaderGeometryReplayCompileInfo& replay,
+                                   ShaderVertexInputInfo&                 input_info,
+                                   std::span<const uint32_t>&             spirv) {
+	KYTY_PROFILER_FUNCTION(profiler::colors::Amber300);
+	spirv = {};
+	EXIT_IF(replay.parameter_count == 0 || replay.parameter_count > 2);
+
+	input_info                                 = {};
+	input_info.geometry_replay                 = true;
+	input_info.geometry_replay_vertex_slots    = replay.vertex_slots;
+	input_info.geometry_replay_primitive_slots = replay.primitive_slots;
+	input_info.geometry_replay_parameter_count = replay.parameter_count;
+
+	// Identity of the synthetic program is fully described by its geometry.
+	const uint64_t synthetic_hash = 0x4765526570304053ull + replay.parameter_count;
+
+	ShaderId program_id;
+	program_id.ids = {replay.vertex_slots, replay.primitive_slots, replay.parameter_count};
+	const auto key = MakeShaderStageProgramKey(ShaderType::Vertex, synthetic_hash, program_id,
+	                                           ShaderLaneMaskMode::NativeWave);
+
+	{
+		std::scoped_lock lock(g_shader_program_cache_mutex);
+		if (auto iter = g_shader_program_cache.find(key); iter != g_shader_program_cache.end()) {
+			for (const auto& permutation: iter->second) {
+				std::string error;
+				if (ShaderMaterializeStageRuntime(permutation->program, {}, 0, input_info.stage,
+				                                  &error)) {
+					ApplyVertexOutputs(input_info, *permutation->program);
+					spirv = MakeShaderSpirvView(permutation->spirv);
+					LogShaderProgramCacheHit("GeReplayVS", synthetic_hash,
+					                         static_cast<uint64_t>(spirv.size()));
+					return true;
+				}
+				LogPermutationMismatch(*permutation, "GeReplayVS", synthetic_hash, error);
+			}
+		}
+	}
+
+	// exp pos0 v0:v3 done, exp param<i> v(4+4i):v(7+4i), s_endpgm.
+	std::vector<uint32_t> code;
+	code.push_back(0xF80008CFu);
+	code.push_back(0x03020100u);
+	for (uint32_t p = 0; p < replay.parameter_count; p++) {
+		code.push_back(0xF800000Fu | ((32u + p) << 4u));
+		const uint32_t base = 4u + p * 4u;
+		code.push_back(base | ((base + 1u) << 8u) | ((base + 2u) << 16u) | ((base + 3u) << 24u));
+	}
+	code.push_back(0xBF810000u);
+
+	ShaderRecompiler::CompileOptions options;
+	options.stage                = ShaderType::Vertex;
+	options.shader_hash          = synthetic_hash;
+	options.user_data_count      = 0;
+	options.descriptor_set       = 0;
+	options.push_constant_offset = 0;
+	options.vertex_input_info    = &input_info;
+	options.dump_ir              = ShaderRecompilerTextDumpEnabled();
+	options.early_dump           = options.dump_ir;
+	options.dump_label           = "ShaderRecompiler GeReplayVS";
+
+	ShaderRecompiler::CompileResult result;
+	std::string                     error;
+	if (!ShaderRecompiler::TryRecompile(code, options, result, &error)) {
+		ExitShaderRecompilerFailure("ShaderRecompiler GeReplayVS", options.shader_hash,
+		                            error.c_str());
+	}
+	if (!SpirvValidateBinary("ShaderRecompiler GeReplayVS", options.shader_hash, result.spirv)) {
+		DumpShaderRecompilerSpirv("gereplayvs", options.shader_hash, result.spirv);
+		ExitShaderRecompilerFailure("ShaderRecompiler GeReplayVS", options.shader_hash,
+		                            "SPIR-V validation failed");
+	}
+	input_info.stage.program =
+	    std::make_shared<const ShaderRecompiler::IR::Program>(std::move(result.program));
+	input_info.stage.resources =
+	    std::make_shared<const ShaderRecompiler::IR::ResourceSnapshot>(std::move(result.resources));
+	ApplyVertexOutputs(input_info, *input_info.stage.program);
+
+	ShaderProgramPermutation permutation {};
+	permutation.spirv   = std::move(result.spirv);
+	permutation.program = input_info.stage.program;
+	spirv = AddShaderProgramPermutation("GeReplayVS", synthetic_hash, key, std::move(permutation));
+	return true;
+}
+
 ShaderId ShaderGetIdVS(const HW::VertexShaderInfo& regs, const ShaderVertexInputInfo& input_info,
                        bool include_bind_specialization) {
 	KYTY_PROFILER_FUNCTION();

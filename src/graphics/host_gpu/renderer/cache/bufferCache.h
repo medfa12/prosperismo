@@ -36,6 +36,10 @@ struct ImageBufferSource {
 class BufferCache {
 public:
 	static constexpr uint64_t CACHING_PAGE_SIZE = 16ull * 1024ull;
+	// Sized for the measured Astro classic-GS launches: 512 subgroups of the
+	// widest observed block (216 vertex slots, two parameters, 210 primitive
+	// slots) is under 6 MiB; 8 MiB leaves headroom for other block shapes.
+	static constexpr uint64_t GEOMETRY_REPLAY_BUFFER_SIZE = 8ull * 1024ull * 1024ull;
 	static constexpr uint64_t GetBufferOffset(uint64_t vaddr) {
 		return vaddr & (CACHING_PAGE_SIZE - 1);
 	}
@@ -54,6 +58,9 @@ public:
 	[[nodiscard]] StreamBuffer& GetUtilityBuffer(MemoryUsage usage) noexcept;
 	[[nodiscard]] Buffer&       GetGdsBuffer() noexcept { return m_gds_buffer; }
 	[[nodiscard]] const Buffer& GetGdsBuffer() const noexcept { return m_gds_buffer; }
+	[[nodiscard]] Buffer&       GetGeometryReplayBuffer() noexcept {
+		return m_geometry_replay_buffer;
+	}
 	[[nodiscard]] BufferBinding UploadTransient(const void* data, uint64_t size,
 	                                            uint64_t alignment);
 	[[nodiscard]] std::shared_ptr<Buffer> ObtainNullBuffer();
@@ -101,6 +108,7 @@ private:
 	GraphicContext&                                   m_graphics;
 	CommandScheduler&                                 m_scheduler;
 	Buffer                                            m_gds_buffer;
+	Buffer                                            m_geometry_replay_buffer;
 	Common::Mutex                                     m_mutex;
 	std::shared_ptr<Buffer>                           m_null_buffer;
 	std::map<uint64_t, std::unique_ptr<CachedBuffer>> m_buffers;

@@ -875,6 +875,12 @@ DescriptorCache::PreparedBindings RenderExecutor::PrepareBindings(CommandBuffer&
 	        program.bindings, ShaderRecompiler::IR::DescriptorBindingKind::Gds) != nullptr) {
 		descriptors.gds.buffer = m_context.GetBufferCache().GetGdsBuffer().Handle();
 	}
+	if (ShaderRecompiler::IR::FindBinding(
+	        program.bindings, ShaderRecompiler::IR::DescriptorBindingKind::GeometryReplay) !=
+	    nullptr) {
+		descriptors.geometry_replay.buffer =
+		    m_context.GetBufferCache().GetGeometryReplayBuffer().Handle();
+	}
 	return prepared;
 }
 

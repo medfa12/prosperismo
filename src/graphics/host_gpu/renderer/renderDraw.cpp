@@ -1242,6 +1242,195 @@ void RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, RenderCommandBuffer
 	}
 }
 
+// Replays a skipped classic-GS draw: the merged ES/GS program runs as a
+// compute pass that writes positions, parameters and connectivity into the
+// geometry replay buffer, then a flat triangle-list draw with a synthetic
+// vertex shader fetches from it. Every contract mismatch fails closed so the
+// draw stays skipped instead of guessing.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+bool RenderExecutor::TryExecuteGeometryReplayDraw(uint64_t submit_id, RenderCommandBuffer& buffer,
+                                                  uint32_t index_count, uint32_t instance_count,
+                                                  uint32_t render_target_slice_offset) {
+	const auto& ctx         = buffer.GetRegisters();
+	const auto& ucfg        = buffer.GetUserConfig();
+	const auto& sh_ctx      = buffer.GetShaders();
+	const auto& sh_regs     = ctx.GetShaderRegisters();
+	const auto& ge_cntl     = ucfg.GetGeControl();
+	const auto& ge_user     = ucfg.GetGeUserVgprEn();
+	const auto& vertex_info = sh_ctx.GetVs();
+
+	if (instance_count == 0) {
+		instance_count = 1;
+	}
+	// The replay preamble seeds v8 with the global primitive index, which only
+	// matches the ES instance-index convention for single-index draws.
+	if (index_count != 1 ||
+	    ucfg.GetPrimType() != Prospero::GpuEnumValue(Prospero::PrimitiveType::kPointList)) {
+		return false;
+	}
+
+	ClassicGeometryReplayLaunch launch {};
+	if (!TryCreateClassicGeometryReplayLaunch(
+	        {.shader_stages             = ctx.GetShaderStages(),
+	         .primitive_group_size      = ge_cntl.primitive_group_size,
+	         .vertex_group_size         = ge_cntl.vertex_group_size,
+	         .primitive_amplification   = sh_regs.m_geNggSubgrpCntl & 0x1ffu,
+	         .max_output_per_subgroup   = sh_regs.m_geMaxOutputPerSubgroup,
+	         .gs_max_vertices_per_input = sh_regs.m_vgtGsMaxVertOut,
+	         .gs_output_primitive       = sh_regs.m_vgtGsOutPrimType,
+	         .gs_instance_count         = sh_regs.m_vgtGsInstanceCnt,
+	         .esgs_ring_item_size       = sh_regs.m_vgtEsgsRingItemsize,
+	         .ge_user_vgpr_enable       = static_cast<uint32_t>(ge_user.vgpr1) |
+	                                      (static_cast<uint32_t>(ge_user.vgpr2) << 1u) |
+	                                      (static_cast<uint32_t>(ge_user.vgpr3) << 2u)},
+	        launch) ||
+	    launch.output_primitive != NativePrimitiveOutput::Triangles) {
+		return false;
+	}
+
+	GsSubgroupLaunchPlan plan {};
+	if (!TryPlanPointListGsSubgroups(launch, index_count, instance_count,
+	                                 ge_cntl.MultipleInstancesPerWave(), plan)) {
+		return false;
+	}
+
+	std::span<const uint32_t> es_code;
+	std::span<const uint32_t> gs_code;
+	if (!ShaderGetGuestCode(vertex_info.es_regs.data_addr, es_code) ||
+	    !ShaderGetGuestCode(vertex_info.gs_regs.data_addr, gs_code)) {
+		return false;
+	}
+	// The live ES program is straight-line code ending in the tail call into
+	// the GS; trim at the first terminal s_setpc_b64 s[6:7].
+	size_t es_live = 0;
+	for (size_t i = 0; i < es_code.size(); i++) {
+		if (es_code[i] == EsGsMergeSetpcWord) {
+			es_live = i + 1;
+			break;
+		}
+	}
+	std::vector<uint32_t> merged;
+	if (es_live == 0 ||
+	    !TryMergeEsGsForReplay(es_code.data(), es_live, gs_code.data(), gs_code.size(), merged)) {
+		return false;
+	}
+
+	const auto lds_dwords = static_cast<uint32_t>(vertex_info.gs_regs.rsrc2.lds_size) * 128u;
+	const uint32_t slots  = std::max(launch.output_vertex_slots, launch.output_primitive_slots);
+	const uint32_t waves  = (slots + launch.wave_lane_count - 1u) / launch.wave_lane_count;
+	if (lds_dwords == 0 || waves == 0 || waves > 0xfu) {
+		return false;
+	}
+
+	ShaderGeometryReplayCompileInfo replay {};
+	replay.es_addr         = vertex_info.es_regs.data_addr;
+	replay.gs_addr         = vertex_info.gs_regs.data_addr;
+	replay.gs_hash         = vertex_info.gs_regs.chksum;
+	replay.vertex_slots    = launch.output_vertex_slots;
+	replay.primitive_slots = launch.output_primitive_slots;
+	replay.lds_dword_count = lds_dwords;
+	replay.threads_num     = waves * launch.wave_lane_count;
+
+	ShaderComputeInputInfo    cs_info {};
+	std::span<const uint32_t> cs_spirv;
+	if (!ShaderCompileGeometryReplayCS(merged, vertex_info, replay, cs_info, cs_spirv) ||
+	    replay.parameter_count == 0 || replay.parameter_count > 2) {
+		return false;
+	}
+
+	const ShaderRecompiler::IR::GeometryReplayLayout layout {replay.vertex_slots,
+	                                                         replay.primitive_slots,
+	                                                         replay.parameter_count};
+	const uint64_t used_dwords = ShaderRecompiler::IR::GeometryReplayLayout::HeaderDwords +
+	                             static_cast<uint64_t>(plan.subgroup_count) * layout.BlockStride();
+	if (used_dwords * 4ull > BufferCache::GEOMETRY_REPLAY_BUFFER_SIZE) {
+		return false;
+	}
+
+	const DrawCallInfo draw {"GeometryReplay", CommandBufferDebugOp::DrawIndexAuto,
+	                         plan.subgroup_count * layout.primitive_slots * 3u,
+	                         0,
+	                         1,
+	                         0};
+
+	DrawRenderState state {};
+	if (!PrepareDrawRenderState(submit_id, buffer, draw, render_target_slice_offset, false,
+	                            state)) {
+		ResetBindings();
+		return false;
+	}
+
+	if (!ShaderCompileGeometryReplayVS(replay, state.vs_input_info, state.vs_shader)) {
+		ResetBindings();
+		return false;
+	}
+	if (state.ps_active) {
+		std::array<Prospero::ColorComponentMapping, RENDER_COLOR_ATTACHMENTS_MAX>
+		    target_export_mapping {};
+		for (uint32_t i = 0; i < state.color_count; i++) {
+			target_export_mapping[state.color_info[i].target_slot] =
+			    state.color_info[i].export_mapping;
+		}
+		if (!ShaderCompileInfoPS(sh_ctx.GetPs(), sh_regs, SelectGraphicsLaneMaskMode(64u),
+		                         state.vs_input_info, target_export_mapping, state.ps_input_info,
+		                         state.ps_shader)) {
+			EXIT("ShaderCompileInfoPS failed for draw %s\n", draw.name);
+		}
+	}
+
+	// Compute pass: reset the used range to the culled-primitive sentinel,
+	// write the launch header, then run one workgroup per subgroup.
+	buffer.EndRendering();
+	auto       vk_buffer     = buffer.Handle();
+	const auto replay_handle = m_context.GetBufferCache().GetGeometryReplayBuffer().Handle();
+	vk_buffer.fillBuffer(replay_handle, 0, used_dwords * 4ull, 0x80000000u);
+	const std::array<uint32_t, ShaderRecompiler::IR::GeometryReplayLayout::HeaderDwords> header {
+	    index_count * instance_count, plan.primitives_per_full_subgroup, layout.vertex_slots,
+	    layout.primitive_slots};
+	vk_buffer.updateBuffer(replay_handle, 0, sizeof(header), header.data());
+	VulkanMemoryBarrier fill_barrier {};
+	fill_barrier.sType         = vk::StructureType::eMemoryBarrier;
+	fill_barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+	fill_barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+	vk_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+	                          vk::PipelineStageFlagBits::eComputeShader, vk::DependencyFlags {}, 1,
+	                          &fill_barrier, 0, nullptr, 0, nullptr);
+
+	HW::ComputeShaderInfo cs_regs {};
+	cs_regs.cs_regs.data_addr    = vertex_info.gs_regs.data_addr;
+	cs_regs.cs_regs.num_thread_x = replay.threads_num;
+	cs_regs.cs_regs.num_thread_y = 1;
+	cs_regs.cs_regs.num_thread_z = 1;
+	auto& cs_pipeline =
+	    m_context.GetPipelineCache().CreateComputePipeline(cs_info, cs_regs, cs_spirv);
+	auto cs_bindings = PrepareBindings(buffer, cs_info.stage, vk::ShaderStageFlagBits::eCompute,
+	                                   DescriptorCache::Stage::Compute);
+	RebindBuffers(buffer, cs_bindings);
+	RebindImages(buffer, cs_bindings);
+	CommitBindings(buffer, vk::PipelineBindPoint::eCompute, cs_pipeline.pipeline_layout,
+	               cs_bindings);
+	vk_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, cs_pipeline.pipeline);
+	vk_buffer.dispatch(plan.subgroup_count, 1, 1);
+	ShaderWriteBarrier(vk_buffer, vk::PipelineStageFlagBits::eComputeShader);
+
+	static std::atomic<uint32_t> log_count {0};
+	if (log_count.fetch_add(1, std::memory_order_relaxed) < 32) {
+		LOGF("GeometryReplay: es=0x%016" PRIx64 " gs=0x%016" PRIx64
+		     " instances=%u subgroups=%u prims/full=%u verts=%u prim_slots=%u params=%u "
+		     "threads=%u lds=%u\n",
+		     replay.es_addr, replay.gs_addr, instance_count, plan.subgroup_count,
+		     plan.primitives_per_full_subgroup, replay.vertex_slots, replay.primitive_slots,
+		     replay.parameter_count, replay.threads_num, replay.lds_dword_count);
+	}
+
+	const DrawEmitInfo          emit {};
+	const DrawIndexBufferSource index_source {};
+	ExecutePreparedDraw(submit_id, buffer, draw, state, vk::PrimitiveTopology::eTriangleList, emit,
+	                    index_source, false, false, false);
+	ResetBindings();
+	return true;
+}
+
 void RenderExecutor::DrawIndex(uint64_t submit_id, RenderCommandBuffer& buffer,
                                uint32_t index_type_and_size, uint32_t index_count,
                                const void* index_addr, uint32_t flags, uint32_t type,
@@ -1272,6 +1461,9 @@ void RenderExecutor::DrawIndex(uint64_t submit_id, RenderCommandBuffer& buffer,
 	}
 
 	if (ShouldSkipGeShader(buffer)) {
+		static_cast<void>(TryExecuteGeometryReplayDraw(submit_id, buffer, index_count,
+		                                               instance_count,
+		                                               render_target_slice_offset));
 		return;
 	}
 
@@ -1405,6 +1597,9 @@ void RenderExecutor::DrawAuto(uint64_t submit_id, RenderCommandBuffer& buffer, u
 	}
 
 	if (ShouldSkipGeShader(buffer)) {
+		static_cast<void>(TryExecuteGeometryReplayDraw(submit_id, buffer, index_count,
+		                                               instance_count,
+		                                               render_target_slice_offset));
 		return;
 	}
 
