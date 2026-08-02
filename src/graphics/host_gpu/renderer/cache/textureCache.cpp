@@ -20,11 +20,15 @@
 #include <array>
 #include <bit>
 #include <cinttypes>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <set>
+#include <string>
 #include <tuple>
+#include <vector>
 #include <vulkan/vulkan_format_traits.hpp>
 
 namespace Libs::Graphics {
@@ -1839,6 +1843,121 @@ TextureCache::DebugImageByteStats TextureCache::DebugDownloadByteStats(ImageId i
 		}
 	}
 	return stats;
+}
+
+// Debug-only: download an image and dump it as a binary PPM, converting the common
+// scan-out formats to 8-bit RGB. Returns false when the image cannot be read back.
+bool TextureCache::DebugDumpImagePpm(ImageId id, const char* path) {
+	auto& image = GetImage(id);
+	if (image.backing.image == nullptr || image.backing.samples != 1 ||
+	    image.backing.format == vk::Format::eUndefined) {
+		return false;
+	}
+	const auto format = image.backing.format;
+	uint32_t   bpp    = 0;
+	switch (format) {
+		case vk::Format::eR8G8B8A8Unorm:
+		case vk::Format::eR8G8B8A8Srgb:
+		case vk::Format::eB8G8R8A8Unorm:
+		case vk::Format::eB8G8R8A8Srgb:
+		case vk::Format::eA2R10G10B10UnormPack32:
+		case vk::Format::eA2B10G10R10UnormPack32: bpp = 4; break;
+		case vk::Format::eR16G16B16A16Sfloat: bpp = 8; break;
+		default: return false;
+	}
+	const uint32_t width  = image.backing.extent.width;
+	const uint32_t height = image.backing.extent.height;
+	const uint64_t size   = static_cast<uint64_t>(width) * height * bpp;
+	if (size == 0) {
+		return false;
+	}
+	auto [mapped, offset] = MapDownload(size, 8);
+	auto& download        = m_buffer_cache.GetUtilityBuffer(MemoryUsage::Download);
+	vk::BufferImageCopy copy {};
+	copy.bufferOffset     = offset;
+	copy.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+	copy.imageExtent      = image.backing.extent;
+	image.Download(std::span<const vk::BufferImageCopy>(&copy, 1), download.Handle(), offset, size);
+	m_scheduler.FinishCurrent();
+	download.Invalidate(offset, size);
+
+	std::string temp_path = std::string(path) + ".tmp";
+	FILE*       file      = fopen(temp_path.c_str(), "wb");
+	if (file == nullptr) {
+		return false;
+	}
+	fprintf(file, "P6\n%u %u\n255\n", width, height);
+	const bool blue_first = format == vk::Format::eB8G8R8A8Unorm ||
+	                        format == vk::Format::eB8G8R8A8Srgb ||
+	                        format == vk::Format::eA2B10G10R10UnormPack32;
+	const bool packed_10 = format == vk::Format::eA2R10G10B10UnormPack32 ||
+	                       format == vk::Format::eA2B10G10R10UnormPack32;
+	uint32_t max_r = 0, max_g = 0, max_b = 0, max_a = 0;
+	uint64_t nonzero_rgb = 0;
+	auto     f16_to_u8   = [](uint16_t h) -> uint8_t {
+        const uint32_t exp  = (h >> 10u) & 0x1fu;
+        const uint32_t frac = h & 0x3ffu;
+        if ((h & 0x8000u) != 0 || exp == 0) {
+            return 0;
+        }
+        float value = 0.0f;
+        if (exp == 31) {
+            value = 1.0f;
+        } else {
+            value = std::ldexp(1.0f + static_cast<float>(frac) / 1024.0f,
+                               static_cast<int>(exp) - 15);
+        }
+        return static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+	};
+	std::vector<uint8_t> row(static_cast<size_t>(width) * 3u);
+	for (uint32_t y = 0; y < height; y++) {
+		const uint8_t* src = mapped + static_cast<uint64_t>(y) * width * bpp;
+		for (uint32_t x = 0; x < width; x++) {
+			uint8_t rgb[3] {};
+			uint8_t alpha = 0;
+			if (packed_10) {
+				uint32_t value = 0;
+				std::memcpy(&value, src + static_cast<uint64_t>(x) * 4u, sizeof(value));
+				const auto low  = static_cast<uint8_t>((value & 0x3ffu) >> 2u);
+				const auto mid  = static_cast<uint8_t>(((value >> 10u) & 0x3ffu) >> 2u);
+				const auto high = static_cast<uint8_t>(((value >> 20u) & 0x3ffu) >> 2u);
+				rgb[0]          = blue_first ? low : high;
+				rgb[1]          = mid;
+				rgb[2]          = blue_first ? high : low;
+				alpha           = static_cast<uint8_t>(value >> 30u);
+			} else if (bpp == 8) {
+				uint16_t pixel[4] {};
+				std::memcpy(pixel, src + static_cast<uint64_t>(x) * 8u, sizeof(pixel));
+				rgb[0] = f16_to_u8(pixel[0]);
+				rgb[1] = f16_to_u8(pixel[1]);
+				rgb[2] = f16_to_u8(pixel[2]);
+				alpha  = f16_to_u8(pixel[3]);
+			} else {
+				const uint8_t* pixel = src + static_cast<uint64_t>(x) * 4u;
+				rgb[0]               = blue_first ? pixel[2] : pixel[0];
+				rgb[1]               = pixel[1];
+				rgb[2]               = blue_first ? pixel[0] : pixel[2];
+				alpha                = pixel[3];
+			}
+			max_r = std::max<uint32_t>(max_r, rgb[0]);
+			max_g = std::max<uint32_t>(max_g, rgb[1]);
+			max_b = std::max<uint32_t>(max_b, rgb[2]);
+			max_a = std::max<uint32_t>(max_a, alpha);
+			nonzero_rgb += (rgb[0] | rgb[1] | rgb[2]) != 0 ? 1 : 0;
+			std::memcpy(&row[static_cast<size_t>(x) * 3u], rgb, 3);
+		}
+		fwrite(row.data(), 1, row.size(), file);
+	}
+	fclose(file);
+	std::remove(path);
+	if (std::rename(temp_path.c_str(), path) != 0) {
+		return false;
+	}
+	LOGF("scan-out dump: %s %ux%u fmt=%d addr=0x%010" PRIx64
+	     " chmax=(%u,%u,%u) amax=%u nonzero_rgb_px=%" PRIu64 "\n",
+	     path, width, height, static_cast<int>(format), image.info.data.address, max_r, max_g,
+	     max_b, max_a, nonzero_rgb);
+	return true;
 }
 
 std::vector<uint32_t> TextureCache::DebugDownloadBufferWords(vk::Buffer source,

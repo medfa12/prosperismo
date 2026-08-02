@@ -80,6 +80,7 @@ public:
 	[[nodiscard]] std::vector<uint32_t> DebugDownloadBufferWords(vk::Buffer source,
 	                                                             uint64_t source_offset,
 	                                                             uint64_t size);
+	bool                                DebugDumpImagePpm(ImageId id, const char* path);
 
 	[[nodiscard]] bool ClearImageFromBuffer(CommandBuffer& command, uint64_t address, uint64_t size,
 	                                        uint32_t packed_clear);

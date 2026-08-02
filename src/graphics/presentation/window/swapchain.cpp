@@ -384,8 +384,25 @@ struct Presenter::Impl {
 		desc.type                  = TextureCache::BindingType::VideoOut;
 
 		auto& cache           = renderer.GetTextureCache();
-		auto& image           = cache.GetImage(cache.FindImage(desc));
+		const auto image_id   = cache.FindImage(desc);
+		auto& image           = cache.GetImage(image_id);
 		image.usage.video_out = true;
+
+		// Diagnostic: PROSPERISMO_DUMP_SCANOUT=<path.ppm> dumps the presented frame so a
+		// black window can be attributed to the frame contents vs the present path.
+		// PROSPERISMO_SCANOUT_SAMPLE=N limits the readback cost to every Nth flip.
+		static const char* dump_path = std::getenv("PROSPERISMO_DUMP_SCANOUT");
+		if (dump_path != nullptr) {
+			static const uint32_t sample_every = [] {
+				const char* value = std::getenv("PROSPERISMO_SCANOUT_SAMPLE");
+				const int   parsed = value != nullptr ? std::atoi(value) : 0;
+				return parsed > 1 ? static_cast<uint32_t>(parsed) : 1u;
+			}();
+			static uint32_t flip_counter = 0;
+			if ((flip_counter++ % sample_every) == 0) {
+				(void)cache.DebugDumpImagePpm(image_id, dump_path);
+			}
+		}
 		return image;
 	}
 
