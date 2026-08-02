@@ -21,6 +21,7 @@ describe('Sony-grounded shell state', () => {
     expect(shellTileBaseX(2, 2)).toBeCloseTo(203, 8);
     expect(shellTileBaseX(1, 2)).toBeCloseTo(58, 8);
     expect(shellTileBaseX(3, 2)).toBeCloseTo(356, 8);
+    expect(SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop).toBe(232);
   });
 
   it('keeps the selected game while system focus moves independently', () => {

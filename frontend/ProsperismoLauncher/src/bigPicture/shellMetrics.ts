@@ -20,6 +20,7 @@ export const SHELL_METRICS = {
     focusedMargin: 16,
     maxItems: 11,
     radius: 16,
+    titleTop: 106,
   },
   contentWidth: 1576,
   gridItemMargin: 20,
