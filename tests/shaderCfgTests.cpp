@@ -544,6 +544,18 @@ void TestNativeShaderResourceDependencies() {
 	          (shader_barrier.dstAccessMask & vk::AccessFlagBits::eShaderRead) &&
 	          (shader_barrier.dstAccessMask & vk::AccessFlagBits::eVertexAttributeRead),
 	      "shader-write dependency does not expose draw/dispatch buffer writes");
+	// A compute pass that authors indirect draw arguments must be visible to the
+	// following indexed-indirect draw: both the IndirectCommandRead access and the
+	// DrawIndirect stage halves are required, alongside the vertex/index reads.
+	Check((shader_barrier.dstAccessMask & vk::AccessFlagBits::eIndirectCommandRead) &&
+	          (shader_barrier.dstAccessMask & vk::AccessFlagBits::eIndexRead),
+	      "shader-write dependency does not expose indirect-command/index reads");
+	const auto destination_stages = ShaderWriteDestinationStages();
+	Check((destination_stages & vk::PipelineStageFlagBits::eDrawIndirect) &&
+	          (destination_stages & vk::PipelineStageFlagBits::eVertexInput) &&
+	          (destination_stages & vk::PipelineStageFlagBits::eVertexShader) &&
+	          (destination_stages & vk::PipelineStageFlagBits::eComputeShader),
+	      "shader-write destination stages omit the indirect-draw consumer half");
 
 	ShaderRecompiler::IR::Program program;
 	program.info.buffers.resize(3);

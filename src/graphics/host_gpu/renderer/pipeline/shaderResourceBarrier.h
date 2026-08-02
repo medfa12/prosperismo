@@ -18,6 +18,7 @@ struct ShaderBufferWriteRange {
 };
 
 vk::PipelineStageFlags  ShaderPipelineStages(vk::ShaderStageFlags stages);
+vk::PipelineStageFlags  ShaderWriteDestinationStages();
 VulkanMemoryBarrier     MakeShaderWriteDependency();
 vk::BufferMemoryBarrier MakeGdsDependency(vk::Buffer buffer);
 std::vector<ShaderBufferWriteRange>

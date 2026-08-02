@@ -23,11 +23,22 @@ vk::PipelineStageFlags ShaderPipelineStages(vk::ShaderStageFlags stages) {
 	return result;
 }
 
+// A guest compute pass may author vertex/index data and the indirect argument
+// words of the draw that follows it, so the shader-write dependency must reach
+// DrawIndirect/IndirectCommandRead as well as the vertex-input reads.
+vk::PipelineStageFlags ShaderWriteDestinationStages() {
+	return vk::PipelineStageFlagBits::eDrawIndirect | vk::PipelineStageFlagBits::eComputeShader |
+	       vk::PipelineStageFlagBits::eVertexInput | vk::PipelineStageFlagBits::eVertexShader |
+	       vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eTransfer |
+	       vk::PipelineStageFlagBits::eColorAttachmentOutput;
+}
+
 VulkanMemoryBarrier MakeShaderWriteDependency() {
 	VulkanMemoryBarrier barrier {};
 	barrier.sType         = vk::StructureType::eMemoryBarrier;
 	barrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
 	barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite |
+	                        vk::AccessFlagBits::eIndirectCommandRead |
 	                        vk::AccessFlagBits::eVertexAttributeRead |
 	                        vk::AccessFlagBits::eIndexRead | vk::AccessFlagBits::eUniformRead |
 	                        vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite |
@@ -87,13 +98,8 @@ bool HasShaderBufferWrites(const ShaderStageRuntime& runtime) {
 void ShaderWriteBarrier(vk::CommandBuffer vk_buffer, vk::PipelineStageFlags source_stages) {
 	EXIT_IF(vk_buffer == nullptr || !source_stages);
 	const auto barrier = MakeShaderWriteDependency();
-	vk_buffer.pipelineBarrier(
-	    source_stages,
-	    vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eVertexInput |
-	        vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader |
-	        vk::PipelineStageFlagBits::eTransfer |
-	        vk::PipelineStageFlagBits::eColorAttachmentOutput,
-	    vk::DependencyFlags {}, 1, &barrier, 0, nullptr, 0, nullptr);
+	vk_buffer.pipelineBarrier(source_stages, ShaderWriteDestinationStages(),
+	                          vk::DependencyFlags {}, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
 } // namespace Libs::Graphics

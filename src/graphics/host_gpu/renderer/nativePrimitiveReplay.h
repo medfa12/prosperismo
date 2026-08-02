@@ -38,6 +38,16 @@ struct NativePrimitiveIndices {
 	uint32_t vertex2 = 0;
 };
 
+// Live subgroup schedule derived from an exact point-list draw packet. The
+// counts here are the per-wave launch values Sony's SGPR3 ABI consumes; the
+// GE_CNTL/VGT_GS_ONCHIP_CNTL capacity fields only bound them.
+struct GsSubgroupLaunchPlan {
+	uint32_t subgroup_count               = 0;
+	uint32_t primitives_per_full_subgroup = 0;
+	uint32_t tail_subgroup_primitives     = 0; // equals the full count when the division is exact
+	uint32_t waves_per_subgroup           = 0;
+};
+
 // SDK 12 defines GS user SGPR3 as four packed launch fields. Counts are live
 // per-wave values synthesized from the draw; GE_CNTL's group fields are limits
 // and must never be substituted for them.
@@ -148,6 +158,76 @@ struct NativePrimitiveIndices {
 	launch.output_vertex_slots    = state.max_output_per_subgroup;
 	launch.output_primitive_slots = static_cast<uint32_t>(primitive_slots);
 	launch.output_primitive       = output;
+	return true;
+}
+
+// Point-list GS input: one vertex per input primitive. Both measured Astro
+// shapes are admitted -- the auto draw of one vertex and one instance, and the
+// indexed draw of one index with 512 explicit instances. GE_CNTL's
+// multiple-instances-per-wave bit decides whether instances may share a
+// subgroup; without it a subgroup never crosses an instance boundary. Counts
+// are live per-wave values and must satisfy the SGPR3 packing contract.
+[[nodiscard]] constexpr bool TryPlanPointListGsSubgroups(const ClassicGeometryReplayLaunch& launch,
+                                                         uint32_t index_count,
+                                                         uint32_t instance_count,
+                                                         bool     multiple_instances_per_wave,
+                                                         GsSubgroupLaunchPlan& plan) {
+	plan = {};
+	if (index_count == 0 || instance_count == 0 || launch.wave_lane_count == 0 ||
+	    launch.primitive_group_limit == 0 || launch.vertex_group_limit == 0) {
+		return false;
+	}
+
+	// A point-list subgroup consumes one ES vertex per GS primitive, so both
+	// capacity limits bound the same per-subgroup count.
+	const uint32_t subgroup_primitive_limit =
+	    launch.primitive_group_limit < launch.vertex_group_limit ? launch.primitive_group_limit
+	                                                             : launch.vertex_group_limit;
+
+	uint64_t subgroup_count       = 0;
+	uint32_t full_primitives      = 0;
+	uint32_t tail_primitives      = 0;
+	if (!multiple_instances_per_wave && instance_count > 1) {
+		// Subgroups cannot cross instance boundaries: each instance launches its
+		// own subgroups over its index_count primitives.
+		if (index_count > subgroup_primitive_limit) {
+			return false; // splitting a single instance is not yet measured
+		}
+		subgroup_count  = instance_count;
+		full_primitives = index_count;
+		tail_primitives = index_count;
+	} else {
+		const uint64_t total_primitives =
+		    static_cast<uint64_t>(index_count) * instance_count;
+		full_primitives = subgroup_primitive_limit;
+		if (total_primitives <= full_primitives) {
+			subgroup_count  = 1;
+			full_primitives = static_cast<uint32_t>(total_primitives);
+			tail_primitives = full_primitives;
+		} else {
+			subgroup_count = (total_primitives + full_primitives - 1) / full_primitives;
+			const auto remainder = static_cast<uint32_t>(total_primitives % full_primitives);
+			tail_primitives      = remainder == 0 ? full_primitives : remainder;
+		}
+	}
+	if (subgroup_count == 0 || subgroup_count > std::numeric_limits<uint32_t>::max()) {
+		return false;
+	}
+
+	// Every subgroup must satisfy the SGPR3 launch packing for its owning wave
+	// and fit the merged wave allocation.
+	const uint32_t waves =
+	    (full_primitives + launch.wave_lane_count - 1) / launch.wave_lane_count;
+	uint32_t packed = 0;
+	if (!TryPackGsWaveLaunch(full_primitives, full_primitives, 0, waves, packed) ||
+	    !TryPackGsWaveLaunch(tail_primitives, tail_primitives, 0, waves, packed)) {
+		return false;
+	}
+
+	plan.subgroup_count               = static_cast<uint32_t>(subgroup_count);
+	plan.primitives_per_full_subgroup = full_primitives;
+	plan.tail_subgroup_primitives     = tail_primitives;
+	plan.waves_per_subgroup           = waves;
 	return true;
 }
 

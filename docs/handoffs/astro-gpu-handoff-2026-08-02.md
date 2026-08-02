@@ -189,9 +189,25 @@ independent blockers before it could reach that boundary:
   `GS_RSRC2.LDS_SIZE` field is 24, or `0xC00` dwords. This checkpoint removes
   the former 1,024-dword compute hard-code: the register-derived allocation now
   reaches IR, SPIR-V Workgroup array sizing, LDS bounds and the shader cache key.
-  The compute-to-raster handoff still needs ShaderWrite visibility to both
-  VertexInput reads and DrawIndirect/IndirectCommandRead; the existing generic
-  shader-write barrier omits the indirect-command half.
+- **CLOSED -- compute-write to vertex/index/indirect-read visibility:** the
+  generic shader-write barrier previously stopped at VertexInput; a compute
+  pass that authors the indirect argument words of the following draw was not
+  ordered against it. `MakeShaderWriteDependency` now carries
+  `IndirectCommandRead` and the destination stage mask carries `DrawIndirect`
+  (exposed as `ShaderWriteDestinationStages()`); both halves are pinned in
+  `shader_cfg_tests`. This is a correctness contract for the coming replay's
+  indexed-indirect draw, not itself a rendering fix.
+- **CONTRACT EXTENDED -- live point-list subgroup schedules are derivable
+  offline:** `TryPlanPointListGsSubgroups` derives per-subgroup live
+  vertex/primitive counts and the owning wave count from the exact draw shape
+  and the register-derived capacity limits, honoring GE_CNTL's
+  multiple-instances-per-wave bit. Both measured Astro shapes are pinned in
+  `native_primitive_replay_tests`: the auto 1x1 draw plans one subgroup with
+  one live primitive, and the indexed 1x512 draw plans 171 subgroups of three
+  primitives with a two-primitive tail. Unmeasured splits of a single instance
+  across subgroups remain fail-closed. The counts compose directly with the
+  SGPR3 `TryPackGsWaveLaunch` ABI; the ES/GS SPIR-V translation, LDS ring
+  handoff, export capture and the indirect replay itself remain unimplemented.
 - **VISUALLY NEGATIVE -- the corrected-drain run still has no recognizable
   guest scene:** `PrintWindow(PW_RENDERFULLCONTENT)` at frame 590 is retained as
   `checkpoint-frame-current.png`. Excluding the Windows title bar, all 943,488
@@ -288,9 +304,11 @@ blank transition frames separate from the later title/world-map lifetime:
    or world-map colour is identified;
 2. retain the guest marker/state and shader addresses for that occurrence so a
    deliberately blank early frame is not mistaken for the persistent failure;
-3. carry the exact 12-KiB LDS allocation through compute compilation and bounds,
-   then add the compute-write to vertex/index/indirect-read barrier required by
-   the following indexed-indirect draw;
+3. ~~carry the exact 12-KiB LDS allocation through compute compilation and
+   bounds, then add the compute-write to vertex/index/indirect-read barrier
+   required by the following indexed-indirect draw~~ -- both halves are done:
+   the LDS allocation reaches IR/SPIR-V/cache-key, and the shader-write
+   barrier now reaches DrawIndirect/IndirectCommandRead;
 4. replay the captured `0x500704F00` / `0x500705600` pair as a 256-invocation
    merged ES/GS compute pass. Preserve Workgroup LDS, barriers and EXEC; map the
    terminal ES `s_setpc_b64 s[6:7]` to the known GS phase; synthesize the exact

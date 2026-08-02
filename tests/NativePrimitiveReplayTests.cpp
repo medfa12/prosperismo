@@ -7,6 +7,7 @@
 #include <cstdlib>
 
 using Libs::Graphics::ClassicGeometryReplayLaunch;
+using Libs::Graphics::GsSubgroupLaunchPlan;
 using Libs::Graphics::NativePrimitiveLaunchState;
 using Libs::Graphics::NativePrimitiveIndices;
 using Libs::Graphics::NativePrimitiveOutput;
@@ -14,6 +15,7 @@ using Libs::Graphics::OwnsGsAllocation;
 using Libs::Graphics::TryPackGsWaveLaunch;
 using Libs::Graphics::TryPackPrimitiveConnectivity;
 using Libs::Graphics::TryCreateClassicGeometryReplayLaunch;
+using Libs::Graphics::TryPlanPointListGsSubgroups;
 using Libs::Graphics::UnpackPrimitiveConnectivity;
 
 namespace {
@@ -137,6 +139,37 @@ int main() {
 	          launch.output_primitive == NativePrimitiveOutput::Points &&
 	          launch.output_primitive_slots == 216,
 	      "general point-list ceiling was not admitted");
+
+	// Both measured Astro launch shapes for the captured es=0x500704F00 /
+	// gs=0x500705600 pair: GE_CNTL=0x00003003 (multiple instances per wave) with
+	// prim_group=3.  Shape one is the auto point-list draw of one vertex and one
+	// instance; shape two is the indexed point-list draw of one 16-bit index and
+	// 512 explicit instances.
+	ClassicGeometryReplayLaunch captured_launch {};
+	Check(TryCreateClassicGeometryReplayLaunch(CapturedClassicGsState(), captured_launch),
+	      "captured launch state was rejected before subgroup planning");
+	GsSubgroupLaunchPlan plan {};
+	Check(TryPlanPointListGsSubgroups(captured_launch, 1, 1, true, plan) &&
+	          plan.subgroup_count == 1 && plan.primitives_per_full_subgroup == 1 &&
+	          plan.tail_subgroup_primitives == 1 && plan.waves_per_subgroup == 1,
+	      "measured 1x1 auto point-list shape was not planned as one live primitive");
+	Check(TryPlanPointListGsSubgroups(captured_launch, 1, 512, true, plan) &&
+	          plan.subgroup_count == 171 && plan.primitives_per_full_subgroup == 3 &&
+	          plan.tail_subgroup_primitives == 2 && plan.waves_per_subgroup == 1,
+	      "measured 1x512 indexed point-list shape was not packed three primitives "
+	      "per subgroup with a two-primitive tail");
+	Check(TryPlanPointListGsSubgroups(captured_launch, 1, 512, false, plan) &&
+	          plan.subgroup_count == 512 && plan.primitives_per_full_subgroup == 1 &&
+	          plan.tail_subgroup_primitives == 1 && plan.waves_per_subgroup == 1,
+	      "instance-bounded subgroups were not planned when packing is disabled");
+	Check(!TryPlanPointListGsSubgroups(captured_launch, 0, 1, true, plan) &&
+	          !TryPlanPointListGsSubgroups(captured_launch, 1, 0, true, plan),
+	      "empty point-list draw shapes were admitted");
+	Check(!TryPlanPointListGsSubgroups(captured_launch, 4, 512, false, plan),
+	      "an unmeasured split of a single instance across subgroups was admitted");
+	ClassicGeometryReplayLaunch zero_capacity {};
+	Check(!TryPlanPointListGsSubgroups(zero_capacity, 1, 1, true, plan),
+	      "a launch without capacity limits was admitted");
 
 	std::puts("NativePrimitiveReplayTests: ok");
 	return 0;
