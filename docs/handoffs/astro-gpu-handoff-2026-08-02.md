@@ -296,6 +296,29 @@ depth/stencil mip-copy test; it is not claimed green.
 
 ## Next falsifiable checkpoint
 
+Update 2026-08-02 (later session): items 3-5 below are DONE and verified live.
+The merged `0x500704F00`/`0x500705600` pair now replays as a 256-invocation
+compute pass writing positions, two parameter sets and target-20 connectivity
+into a persistent replay buffer, followed by a flat triangle-list draw whose
+synthetic vertex shader fetches from it (commits `80bcea5`, `134c788`; the
+compute-write barrier already reached vertex/index/indirect reads since
+`4da4524`). Both measured launch shapes execute in a live Astro boot with zero
+Vulkan errors: auto 1x1 (1 subgroup) and indexed 1x512 (171 subgroups x 3
+primitives). Unsupported shapes remain fail-closed. The synthetic vertex half
+must be compiled with the graphics lane-mask mode, not native-wave: the
+measured host only offers required-subgroup-size control for compute.
+The presented frame is still black, indistinguishable from the pre-replay
+baseline, so the remaining work is items 1 and 6: writer-by-writer readback of
+`0x514080000` for nonblack RGB.
+
+A comparison clone of the Stepz97/ps5emu fork (which shows glitchy ASTRO BOT
+frames on macOS) confirmed its `ShouldSkipGeShader` is byte-identical to ours
+minus the replay: it also skips these classic-GS draws. Its visible frames come
+from presentation-path work (linear framebuffer presentation, queue waits in
+graphicsRun, scan-out readback/dump, CP-DMA drain no-ops, GPU-written SRT
+pull-back), which is the right audit list if `0x514080000` turns out to hold
+colour that never reaches the swapchain.
+
 Move upstream from the current `0x514080000` black-RGB source, and keep early
 blank transition frames separate from the later title/world-map lifetime:
 
