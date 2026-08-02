@@ -37,6 +37,27 @@ void EmitProcessEvent(
   context.EmitJSEvent(L"RCTDeviceEventEmitter", L"ProsperismoHostProcess", std::move(event));
 }
 
+HWND FindProsperismoWindow() noexcept {
+  struct Search {
+    DWORD processId;
+    HWND window;
+  } search{GetCurrentProcessId(), nullptr};
+
+  EnumWindows(
+      [](HWND window, LPARAM parameter) noexcept -> BOOL {
+        auto &candidate = *reinterpret_cast<Search *>(parameter);
+        DWORD processId{};
+        GetWindowThreadProcessId(window, &processId);
+        if (processId == candidate.processId && IsWindowVisible(window) && GetWindow(window, GW_OWNER) == nullptr) {
+          candidate.window = window;
+          return FALSE;
+        }
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&search));
+  return search.window;
+}
+
 } // namespace
 
 void ProsperismoHost::ListDirectory(
@@ -142,6 +163,26 @@ void ProsperismoHost::FileExists(
     winrt::Microsoft::ReactNative::ReactPromise<bool> &&promise) noexcept {
   try {
     promise.Resolve(prosperismo::host::FileExists(path));
+  } catch (...) {
+    RejectCurrentException(promise);
+  }
+}
+
+void ProsperismoHost::SetBigPictureMode(
+    bool enabled,
+    winrt::Microsoft::ReactNative::ReactPromise<void> &&promise) noexcept {
+  try {
+    auto window = FindProsperismoWindow();
+    if (!window) {
+      throw std::runtime_error("Prosperismo could not find its application window.");
+    }
+    auto windowId = winrt::Microsoft::UI::GetWindowIdFromWindow(window);
+    auto appWindow = winrt::Microsoft::UI::Windowing::AppWindow::GetFromWindowId(windowId);
+    appWindow.SetPresenter(
+        enabled
+            ? winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::FullScreen
+            : winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::Default);
+    promise.Resolve();
   } catch (...) {
     RejectCurrentException(promise);
   }

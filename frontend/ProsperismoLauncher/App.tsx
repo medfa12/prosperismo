@@ -56,6 +56,7 @@ import {BigPictureShell} from './src/bigPicture/BigPictureShell';
 import {
   hasNativeProsperismoHost,
   prosperismoHost,
+  setBigPictureMode,
 } from './src/native/ProsperismoHost';
 
 const brandArtwork = {
@@ -387,15 +388,20 @@ export default function App() {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }, [persist, settings]);
+  const switchRoute = useCallback((next: Route) => {
+    void setBigPictureMode(next === 'big-picture')
+      .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setRoute(next));
+  }, []);
   return route === 'desktop'
-    ? <DesktopLauncher games={games} settings={settings} session={session} busy={busy} error={error} onChooseFolders={chooseFolders} onRefresh={() => refresh(settings)} onRefreshCompatibility={refreshCompatibility} onLaunch={run} onSaveSettings={persist} onSaveRoots={updateRoots} onBigPicture={() => setRoute('big-picture')} onError={setError} onClearUntrackedSession={() => setSession(DEFAULT_PROCESS_SESSION)} />
+    ? <DesktopLauncher games={games} settings={settings} session={session} busy={busy} error={error} onChooseFolders={chooseFolders} onRefresh={() => refresh(settings)} onRefreshCompatibility={refreshCompatibility} onLaunch={run} onSaveSettings={persist} onSaveRoots={updateRoots} onBigPicture={() => switchRoute('big-picture')} onError={setError} onClearUntrackedSession={() => setSession(DEFAULT_PROCESS_SESSION)} />
     : <BigPictureShell
          artwork={brandArtwork.bigPicture}
          games={games}
          nativeBackgroundFrames={nativeBackgroundFrames}
          settings={settings}
          onSaveSettings={next => { void persist(next); }}
-         onDesktop={() => setRoute('desktop')}
+         onDesktop={() => switchRoute('desktop')}
          errorMessage={error}
          onDismissError={() => setError(undefined)}
         onLaunch={game => {
