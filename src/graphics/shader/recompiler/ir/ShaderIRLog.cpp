@@ -440,6 +440,7 @@ std::string InstructionToString(const Instruction& inst) {
 		case Opcode::FMinF32: text += "FMinF32"; break;
 		case Opcode::FMaxF32: text += "FMaxF32"; break;
 		case Opcode::FMadF32: text += "FMadF32"; break;
+		case Opcode::FFmaF32: text += "FFmaF32"; break;
 		case Opcode::Dot2AccF32F16: text += "Dot2AccF32F16"; break;
 		case Opcode::FMin3F32: text += "FMin3F32"; break;
 		case Opcode::FMax3F32: text += "FMax3F32"; break;

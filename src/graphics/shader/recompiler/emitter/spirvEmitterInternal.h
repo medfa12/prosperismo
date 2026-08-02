@@ -67,6 +67,7 @@ enum : uint32_t {
 	DecorationBinding       = 33,
 	DecorationDescriptorSet = 34,
 	DecorationOffset        = 35,
+	DecorationNoContraction = 42,
 };
 
 enum : uint32_t {
@@ -111,6 +112,7 @@ enum : uint32_t {
 	MemorySemanticsAcquireRelease  = 0x00000008u,
 	MemorySemanticsUniformMemory   = 0x00000040u,
 	MemorySemanticsWorkgroupMemory = 0x00000100u,
+	MemorySemanticsImageMemory     = 0x00000800u,
 };
 
 enum : uint32_t {
@@ -1417,6 +1419,7 @@ void EmitFloatExtInst(EmitterState& state, const IR::Instruction& inst, uint32_t
                       bool scale_by_two_pi = false, bool flush_denorm = false);
 
 void EmitMadF32(EmitterState& state, const IR::Instruction& inst);
+void EmitFmaF32(EmitterState& state, const IR::Instruction& inst);
 
 uint32_t EmitFNegateValue(EmitterState& state, uint32_t value);
 

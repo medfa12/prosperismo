@@ -371,7 +371,11 @@ void EmitWaitcnt(EmitterState& state, const IR::Instruction& inst) {
 
 void EmitBarrier(EmitterState& state, const IR::Instruction& inst) {
 	(void)inst;
-	const auto semantics = MemorySemanticsAcquireRelease | MemorySemanticsWorkgroupMemory;
+	// Sony specifies s_barrier as local-workgroup synchronization. Include every
+	// shader-visible memory class that can cross that synchronization point: LDS,
+	// uniform/storage buffers, and images.
+	const auto semantics = MemorySemanticsAcquireRelease | MemorySemanticsUniformMemory |
+	                       MemorySemanticsWorkgroupMemory | MemorySemanticsImageMemory;
 	state.builder.AddFunction({OpControlBarrier, ConstantU32(state, ScopeWorkgroup),
 	                           ConstantU32(state, ScopeWorkgroup), ConstantU32(state, semantics)});
 }

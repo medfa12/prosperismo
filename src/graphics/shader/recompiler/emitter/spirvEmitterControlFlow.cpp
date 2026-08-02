@@ -719,6 +719,7 @@ void EmitInstruction(EmitterState& state, const IR::Instruction& inst) {
 		case IR::Opcode::FMinF32: EmitMinMaxF32(state, inst, false); break;
 		case IR::Opcode::FMaxF32: EmitMinMaxF32(state, inst, true); break;
 		case IR::Opcode::FMadF32: EmitMadF32(state, inst); break;
+		case IR::Opcode::FFmaF32: EmitFmaF32(state, inst); break;
 		case IR::Opcode::Dot2AccF32F16: EmitDot2AccF32F16(state, inst); break;
 		case IR::Opcode::FMin3F32: EmitMinMax3F32(state, inst, false); break;
 		case IR::Opcode::FMax3F32: EmitMinMax3F32(state, inst, true); break;

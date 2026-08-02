@@ -1987,6 +1987,25 @@ void EmitMadF32(EmitterState& state, const IR::Instruction& inst) {
 	const auto lhs = EmitMixF32Load(state, inst.src[0]);
 	const auto rhs = EmitMixF32Load(state, inst.src[1]);
 	const auto add = EmitMixF32Load(state, inst.src[2]);
+	const auto mul = state.builder.AllocateId();
+	const auto f32 = state.builder.AllocateId();
+	const auto u32 = state.builder.AllocateId();
+	// Sony defines MAD/MAC as v_mul_f32 followed by v_add_f32, including rounding
+	// and mode handling between the operations. NoContraction keeps the host
+	// driver from silently turning this pair back into an FMA.
+	state.builder.AddFunction({OpFMul, state.float_type, mul, lhs, rhs});
+	state.builder.AddAnnotation({OpDecorate, mul, DecorationNoContraction});
+	state.builder.AddFunction({OpFAdd, state.float_type, f32, mul, add});
+	state.builder.AddAnnotation({OpDecorate, f32, DecorationNoContraction});
+	const auto result = ApplyResultModifiersF32(state, f32, inst.dst);
+	state.builder.AddFunction({OpBitcast, state.uint_type, u32, result});
+	EmitStoreU32(state, inst.dst, u32);
+}
+
+void EmitFmaF32(EmitterState& state, const IR::Instruction& inst) {
+	const auto lhs = EmitMixF32Load(state, inst.src[0]);
+	const auto rhs = EmitMixF32Load(state, inst.src[1]);
+	const auto add = EmitMixF32Load(state, inst.src[2]);
 	const auto f32 = state.builder.AllocateId();
 	const auto u32 = state.builder.AllocateId();
 	state.builder.AddFunction(
@@ -2615,14 +2634,15 @@ void EmitMed3F32(EmitterState& state, const IR::Instruction& inst) {
 	const auto src1      = EmitFloatLoad(state, inst.src[1]);
 	const auto src2      = EmitFloatLoad(state, inst.src[2]);
 	const auto low_pair  = EmitMinMaxF32Value(state, src0, src1, false);
-	const auto min3      = EmitMinMaxF32Value(state, low_pair, src2, false);
 	const auto high_pair = EmitMinMaxF32Value(state, src0, src1, true);
 	const auto high_min  = EmitMinMaxF32Value(state, high_pair, src2, false);
 	const auto median    = EmitMinMaxF32Value(state, low_pair, high_min, true);
 	const auto nan01     = EmitLogicalOrBool(state, EmitClassifyF32(state, src0).nan,
 	                                         EmitClassifyF32(state, src1).nan);
 	const auto any_nan   = EmitLogicalOrBool(state, nan01, EmitClassifyF32(state, src2).nan);
-	const auto base      = EmitFSelectValue(state, any_nan, min3, median);
+	// Sony specifies source 2, not a numeric min/max reduction, whenever any of
+	// the three inputs is NaN.
+	const auto base      = EmitFSelectValue(state, any_nan, src2, median);
 	const auto f32       = ApplyResultModifiersF32(state, base, inst.dst);
 	const auto u32       = state.builder.AllocateId();
 	state.builder.AddFunction({OpBitcast, state.uint_type, u32, f32});

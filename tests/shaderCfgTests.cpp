@@ -178,6 +178,50 @@ bool SpirvContainsAtomicWithScopeAndSemantics(const std::vector<uint32_t>& binar
 	return false;
 }
 
+bool SpirvContainsControlBarrierWithSemantics(const std::vector<uint32_t>& binary,
+                                              uint32_t execution_scope, uint32_t memory_scope,
+                                              uint32_t semantics) {
+	auto ConstantValue = [&](uint32_t id, uint32_t* value) {
+		for (size_t i = 5; i < binary.size();) {
+			const uint32_t word       = binary[i];
+			const uint32_t op         = word & 0xffffu;
+			const uint32_t word_count = word >> 16u;
+			if (word_count == 0 || i + word_count > binary.size()) {
+				return false;
+			}
+			if (op == 43u && word_count >= 4u && binary[i + 2] == id) {
+				*value = binary[i + 3];
+				return true;
+			}
+			i += word_count;
+		}
+		return false;
+	};
+
+	for (size_t i = 5; i < binary.size();) {
+		const uint32_t word       = binary[i];
+		const uint32_t op         = word & 0xffffu;
+		const uint32_t word_count = word >> 16u;
+		if (word_count == 0 || i + word_count > binary.size()) {
+			return false;
+		}
+		if (op == 224u && word_count >= 4u) {
+			uint32_t actual_execution_scope = 0;
+			uint32_t actual_memory_scope    = 0;
+			uint32_t actual_semantics       = 0;
+			if (ConstantValue(binary[i + 1], &actual_execution_scope) &&
+			    ConstantValue(binary[i + 2], &actual_memory_scope) &&
+			    ConstantValue(binary[i + 3], &actual_semantics) &&
+			    actual_execution_scope == execution_scope && actual_memory_scope == memory_scope &&
+			    actual_semantics == semantics) {
+				return true;
+			}
+		}
+		i += word_count;
+	}
+	return false;
+}
+
 bool SpirvContainsVectorShuffle(const std::vector<uint32_t>&   binary,
                                 const std::array<uint32_t, 4>& selectors) {
 	for (size_t i = 5; i < binary.size();) {
@@ -939,8 +983,8 @@ void TestNewShaderRecompilerSoppMarkers() {
 	      "SOPP s_barrier did not lower to an IR marker");
 	Check(SpirvContainsOpcode(result.spirv, 224),
 	      "SPIR-V binary does not contain OpControlBarrier");
-	Check(std::find(result.spirv.begin(), result.spirv.end(), 264u) != result.spirv.end(),
-	      "SPIR-V barrier does not use workgroup acquire-release memory semantics");
+	Check(SpirvContainsControlBarrierWithSemantics(result.spirv, 2u, 2u, 0x948u),
+	      "SPIR-V barrier does not cover Uniform, Workgroup, and Image memory");
 	CheckSpirvBinaryValidates(result.spirv);
 }
 
@@ -1925,7 +1969,7 @@ void TestNewShaderRecompilerMoreAluFamilies() {
 	      "V_CUBEMA_F32 did not lower to cube IR");
 	Check(Common::ContainsStr(result.ir_dump, "CubeMaF32 v5, v2, v0, v6.neg"),
 	      "V_CUBEMA_F32 source modifier did not lower to cube IR");
-	Check(Common::ContainsStr(result.ir_dump, "FMadF32 v37"), "VOP3 fma did not lower to IR");
+	Check(Common::ContainsStr(result.ir_dump, "FFmaF32 v37"), "VOP3 fma did not lower to IR");
 	Check(Common::ContainsStr(result.ir_dump, "FMin3F32 v38"), "VOP3 min3 did not lower to IR");
 	Check(Common::ContainsStr(result.ir_dump, "FMax3F32 v39"), "VOP3 max3 did not lower to IR");
 	Check(Common::ContainsStr(result.ir_dump, "FMed3F32 v40"), "VOP3 med3 did not lower to IR");
@@ -2025,8 +2069,8 @@ void TestNewShaderRecompilerMoreAluFamilies() {
 	      "SPIR-V binary does not contain GLSL.std.450 UnpackHalf2x16");
 	Check(SpirvContainsExtInst(result.spirv, 50),
 	      "SPIR-V binary does not contain GLSL.std.450 Fma");
-	Check(SpirvContainsExtInst(result.spirv, 43),
-	      "SPIR-V binary does not contain GLSL.std.450 FClamp");
+	Check(!SpirvContainsExtInst(result.spirv, 43),
+	      "SPIR-V binary retained FClamp instead of DX10 NaN-to-zero clamp");
 	Check(SpirvContainsExtInst(result.spirv, 53),
 	      "SPIR-V binary does not contain GLSL.std.450 Ldexp");
 	Check(SpirvContainsOpcode(result.spirv, 128), "SPIR-V binary does not contain OpIAdd");
@@ -2235,9 +2279,9 @@ void TestNewShaderRecompilerVop3pPackedF16() {
 	      "V_PK_MAX_F16 did not lower to packed f16 IR");
 	Check(Common::ContainsStr(result.ir_dump, "PackedFmaF16 v118"),
 	      "V_PK_FMA_F16 did not lower to packed f16 IR");
-	Check(Common::ContainsStr(result.ir_dump, "FMadF32 v119"),
+	Check(Common::ContainsStr(result.ir_dump, "FFmaF32 v119"),
 	      "VOP3P V_FMA_F32 did not lower through shared fma IR");
-	Check(Common::ContainsStr(result.ir_dump, "FMadF32 v68, v16.opsel(lo=0,hi=1,neghi=0)"),
+	Check(Common::ContainsStr(result.ir_dump, "FFmaF32 v68, v16.opsel(lo=0,hi=1,neghi=0)"),
 	      "VOP3P V_FMA_MIX_F32 source selectors did not lower to IR");
 	Check(Common::ContainsStr(result.ir_dump, "MadMixF16 v120.sdwa(sel=4"),
 	      "V_MAD_MIXLO_F16 did not lower to shared mad-mix IR");
@@ -2262,8 +2306,8 @@ void TestNewShaderRecompilerVop3pPackedF16() {
 	      "SPIR-V binary does not contain GLSL.std.450 PackHalf2x16 for VOP3P");
 	Check(SpirvContainsExtInst(result.spirv, 50),
 	      "SPIR-V binary does not contain GLSL.std.450 Fma for VOP3P");
-	Check(SpirvContainsExtInst(result.spirv, 43),
-	      "SPIR-V binary does not contain GLSL.std.450 FClamp for clamped f16 ops");
+	Check(!SpirvContainsExtInst(result.spirv, 43),
+	      "clamped f16 ops retained FClamp instead of DX10 NaN-to-zero clamp");
 	Check(!SpirvContainsExtInst(result.spirv, 37),
 	      "SPIR-V binary still contains GLSL.std.450 FMin for VOP3P packed min");
 	Check(!SpirvContainsExtInst(result.spirv, 40),
@@ -2558,8 +2602,8 @@ void TestNewShaderRecompilerBootB16PackedAndSdwaOpcodes() {
 	      "SPIR-V binary does not contain OpConvertFToS for V_CVT_I16_F16");
 	Check(SpirvContainsOpcode(result.spirv, 112),
 	      "SPIR-V binary does not contain OpConvertUToF for V_CVT_F16_U16");
-	Check(SpirvContainsExtInst(result.spirv, 43),
-	      "SPIR-V binary does not contain GLSL.std.450 FClamp for clamped V_PK_MUL_F16");
+	Check(!SpirvContainsExtInst(result.spirv, 43),
+	      "clamped V_PK_MUL_F16 retained FClamp instead of DX10 NaN-to-zero clamp");
 	CheckSpirvBinaryValidates(result.spirv);
 }
 
@@ -5032,6 +5076,27 @@ void TestNewShaderRecompilerDsSubDwordLowering() {
 	CheckSpirvBinaryValidates(result.spirv);
 }
 
+bool SpirvAllResultsHaveDecoration(const std::vector<uint32_t>& binary, uint32_t opcode,
+                                   uint32_t decoration, uint32_t expected_count) {
+	uint32_t count = 0;
+	for (size_t i = 5; i < binary.size();) {
+		const uint32_t word       = binary[i];
+		const uint32_t op         = word & 0xffffu;
+		const uint32_t word_count = word >> 16u;
+		if (word_count == 0 || i + word_count > binary.size()) {
+			return false;
+		}
+		if (op == opcode && word_count >= 3u) {
+			count++;
+			if (!SpirvTargetHasDecoration(binary, binary[i + 2], decoration)) {
+				return false;
+			}
+		}
+		i += word_count;
+	}
+	return count == expected_count;
+}
+
 void TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain() {
 	const uint32_t shader[] = {
 	    EncodeDs0(0xde, 0), EncodeDs1(0, 2, 1), // ds_write_b96 v[2:4], v1
@@ -5064,6 +5129,76 @@ void TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain() {
 	Check(SpirvContainsOpcode(result.spirv, 250),
 	      "ordinary LDS write is not guarded by the active EXEC mask");
 	CheckSpirvBinaryValidates(result.spirv);
+}
+
+void TestGfx1013SonyNumericAndBarrierSemantics() {
+	{
+		const uint32_t shader[] = {
+		    EncodeSopp(0x0a, 0), // s_barrier
+		    EncodeSopp(0x01, 0), // s_endpgm
+		};
+		ShaderRecompiler::CompileOptions options;
+		options.stage = ShaderType::Compute;
+		ShaderRecompiler::CompileResult result;
+		std::string                     error;
+		Check(ShaderRecompiler::TryRecompile(shader, options, result, &error), error.c_str());
+		Check(SpirvContainsControlBarrierWithSemantics(result.spirv, 2u, 2u, 0x948u),
+		      "s_barrier did not cover Uniform, Workgroup, and Image memory");
+		CheckSpirvBinaryValidates(result.spirv);
+	}
+
+	{
+		const uint32_t shader[] = {
+		    EncodeVop3Word0(0x141, 3),
+		    EncodeVop3Word1(0 + 256, 1 + 256, 2 + 256), // v_mad_f32 v3, v0, v1, v2
+		    EncodeVop2(0x1f, 3, 0 + 256, 1),            // v_mac_f32 v3, v0, v1
+		    EncodeVop3Word0(0x14b, 4),
+		    EncodeVop3Word1(0 + 256, 1 + 256, 2 + 256), // v_fma_f32 v4, v0, v1, v2
+		    EncodeSopp(0x01, 0),
+		};
+		ShaderRecompiler::CompileOptions options;
+		options.stage   = ShaderType::Compute;
+		options.dump_ir = true;
+		ShaderRecompiler::CompileResult result;
+		std::string                     error;
+		Check(ShaderRecompiler::TryRecompile(shader, options, result, &error), error.c_str());
+		Check(Common::ContainsStr(result.ir_dump, "FMadF32 v3, v0, v1, v2") &&
+		          Common::ContainsStr(result.ir_dump, "FMadF32 v3, v0, v1, v3") &&
+		          Common::ContainsStr(result.ir_dump, "FFmaF32 v4, v0, v1, v2"),
+		      "MAD/MAC and FMA were not kept as distinct IR operations");
+		Check(SpirvInstructionOpcodeCount(result.spirv, 133u) == 2u &&
+		          SpirvInstructionOpcodeCount(result.spirv, 129u) == 2u,
+		      "MAD/MAC did not emit separate multiply and add operations");
+		Check(SpirvExtInstCount(result.spirv, 50u) == 1u,
+		      "FMA did not remain one fused operation");
+		Check(SpirvAllResultsHaveDecoration(result.spirv, 133u, 42u, 2u) &&
+		          SpirvAllResultsHaveDecoration(result.spirv, 129u, 42u, 2u),
+		      "MAD/MAC arithmetic can be contracted back into FMA");
+		CheckSpirvBinaryValidates(result.spirv);
+	}
+
+	{
+		const uint32_t shader[] = {
+		    EncodeVop3Word0(0x157, 5),
+		    EncodeVop3Word1(0 + 256, 1 + 256, 2 + 256), // v_med3_f32 v5, v0, v1, v2
+		    EncodeVop3Word0(0x103, 6, 0, 0, true),
+		    EncodeVop3Word1(0 + 256, 1 + 256, 0), // v_add_f32 clamp v6, v0, v1
+		    EncodeSopp(0x01, 0),
+		};
+		ShaderRecompiler::CompileOptions options;
+		options.stage   = ShaderType::Compute;
+		options.dump_ir = true;
+		ShaderRecompiler::CompileResult result;
+		std::string                     error;
+		Check(ShaderRecompiler::TryRecompile(shader, options, result, &error), error.c_str());
+		Check(Common::ContainsStr(result.ir_dump, "FMed3F32 v5, v0, v1, v2"),
+		      "v_med3_f32 source ordering changed before emission");
+		Check(!SpirvContainsExtInst(result.spirv, 43u) &&
+		          SpirvInstructionOpcodeCount(result.spirv, 186u) != 0u &&
+		          SpirvInstructionOpcodeCount(result.spirv, 184u) != 0u,
+		      "DX10 clamp did not use ordered NaN-to-zero comparisons");
+		CheckSpirvBinaryValidates(result.spirv);
+	}
 }
 
 void TestNewShaderRecompilerDsWideAndAtomicLowering() {
@@ -7496,6 +7631,10 @@ int main(int argc, char** argv) {
 		TestNewShaderRecompilerScalarBitfieldAlu();
 		return 0;
 	}
+	if (argc == 2 && std::strcmp(argv[1], "--gfx1013-semantics-only") == 0) {
+		TestGfx1013SonyNumericAndBarrierSemantics();
+		return 0;
+	}
 	if (argc != 1) {
 		std::fprintf(stderr, "unknown test selector: %s\n", argv[1]);
 		return 2;
@@ -7506,6 +7645,7 @@ int main(int argc, char** argv) {
 	TestNativeSubgroupPolicy();
 	TestNewShaderRecompilerSMovB32();
 	TestNewShaderRecompilerSoppMarkers();
+	TestGfx1013SonyNumericAndBarrierSemantics();
 	TestNewShaderRecompilerSopkWaitcntMarkers();
 	TestNewShaderRecompilerRdna2ScalarOpcodes();
 	TestNewShaderRecompilerScalarVectorAlu();

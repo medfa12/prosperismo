@@ -536,9 +536,20 @@ uint32_t ApplyResultModifiersF32(EmitterState& state, uint32_t value, const IR::
 	if (!dst.clamp) {
 		return result;
 	}
-	const auto ret = state.builder.AllocateId();
-	state.builder.AddFunction({OpExtInst, state.float_type, ret, state.glsl_std450, GlslFClamp,
-	                           result, ConstantF32(state, 0), ConstantF32(state, 0x3f800000u)});
+	// Sony's DX10_CLAMP contract flushes NaN to +0 before saturating to [+0, 1].
+	// Ordered comparisons implement that rule because both are false for NaN.
+	const auto above_zero = state.builder.AllocateId();
+	const auto lower      = state.builder.AllocateId();
+	const auto below_one  = state.builder.AllocateId();
+	const auto ret        = state.builder.AllocateId();
+	state.builder.AddFunction({OpFOrdGreaterThan, state.bool_type, above_zero, result,
+	                           ConstantF32(state, 0)});
+	state.builder.AddFunction({OpSelect, state.float_type, lower, above_zero, result,
+	                           ConstantF32(state, 0)});
+	state.builder.AddFunction({OpFOrdLessThan, state.bool_type, below_one, lower,
+	                           ConstantF32(state, 0x3f800000u)});
+	state.builder.AddFunction({OpSelect, state.float_type, ret, below_one, lower,
+	                           ConstantF32(state, 0x3f800000u)});
 	return ret;
 }
 

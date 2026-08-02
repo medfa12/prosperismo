@@ -295,6 +295,7 @@ enum class Opcode {
 	FMinF32,
 	FMaxF32,
 	FMadF32,
+	FFmaF32,
 	Dot2AccF32F16,
 	FMin3F32,
 	FMax3F32,
