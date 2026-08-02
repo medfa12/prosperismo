@@ -128,6 +128,25 @@ void GpuResourceManager::UnmapMemory(uint64_t vaddr, uint64_t size) {
 		unmap();
 		return;
 	}
+	const bool gpu_mapped = [&] {
+		std::shared_lock lock(m_mapped_ranges_mutex);
+		return m_mapped_ranges.Intersects(vaddr, size);
+	}();
+	// Reserved or allocation-only spans can reach the generic unmap path without
+	// ever being exposed to the GPU. Sending those no-op ranges through the GPU
+	// command queue can deadlock when a WaitRegMem guest writer is holding the
+	// memory-operation dependency needed by SendCommandSync.
+	if (!gpu_mapped) {
+		const bool cached = m_buffer_cache.HasPageOverlap(vaddr, size) ||
+		                    m_texture_cache.QueryRegion(vaddr, size).image_pages;
+		if (cached) {
+			EXIT("gpu-unmapped range still holds cached resources: addr=0x%016" PRIx64
+			     " size=0x%016" PRIx64 "\n",
+			     vaddr, size);
+		}
+		unmap();
+		return;
+	}
 	m_gpu->SendCommandSync(unmap);
 }
 
