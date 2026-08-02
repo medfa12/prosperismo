@@ -21,6 +21,7 @@ import {
   SHELL_METRICS,
   shellTileBaseX,
 } from './shellMetrics';
+import {nativeFrameIndexAtElapsed} from './nativeBackground';
 
 const SETTINGS_CATEGORIES = [
   ['General', 'Library, startup, and default behavior'],
@@ -217,27 +218,29 @@ function fileImageSource(path: string | undefined): ImageSourcePropType | undefi
  * package. A real native-frame host can replace this adapter without changing
  * the shell layering contract.
  */
-function NativeFrameBackground({frameMs, framePaths, visible}: {
+function NativeFrameBackground({frameMs, framePaths}: {
   frameMs: number;
   framePaths: readonly string[];
-  visible: boolean;
 }) {
   const [frameIndex, setFrameIndex] = useState(0);
   const frames = useMemo(() => framePaths.map(fileImageSource).filter((source): source is ImageSourcePropType => Boolean(source)), [framePaths]);
   useEffect(() => {
     setFrameIndex(0);
-    if (!visible || frames.length < 2) {
+    if (frames.length < 2) {
       return;
     }
-    const sequence = [...Array(frames.length).keys(), ...Array(Math.max(0, frames.length - 2)).fill(0).map((_, index) => frames.length - index - 2)];
-    let sequenceIndex = 0;
-    const timer = setInterval(() => {
-      sequenceIndex = (sequenceIndex + 1) % sequence.length;
-      setFrameIndex(sequence[sequenceIndex]);
-    }, frameMs);
-    return () => clearInterval(timer);
-  }, [frameMs, frames.length, visible]);
-  if (!visible || frames.length === 0) {
+    const startedAt = Date.now();
+    let timer: ReturnType<typeof setTimeout>;
+    const advance = () => {
+      const elapsed = Date.now() - startedAt;
+      setFrameIndex(nativeFrameIndexAtElapsed(elapsed, frames.length, frameMs));
+      const nextBoundary = (Math.floor(elapsed / frameMs) + 1) * frameMs;
+      timer = setTimeout(advance, Math.max(1, nextBoundary - (Date.now() - startedAt)));
+    };
+    timer = setTimeout(advance, frameMs);
+    return () => clearTimeout(timer);
+  }, [frameMs, frames.length]);
+  if (frames.length === 0) {
     return null;
   }
   return <Image source={frames[Math.min(frameIndex, frames.length - 1)]} style={shellStyles.nativeFrameBackground} />;
@@ -526,7 +529,7 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
-    <NativeFrameBackground frameMs={nativeBackgroundFrameMs} framePaths={nativeBackgroundFrames} visible={state.surface === 'home'} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} suppressFallback={nativeBackgroundFrames.length > 0 && state.surface === 'home'} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
+    <NativeFrameBackground frameMs={nativeBackgroundFrameMs} framePaths={nativeBackgroundFrames} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} suppressFallback={nativeBackgroundFrames.length > 0} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
     {state.surface !== 'settings' && <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} sourcePath={action.glyph === 'settings' ? firmwareShellIcons.settings : action.glyph === 'profile' ? firmwareShellIcons.desktop : undefined} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>}
     {state.surface !== 'home' && state.surface !== 'settings' && settingsDetail === undefined && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
     {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandFocused={isShellCardFocused(state, state.selectedIndex)} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}

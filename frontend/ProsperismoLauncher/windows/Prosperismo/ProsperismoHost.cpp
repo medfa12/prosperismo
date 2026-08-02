@@ -168,6 +168,26 @@ void ProsperismoHost::FileExists(
   }
 }
 
+void ProsperismoHost::GetStartupRoute(
+    winrt::Microsoft::ReactNative::ReactPromise<std::string> &&promise) noexcept {
+  int argumentCount = 0;
+  auto arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+  if (!arguments) {
+    promise.Resolve("desktop");
+    return;
+  }
+  bool bigPicture = false;
+  for (int index = 1; index < argumentCount; ++index) {
+    if (_wcsicmp(arguments[index], L"--big-picture") == 0 ||
+        _wcsicmp(arguments[index], L"-bigpicture") == 0) {
+      bigPicture = true;
+      break;
+    }
+  }
+  LocalFree(arguments);
+  promise.Resolve(bigPicture ? "big-picture" : "desktop");
+}
+
 void ProsperismoHost::SetBigPictureMode(
     bool enabled,
     winrt::Microsoft::ReactNative::ReactPromise<void> &&promise) noexcept {

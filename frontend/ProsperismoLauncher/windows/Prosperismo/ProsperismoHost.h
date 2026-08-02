@@ -79,6 +79,10 @@ struct ProsperismoHost {
       std::string path,
       winrt::Microsoft::ReactNative::ReactPromise<bool> &&promise) noexcept;
 
+  REACT_METHOD(GetStartupRoute, L"getStartupRoute")
+  void GetStartupRoute(
+      winrt::Microsoft::ReactNative::ReactPromise<std::string> &&promise) noexcept;
+
   REACT_METHOD(SetBigPictureMode, L"setBigPictureMode")
   void SetBigPictureMode(
       bool enabled,

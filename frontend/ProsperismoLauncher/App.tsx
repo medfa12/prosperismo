@@ -56,6 +56,7 @@ import {BigPictureShell, type FirmwareShellIconPaths} from './src/bigPicture/Big
 import {findNativeBackgroundSequence} from './src/bigPicture/nativeBackground';
 import {
   hasNativeProsperismoHost,
+  getStartupRoute,
   prosperismoHost,
   setBigPictureMode,
 } from './src/native/ProsperismoHost';
@@ -370,6 +371,27 @@ export default function App() {
     finally { setBusy(false); }
   }, []);
   useEffect(() => { loadSettings(prosperismoHost).then(value => { setSettings(value); return refresh(value); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); }, [refresh]);
+  useEffect(() => {
+    let mounted = true;
+    getStartupRoute()
+      .then(startupRoute => {
+        if (mounted && startupRoute === 'big-picture') {
+          return setBigPictureMode(true).then(() => {
+            if (mounted) {
+              setRoute('big-picture');
+            }
+          });
+        }
+      })
+      .catch(reason => {
+        if (mounted) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
   useEffect(() => subscribeToProcessLifecycle(prosperismoHost, event => setSession(current => applyProcessEvent(current, event))), []);
   useEffect(() => {
     let mounted = true;

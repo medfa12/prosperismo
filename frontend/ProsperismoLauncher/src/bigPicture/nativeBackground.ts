@@ -29,6 +29,21 @@ function recoveredCadence(frames: readonly {atMs: number}[]): number {
 }
 
 /**
+ * The recovered cache advances in ordinal order and wraps to its first frame.
+ * It never reverses the firmware-authored motion at the end of a capture.
+ */
+export function nativeFrameIndexAtElapsed(
+  elapsedMs: number,
+  frameCount: number,
+  frameMs: number,
+): number {
+  if (frameCount <= 1 || frameMs <= 0 || elapsedMs <= 0) {
+    return 0;
+  }
+  return Math.floor(elapsedMs / frameMs) % frameCount;
+}
+
+/**
  * Finds the first complete renderer-output sequence. Directory discovery keeps
  * the RN bridge compatible with longer shell-shot captures without baking a
  * fixed frame count or proprietary files into the application.

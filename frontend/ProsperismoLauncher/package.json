@@ -45,5 +45,17 @@
       "namespace": "Prosperismo",
       "template": "cpp-app"
     }
+  },
+  "codegenConfig": {
+    "name": "ProsperismoShell",
+    "type": "all",
+    "jsSrcsDir": "src/bigPicture",
+    "windows": {
+      "namespace": "ProsperismoShellSpecs",
+      "outputDirectory": "windows/Prosperismo/codegen",
+      "generators": [
+        "componentsWindows"
+      ]
+    }
   }
 }

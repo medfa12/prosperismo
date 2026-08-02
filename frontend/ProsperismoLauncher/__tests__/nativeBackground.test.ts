@@ -1,4 +1,19 @@
-import {findNativeBackgroundSequence} from '../src/bigPicture/nativeBackground';
+import {findNativeBackgroundSequence, nativeFrameIndexAtElapsed} from '../src/bigPicture/nativeBackground';
+
+describe('native shell background playback', () => {
+  it('advances forward and wraps without reversing recovered motion', () => {
+    expect(nativeFrameIndexAtElapsed(0, 51, 100)).toBe(0);
+    expect(nativeFrameIndexAtElapsed(100, 51, 100)).toBe(1);
+    expect(nativeFrameIndexAtElapsed(5000, 51, 100)).toBe(50);
+    expect(nativeFrameIndexAtElapsed(5100, 51, 100)).toBe(0);
+    expect(nativeFrameIndexAtElapsed(5200, 51, 100)).toBe(1);
+  });
+
+  it('keeps incomplete or invalid sequences on their first frame', () => {
+    expect(nativeFrameIndexAtElapsed(1000, 1, 100)).toBe(0);
+    expect(nativeFrameIndexAtElapsed(1000, 51, 0)).toBe(0);
+  });
+});
 
 describe('native shell background sequence discovery', () => {
   it('sorts recovered frames and derives their authored cadence', async () => {

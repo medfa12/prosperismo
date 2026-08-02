@@ -18,6 +18,7 @@ interface NativeProsperismoHost {
   saveLauncherSettings(json: string): Promise<void>;
   findEmulator(): Promise<string>;
   fileExists(path: string): Promise<boolean>;
+  getStartupRoute(): Promise<'desktop' | 'big-picture'>;
   setBigPictureMode(enabled: boolean): Promise<void>;
   openPath(path: string): Promise<void>;
   removeDirectories(paths: string[], titleId: string, confirmed: boolean): Promise<string[]>;
@@ -69,3 +70,6 @@ export const hasNativeProsperismoHost = Boolean(native);
 
 export const setBigPictureMode = (enabled: boolean): Promise<void> =>
   native?.setBigPictureMode(enabled) ?? Promise.resolve();
+
+export const getStartupRoute = (): Promise<'desktop' | 'big-picture'> =>
+  native?.getStartupRoute() ?? Promise.resolve('desktop');

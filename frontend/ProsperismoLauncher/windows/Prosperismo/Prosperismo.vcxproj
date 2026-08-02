@@ -116,6 +116,8 @@
     <ClInclude Include="Prosperismo.h" />
     <ClInclude Include="ProsperismoHost.h" />
     <ClInclude Include="ProsperismoHostSupport.h" />
+    <ClInclude Include="NativeBackgroundFrameProtocol.h" />
+    <ClInclude Include="ProsperismoNativeBackground.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="AutolinkedNativeModules.g.h" />
     <ClInclude Include="pch.h" />
@@ -127,6 +129,7 @@
     <ClCompile Include="ProsperismoHostSupport.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ProsperismoNativeBackground.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

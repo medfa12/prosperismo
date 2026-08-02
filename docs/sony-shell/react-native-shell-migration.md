@@ -16,6 +16,9 @@ Prosperismo has two deliberate routes in one React Native Windows application:
   upward from Home.
 
 The routes share host services and settings; neither keeps a second database.
+The Windows executable accepts `--big-picture` (or `-bigpicture`) to enter the
+controller shell directly, matching the launch-mode boundary used by desktop
+clients such as Steam.
 
 ## Oracle boundary
 
@@ -57,14 +60,24 @@ It currently provides:
   The preferred oracle sequence is `rnw-native-bottom-shared-51-v2`: 51 unique
   1920x1080 frames at 10fps, produced by the persistent original-shader player
   for raw Bottom state 1 using the setter-proven shared `spread_expanded`
-  particle body. It runs 0→5s→0 as a ping-pong replay beneath title artwork.
+  particle body. It runs 0→5s and wraps forward to frame zero; reversing the
+  recovered motion was an invented presentation and has been removed.
   The six-frame `shell-shot-small-persistent` sequence and the later
   `shell-shot-bottom-shared-native-5` proof remain fallbacks; two of the latter
   proof's three samples are byte-identical.
   The frames are not copied into source control or the application package;
   absence is a clean fallback, not an error. When the sequence is present the
   generic brand-art fallback is suppressed, so it cannot obscure the native
-  particles; selected-title `pic0` artwork still crossfades above them;
+  particles; selected-title `pic0` artwork still crossfades above them. The
+  background owner remains mounted across Home, Library, and Prosperismo
+  Settings, matching the firmware evidence that Settings retains HomeScreen
+  preset 4 rather than selecting a Settings-only palette or static fallback;
+- a code-generated React Native Windows Fabric/Composition surface and a
+  versioned two-slot BGRA shared-memory protocol are prepared for the live
+  renderer helper. The surface is deliberately not mounted in the product tree
+  until that producer is connected and its lifecycle handshake passes. The
+  currently visible animation is the recovered 51-frame renderer sequence
+  above, not a claim of continuous shader execution;
 - a local-only firmware-icon bridge for the exact `emoji_settings`,
   `emoji_game_and_apps`, and `emoji_system` PNG payloads extracted from the
   user's `Sce.PlayStation.PUI_UI3.rco`. The files remain under

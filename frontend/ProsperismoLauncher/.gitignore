@@ -8,5 +8,6 @@ yarn-error.log
 *.jsbundle
 windows/**/Bundle/
 windows/**/BundleAssets/
+windows/**/codegen/
 .metro-health-check*
 /coverage/
