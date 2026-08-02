@@ -133,7 +133,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="FirstWaveBackground.cpp" />
-    <ClCompile Include="NativeWavePlate.cpp" />
+    <ClCompile Include="NativeWavePlate.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="ProsperismoNativeBackground.cpp" />
     <ClCompile Include="ShellTypography.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
