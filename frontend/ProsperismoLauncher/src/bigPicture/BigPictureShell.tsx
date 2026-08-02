@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useReducer, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {
   Animated,
   Easing,
@@ -225,12 +225,21 @@ function SettingsSurface({selectedIndex, onSelect}: {selectedIndex: number; onSe
 function OptionsModal({game, onClose, onPlay}: {game: GameInstall; onClose(): void; onPlay(): void}) {
   const phase = useRef(new Animated.Value(0)).current;
   useEffect(() => { const animation = Animated.sequence([Animated.delay(50), Animated.timing(phase, {toValue: 1, duration: 250, easing: easeOutBreeze, useNativeDriver: true})]); animation.start(); return () => animation.stop(); }, [phase]);
-  return <View style={shellStyles.modalLayer}><Pressable accessibilityLabel="Close options" onPress={onClose} style={shellStyles.modalScrim} /><Animated.View style={[shellStyles.optionsPanel, {opacity: phase, transform: [{translateY: phase.interpolate({inputRange: [0, 1], outputRange: [24, 0]})}]}]}><Text style={shellStyles.optionsTitle}>{game.titleName}</Text><Pressable onPress={onPlay} style={shellStyles.optionRow}><Text style={shellStyles.optionText}>Play</Text></Pressable><Pressable onPress={onClose} style={shellStyles.optionRow}><Text style={shellStyles.optionText}>Cancel</Text></Pressable></Animated.View></View>;
+  return <View style={shellStyles.modalLayer}><Pressable accessibilityLabel="Close options" onPress={onClose} style={shellStyles.optionsDismissArea} /><Animated.View style={[shellStyles.optionsPanel, {opacity: phase}]}><Text style={shellStyles.optionsTitle}>{game.titleName}</Text><Pressable onPress={onPlay} style={shellStyles.optionRow}><Text style={shellStyles.optionText}>Play</Text></Pressable><Pressable onPress={onClose} style={shellStyles.optionRow}><Text style={shellStyles.optionText}>Cancel</Text></Pressable></Animated.View></View>;
 }
 
-function ShellToast({message}: {message: string}) {
-  const phase = useFocusPhase(true);
-  return <Animated.View pointerEvents="none" style={[shellStyles.toast, {opacity: phase, transform: [{translateY: phase.interpolate({inputRange: [0, 1], outputRange: [20, 0]})}]}]}><Text style={shellStyles.toastText}>{message}</Text></Animated.View>;
+function ShellToast({message, onClose}: {message: string; onClose(): void}) {
+  const phase = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.sequence([
+      Animated.timing(phase, {toValue: 1, duration: 300, easing: Easing.linear, useNativeDriver: true}),
+      Animated.delay(3500),
+      Animated.timing(phase, {toValue: 0, duration: 200, easing: Easing.linear, useNativeDriver: true}),
+    ]);
+    animation.start(({finished}) => { if (finished) { onClose(); } });
+    return () => animation.stop();
+  }, [onClose, phase]);
+  return <Animated.View pointerEvents="none" style={[shellStyles.toast, {opacity: phase}]}><View style={shellStyles.toastIcon}><View style={shellStyles.toastIconMark} /></View><Text numberOfLines={2} style={shellStyles.toastText}>{message}</Text></Animated.View>;
 }
 
 export interface BigPictureShellProps {
@@ -245,12 +254,12 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
   const [toast, setToast] = useState<string>();
+  const dismissToast = useCallback(() => setToast(undefined), []);
   const {width, height} = useWindowDimensions();
   const scale = Math.min(width / SHELL_METRICS.canvas.width, height / SHELL_METRICS.canvas.height);
   const selected = selectedShellGame(games, state);
   const shellGames = useMemo(() => games.slice(0, SHELL_METRICS.strand.maxItems), [games]);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
-  useEffect(() => { if (!toast) { return undefined; } const timer = setTimeout(() => setToast(undefined), 2400); return () => clearTimeout(timer); }, [toast]);
   const focus = (region: ShellFocusRegion) => dispatch({type: 'focus', region});
   const launch = (game: GameInstall) => { setOptionsGame(undefined); setToast(`Launching ${game.titleName}`); onLaunch(game); };
   const handleKeyDown = (event: any) => {
@@ -272,7 +281,7 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
     {state.surface === 'settings' && <SettingsSurface onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
     {state.surface === 'home' && selected && <Text style={shellStyles.keyGuide}>Enter Select   ·   Hold for Options</Text>}
     {optionsGame && <OptionsModal game={optionsGame} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
-    {toast && <ShellToast message={toast} />}
+    {toast && <ShellToast message={toast} onClose={dismissToast} />}
   </View></View>;
 }
 
@@ -299,7 +308,7 @@ const shellStyles = StyleSheet.create({
   backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},
   libraryGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 32, paddingBottom: 90}, libraryTile: {width: 370, marginBottom: 20}, libraryArt: {height: 220, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', resizeMode: 'cover'}, libraryMonogram: {color: '#fff', fontSize: 76, fontWeight: '700'}, libraryTitle: {color: '#fff', fontSize: 20, marginTop: 12},
   settingsSurface: {width: 1200}, settingsList: {paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', overflow: 'hidden'}, settingsFocus: {position: 'absolute', inset: 0, borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)', backgroundColor: 'rgba(255,255,255,0.86)', borderRadius: 16}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsTextFocused: {color: '#333'}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsDetailFocused: {color: 'rgba(51,51,51,0.72)'}, settingsChevron: {color: '#fff', fontSize: 34},
-  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center'}, modalScrim: {position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)'}, optionsPanel: {width: 652, borderRadius: 16, overflow: 'hidden', backgroundColor: '#f5f5f5', paddingTop: 28}, optionsTitle: {paddingHorizontal: 32, paddingBottom: 18, color: '#1d1d1f', fontSize: 28, fontWeight: '600'}, optionRow: {height: 72, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(0,0,0,0.08)'}, optionText: {color: '#1d1d1f', fontSize: 23}, toast: {position: 'absolute', left: 610, bottom: 72, minWidth: 700, paddingHorizontal: 28, height: 72, borderRadius: 16, justifyContent: 'center', backgroundColor: 'rgba(24,24,28,0.94)'}, toastText: {color: '#fff', fontSize: 21},
+  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'hidden', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
 });
 
 const SYSTEM_GEAR_TOOTH_STYLES = [

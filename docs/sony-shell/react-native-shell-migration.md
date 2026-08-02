@@ -46,7 +46,9 @@ It currently provides:
 - a 56px circular system-icon focus surface with delayed glyph inversion;
 - selected-title `pic0` composition with the firmware default 1000ms
   cross-fade, while Settings returns to the shell plate;
-- Prosperismo-owned settings categories, options dialog, and transient toast;
+- Prosperismo-owned settings categories, an undimmed dark options popup using
+  the recovered 652px/16px/190px control-menu geometry, and a transient
+  in-app toast with the recovered 40px-icon and 300ms/3500ms/200ms lifecycle;
 - keyboard/controller capture that keeps Home navigation inside Big Picture.
 
 The React Native layer deliberately does **not** claim to execute proprietary
