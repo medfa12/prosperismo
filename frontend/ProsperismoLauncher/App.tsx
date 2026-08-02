@@ -377,7 +377,7 @@ export default function App() {
     const pending = beginSession(game, Boolean(prosperismoHost.subscribeProcessEvents));
     setSession(pending); setError(undefined);
     try { await launchGame(prosperismoHost, game, settings); setSession(current => launchedSession(current)); }
-    catch (reason) { setSession(current => failedSession(current, reason)); setError(reason instanceof Error ? reason.message : String(reason)); setRoute('desktop'); }
+    catch (reason) { setSession(current => failedSession(current, reason)); setError(reason instanceof Error ? reason.message : String(reason)); }
   }, [settings]);
   const refreshCompatibility = useCallback(async () => {
     setError(undefined);
@@ -397,6 +397,8 @@ export default function App() {
          settings={settings}
          onSaveSettings={next => { void persist(next); }}
          onDesktop={() => setRoute('desktop')}
+         errorMessage={error}
+         onDismissError={() => setError(undefined)}
         onLaunch={game => {
           if (session.phase !== 'launching' && session.phase !== 'running') {
             void run(game);

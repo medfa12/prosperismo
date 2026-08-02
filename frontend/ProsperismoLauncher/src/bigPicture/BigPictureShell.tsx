@@ -360,6 +360,27 @@ function ShellToast({message, onClose}: {message: string; onClose(): void}) {
   return <Animated.View pointerEvents="none" style={[shellStyles.toast, {opacity: phase}]}><View style={shellStyles.toastIcon}><View style={shellStyles.toastIconMark} /></View><Text numberOfLines={2} style={shellStyles.toastText}>{message}</Text></Animated.View>;
 }
 
+/**
+ * The action-card host uses a 764 x 440 dialog with a 676px body, 44px side
+ * margins, a 40px message icon, and 388px text buttons. Keep the emulator
+ * error inside the controller shell rather than falling back to Desktop.
+ */
+function ShellDialog({title, message, onDismiss, onRef}: {title: string; message: string; onDismiss(): void; onRef(node: any): void}) {
+  const phase = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.timing(phase, {toValue: 1, duration: 300, easing: easeOutBreeze, useNativeDriver: true});
+    animation.start();
+    return () => animation.stop();
+  }, [phase]);
+  return <View style={shellStyles.dialogLayer}>
+    <View style={shellStyles.dialogScrim} />
+    <Animated.View style={[shellStyles.dialogPanel, {opacity: phase}]}>
+      <View style={shellStyles.dialogBody}><View style={shellStyles.dialogMessageIcon}><View style={shellStyles.dialogMessageMark} /></View><Text style={shellStyles.dialogTitle}>{title}</Text><Text style={shellStyles.dialogMessage}>{message}</Text></View>
+      <Pressable ref={onRef} accessibilityLabel="OK" accessibilityRole="button" onPress={onDismiss} style={shellStyles.dialogButton}><FocusLine active /><Text style={shellStyles.dialogButtonText}>OK</Text></Pressable>
+    </Animated.View>
+  </View>;
+}
+
 export interface BigPictureShellProps {
   games: readonly GameInstall[];
   artwork: ImageSourcePropType;
@@ -369,9 +390,11 @@ export interface BigPictureShellProps {
   onSaveSettings(next: LauncherSettings): void;
   onDesktop(): void;
   onLaunch(game: GameInstall): void;
+  errorMessage?: string;
+  onDismissError(): void;
 }
 
-export function BigPictureShell({games, artwork, settings, nativeBackgroundFrames = [], onSaveSettings, onDesktop, onLaunch}: BigPictureShellProps) {
+export function BigPictureShell({games, artwork, settings, nativeBackgroundFrames = [], onSaveSettings, onDesktop, onLaunch, errorMessage, onDismissError}: BigPictureShellProps) {
   const [state, dispatch] = useReducer(reduceShellState, INITIAL_SHELL_STATE);
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
@@ -384,6 +407,7 @@ export function BigPictureShell({games, artwork, settings, nativeBackgroundFrame
   const systemRefs = useRef<any[]>([]);
   const settingsRefs = useRef<any[]>([]);
   const optionRefs = useRef<any[]>([]);
+  const dialogRef = useRef<any>(undefined);
   const {width, height} = useWindowDimensions();
   const scale = Math.min(width / SHELL_METRICS.canvas.width, height / SHELL_METRICS.canvas.height);
   const selected = selectedShellGame(games, state);
@@ -402,8 +426,18 @@ export function BigPictureShell({games, artwork, settings, nativeBackgroundFrame
       focusNative(optionRefs.current[0]);
     }
   }, [optionsGame]);
+  useEffect(() => {
+    if (errorMessage) {
+      focusNative(dialogRef.current);
+    }
+  }, [errorMessage]);
   const handleKeyDown = (event: any) => {
     const key = event?.nativeEvent?.key;
+    if (errorMessage) {
+      if (key === 'Escape' || key === 'GamepadB') { onDismissError(); }
+      event.stopPropagation?.();
+      return;
+    }
     if (optionsGame && (key === 'ArrowUp' || key === 'GamepadDPadUp' || key === 'ArrowDown' || key === 'GamepadDPadDown')) {
       focusNative(optionRefs.current[Math.max(0, Math.min(1, optionIndex + ((key === 'ArrowUp' || key === 'GamepadDPadUp') ? -1 : 1)))]);
       event.stopPropagation?.();
@@ -429,6 +463,7 @@ export function BigPictureShell({games, artwork, settings, nativeBackgroundFrame
     {state.surface === 'settings' && settingsDetail !== undefined && <SettingsDetailSurface categoryIndex={settingsDetail} onBack={() => setSettingsDetail(undefined)} onSave={onSaveSettings} settings={settings} />}
     {state.surface === 'home' && selected && <Text style={shellStyles.keyGuide}>Enter Select   ·   Hold for Options</Text>}
     {optionsGame && <OptionsModal game={optionsGame} onRef={(index, node) => { optionRefs.current[index] = node; }} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
+    {errorMessage && <ShellDialog title="Unable to start game" message={errorMessage} onDismiss={onDismissError} onRef={node => { dialogRef.current = node; }} />}
     {toast && <ShellToast message={toast} onClose={dismissToast} />}
   </View></View>;
 }
@@ -458,7 +493,7 @@ const shellStyles = StyleSheet.create({
   genericFocusFrame: {position: 'absolute', left: 0, top: 3, right: 0, bottom: 5, zIndex: 1}, genericFocusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.92)'},
   settingsSurface: {width: 1200}, settingsList: {padding: SHELL_METRICS.focusLineOffset, paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 6}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsChevron: {color: '#fff', fontSize: 34},
   detailBack: {alignSelf: 'flex-start', paddingVertical: 12, paddingRight: 24, marginBottom: 12}, detailIntro: {maxWidth: 720, color: 'rgba(255,255,255,0.7)', fontSize: 20, marginTop: -18, marginBottom: 38}, detailRows: {padding: SHELL_METRICS.focusLineOffset}, detailRow: {width: 1040, minHeight: 86, borderRadius: 16, paddingHorizontal: 24, marginBottom: 10, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', fontSize: 24}, detailValue: {maxWidth: 440, color: 'rgba(255,255,255,0.72)', fontSize: 20, textAlign: 'right'},
-  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
+  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, dialogLayer: {position: 'absolute', inset: 0, zIndex: 30, alignItems: 'center', justifyContent: 'center'}, dialogScrim: {position: 'absolute', inset: 0, backgroundColor: SHELL_METRICS.colors.modalScrim}, dialogPanel: {width: 764, height: 440, borderRadius: 16, backgroundColor: '#080A0F', overflow: 'hidden', justifyContent: 'space-between', alignItems: 'center', paddingTop: 58, paddingBottom: 40}, dialogBody: {width: 676, alignItems: 'center'}, dialogMessageIcon: {width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', marginBottom: 20}, dialogMessageMark: {width: 3, height: 15, borderRadius: 2, backgroundColor: '#fff'}, dialogTitle: {color: '#fff', fontSize: 30, fontWeight: '600', textAlign: 'center', marginBottom: 20}, dialogMessage: {color: 'rgba(255,255,255,0.7)', fontSize: 20, lineHeight: 28, textAlign: 'center'}, dialogButton: {width: 388, height: 72, borderRadius: 16, alignItems: 'center', justifyContent: 'center'}, dialogButtonText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
 });
 
 const SYSTEM_GEAR_TOOTH_STYLES = [
