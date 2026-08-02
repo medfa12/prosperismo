@@ -11,6 +11,11 @@ console Settings content is deliberately not copied.
 |---|---|---|
 | `Controls/ShellLibraryGrid.cs` | `src/bigPicture/shellSurfaces.ts` | Exact 5x3 grid geometry, padding, scroll, focus movement, sort order, tile/empty metrics |
 | `Controls/ShellAllGames.cs` | `src/bigPicture/ShellLibrarySurface.tsx` | Installed-game grid, cover/fallback, focus-only metadata, sort panel, empty action, keyboard/gamepad navigation |
+| `Controls/ShellEntrance.cs`, `ShellStartupChoreography.cs` | `src/bigPicture/shellHomeMotion.ts` | Source-clock startup staging and original spring arrival ordering |
+| `Controls/ShellFocusBand.cs`, `ShellFocusRing.cs`, `ShellFocusTrap.cs`, `ShellFocusWash.cs` | `src/bigPicture/shellHomeMotion.ts`, `shellFocusShader.ts`, `ShellFocusOverlay.tsx` | One-owner UI3 timeline, exterior SDF band geometry, radius inheritance, wash and shimmer; shared by Home and every mounted route |
+| `Controls/ShellGlance.cs`, `ShellNavBand.cs` | `src/bigPicture/shellHomeMotion.ts`, `RecoveredHomeShell.tsx` | 48→56 spring glance, label rule, focus fill and progressive white-to-`#292929` icon inversion |
+| `Controls/ShellTileRow.cs`, `ShellTileSpec.cs`, `ShellTitleMetrics.cs` | `src/bigPicture/RecoveredHomeShell.tsx`, `shellHomeMotion.ts`, `shellRecoveredCatalogue.ts` | 106/168 installed-title strand, terminal Library node, title positioning and the closed HOME tile catalogue |
+| `Controls/ShellFontSize.cs`, `ShellSearchMetrics.cs`, `ShellProfileMetrics.cs` | `src/bigPicture/shellTypography.ts`, `shellRecoveredCatalogue.ts`, `ShellUtilitySurfaces.tsx` | UI3 type tokens, search frame/controller layout, and locally-owned profile furniture |
 | `Controls/ShellSettingsMetrics.cs` | `src/bigPicture/shellSurfaces.ts` | Exact NPXS40008 list, tabs, panel and furniture metrics |
 | `Controls/ShellSettingsCategoryList.cs` | `src/bigPicture/ProsperismoSettingsSurface.tsx` | 102-unit category pitch and 304/186/1312/894 list frame with Prosperismo categories |
 | `Controls/ShellSettingsDetailList.cs` | `src/bigPicture/ProsperismoSettingsSurface.tsx` | Vertical tab column and emulator-owned detail panel; left/right changes focus ownership |
