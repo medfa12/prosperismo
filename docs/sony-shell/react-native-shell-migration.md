@@ -49,8 +49,11 @@ It currently provides:
 - selected-title `pic0` composition with the recovered 633.333ms Normal HOME
   transition timing, while Settings returns to the shell plate;
 - a local-only native-frame bridge: when the user's oracle contains the
-  accepted `shell-shot-bottom-shared-native-5` sequence, Big Picture plays its
-  1920x1080 recovered frames in a ping-pong sequence beneath title artwork.
+  recovered `shell-shot-small-persistent` sequence, Big Picture plays its six
+  1920x1080 samples at their authored 100ms cadence in a ping-pong sequence
+  beneath title artwork. The later `shell-shot-bottom-shared-native-5` proof is
+  retained as a fallback, but two of its three samples are byte-identical and
+  it is therefore not preferred for visible motion.
   The frames are not copied into source control or the application package;
   absence is a clean fallback, not an error. When the sequence is present the
   generic brand-art fallback is suppressed, so it cannot obscure the native
@@ -64,6 +67,9 @@ It currently provides:
   the recovered 652px/16px/190px control-menu geometry, and a transient
   in-app toast with the recovered 40px-icon and 300ms/3500ms/200ms lifecycle;
 - keyboard/controller capture that keeps Home navigation inside Big Picture.
+- a native Big Picture presenter transition marshalled through React Native's
+  UI dispatcher; changing the AppWindow presenter on the module thread can
+  detach the Win32 React island and leave a responsive white client area.
 
 The React Native layer deliberately does **not** claim to execute proprietary
 PUI focus shaders, native particle programs, or a guest shell application. It

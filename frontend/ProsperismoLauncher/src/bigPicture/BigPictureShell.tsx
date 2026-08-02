@@ -209,7 +209,8 @@ function fileImageSource(path: string | undefined): ImageSourcePropType | undefi
  * package. A real native-frame host can replace this adapter without changing
  * the shell layering contract.
  */
-function NativeFrameBackground({framePaths, visible}: {
+function NativeFrameBackground({frameMs, framePaths, visible}: {
+  frameMs: number;
   framePaths: readonly string[];
   visible: boolean;
 }) {
@@ -225,9 +226,9 @@ function NativeFrameBackground({framePaths, visible}: {
     const timer = setInterval(() => {
       sequenceIndex = (sequenceIndex + 1) % sequence.length;
       setFrameIndex(sequence[sequenceIndex]);
-    }, 500);
+    }, frameMs);
     return () => clearInterval(timer);
-  }, [frames.length, visible]);
+  }, [frameMs, frames.length, visible]);
   if (!visible || frames.length === 0) {
     return null;
   }
@@ -433,6 +434,7 @@ export interface BigPictureShellProps {
   firmwareShellIcons?: FirmwareShellIconPaths;
   settings: LauncherSettings;
   /** Local, user-owned oracle outputs; not bundled application assets. */
+  nativeBackgroundFrameMs?: number;
   nativeBackgroundFrames?: readonly string[];
   onSaveSettings(next: LauncherSettings): void;
   onDesktop(): void;
@@ -441,7 +443,7 @@ export interface BigPictureShellProps {
   onDismissError(): void;
 }
 
-export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settings, nativeBackgroundFrames = [], onSaveSettings, onDesktop, onLaunch, errorMessage, onDismissError}: BigPictureShellProps) {
+export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settings, nativeBackgroundFrameMs = 100, nativeBackgroundFrames = [], onSaveSettings, onDesktop, onLaunch, errorMessage, onDismissError}: BigPictureShellProps) {
   const [state, dispatch] = useReducer(reduceShellState, INITIAL_SHELL_STATE);
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
@@ -501,7 +503,7 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
-    <NativeFrameBackground framePaths={nativeBackgroundFrames} visible={state.surface === 'home'} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} suppressFallback={nativeBackgroundFrames.length > 0 && state.surface === 'home'} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
+    <NativeFrameBackground frameMs={nativeBackgroundFrameMs} framePaths={nativeBackgroundFrames} visible={state.surface === 'home'} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} suppressFallback={nativeBackgroundFrames.length > 0 && state.surface === 'home'} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
     {state.surface !== 'settings' && <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} sourcePath={action.glyph === 'settings' ? firmwareShellIcons.settings : action.glyph === 'profile' ? firmwareShellIcons.desktop : undefined} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>}
     {state.surface !== 'home' && state.surface !== 'settings' && settingsDetail === undefined && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
     {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}

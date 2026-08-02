@@ -171,21 +171,34 @@ void ProsperismoHost::FileExists(
 void ProsperismoHost::SetBigPictureMode(
     bool enabled,
     winrt::Microsoft::ReactNative::ReactPromise<void> &&promise) noexcept {
-  try {
-    auto window = FindProsperismoWindow();
-    if (!window) {
-      throw std::runtime_error("Prosperismo could not find its application window.");
-    }
-    auto windowId = winrt::Microsoft::UI::GetWindowIdFromWindow(window);
-    auto appWindow = winrt::Microsoft::UI::Windowing::AppWindow::GetFromWindowId(windowId);
-    appWindow.SetPresenter(
-        enabled
-            ? winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::FullScreen
-            : winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::Default);
-    promise.Resolve();
-  } catch (...) {
-    RejectCurrentException(promise);
+  auto modePromise = promise;
+  auto uiDispatcher = m_context.UIDispatcher();
+  if (!uiDispatcher) {
+    modePromise.Reject("Prosperismo could not access the application UI dispatcher.");
+    return;
   }
+
+  // AppWindow presenters own the Win32 island that hosts React Native. Changing
+  // presenters from the native-module thread can leave that island detached
+  // (a responsive, but completely white, client area). Marshal the transition
+  // to the same UI dispatcher that owns the React view.
+  uiDispatcher.Post([enabled, modePromise]() noexcept {
+    try {
+      auto window = FindProsperismoWindow();
+      if (!window) {
+        throw std::runtime_error("Prosperismo could not find its application window.");
+      }
+      auto windowId = winrt::Microsoft::UI::GetWindowIdFromWindow(window);
+      auto appWindow = winrt::Microsoft::UI::Windowing::AppWindow::GetFromWindowId(windowId);
+      appWindow.SetPresenter(
+          enabled
+              ? winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::FullScreen
+              : winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::Default);
+      modePromise.Resolve();
+    } catch (...) {
+      RejectCurrentException(modePromise);
+    }
+  });
 }
 
 void ProsperismoHost::OpenPath(
