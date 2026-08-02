@@ -1,8 +1,8 @@
 # Prosperismo frontend architecture
 
-The frontend is React Native Windows with TypeScript. It intentionally replaces
-Kyty's Qt deployment while leaving the native C++ emulator, Vulkan renderer,
-SDL input/audio and FFmpeg media path independent.
+The target frontend is React Native Windows with TypeScript. It will replace
+the Qt deployment only after behavioral parity, while leaving the native C++
+emulator, Vulkan renderer, SDL input/audio and FFmpeg media path independent.
 
 ## Routes
 

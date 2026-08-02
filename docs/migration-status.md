@@ -3,12 +3,18 @@
 Verified on 2026-08-02 against the imported native baseline at
 `fb5ecec455cf6c67154134429485ffccbfc34203`.
 
+> Status: incomplete. The Qt launcher remains the only runnable desktop
+> launcher and therefore remains the behavioral oracle. It must not be removed
+> until the React Native launcher reaches feature parity and ships with its
+> native Windows host module.
+
 ## Product boundary
 
 - The native emulator remains C++20, Vulkan, SDL2 and FFmpeg. Its installed
   executable is `prosperismo_emulator`.
-- The Windows frontend is React Native Windows 0.84 with TypeScript. Desktop
-  mode owns launcher operations; Big Picture mode owns the console-style UI.
+- The target Windows frontend is React Native Windows 0.84 with TypeScript.
+  Desktop mode will own launcher operations; Big Picture mode will own the
+  console-style UI. The current executable frontend is still Qt.
 - Product-facing window, package, logger, configuration, profiler and release
   names are Prosperismo. KytyPS5 and SharpEmu remain only in attribution,
   source-provenance notes and live upstream URLs.
@@ -43,6 +49,29 @@ the proposed donor replacements were not more complete than the current code.
 - Native RNW packaging is externally blocked: RNW 0.84 generates a v145 project
   and its CLI requires Visual Studio 18.6+, while this host has VS Build Tools
   2022 17.14/v143. Downgrading to an unsupported RNW line was rejected.
+
+## React Native parity still required
+
+The current TypeScript implementation has recursive `eboot.bin` discovery,
+`param.json` metadata, settings serialization, exact launch-argument ordering,
+patch-plan discovery and basic Desktop/Big Picture routes. It is not a complete
+Qt conversion. Remaining required behavior includes:
+
+- implement and register the `ProsperismoHost` Windows module for filesystem,
+  folder selection, settings persistence, executable discovery and supervised
+  process launch;
+- port compatibility database status/comments and refresh behavior;
+- port the complete global and per-game settings editor and custom-settings
+  clear operation;
+- port search/sort, PIC0 preview, open-game-folder and running-state behavior;
+- port patch enable/disable persistence, trophy viewing and confirmed save-data
+  removal;
+- replace the current Big Picture scaffold with the recovered Sony-like shell
+  contracts, then connect both routes to the same library/session state;
+- build, package and run the RNW executable before disabling the Qt launcher.
+
+The migration is complete only when those checkpoints pass and the Qt launcher
+can be deleted without losing behavior.
 
 ## Native verification and known baseline failures
 

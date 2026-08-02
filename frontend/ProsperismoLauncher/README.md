@@ -1,12 +1,14 @@
 # Prosperismo frontend
 
-Windows-only React Native shell for Prosperismo. It replaces the legacy Qt
-launcher while keeping two deliberately separate routes:
+Windows-only React Native migration target for Prosperismo. It will replace the
+Qt launcher after feature parity and native Windows integration are complete,
+while keeping two deliberately separate routes:
 
-- **Desktop** directly owns the legacy launcher's practical responsibilities:
+- **Desktop** is being converted to own the Qt launcher's practical responsibilities:
   game roots, recursive `eboot.bin` discovery, `param.json` metadata, global and
   per-game settings, patch-plan lookup, and launching the emulator.
-- **Big Picture** is the recovered console-style Home/Settings shell boundary.
+- **Big Picture** is currently a scaffold for the recovered console-style
+  Home/Settings shell boundary.
   It is not the old SharpEmu desktop UI and it does not expose the Desktop
   settings surface as console Settings.
 
