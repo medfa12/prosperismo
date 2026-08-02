@@ -118,6 +118,7 @@
     <ClInclude Include="ProsperismoHostSupport.h" />
     <ClInclude Include="NativeBackgroundFrameProtocol.h" />
     <ClInclude Include="FirstWaveBackground.h" />
+    <ClInclude Include="NativeWavePlate.h" />
     <ClInclude Include="ProsperismoNativeBackground.h" />
     <ClInclude Include="ShellTypography.h" />
     <ClInclude Include="resource.h" />
@@ -132,6 +133,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="FirstWaveBackground.cpp" />
+    <ClCompile Include="NativeWavePlate.cpp" />
     <ClCompile Include="ProsperismoNativeBackground.cpp" />
     <ClCompile Include="ShellTypography.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />

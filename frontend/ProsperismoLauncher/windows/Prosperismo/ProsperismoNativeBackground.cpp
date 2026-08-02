@@ -1,7 +1,7 @@
 #include "pch.h"
 
 #include "NativeBackgroundFrameProtocol.h"
-#include "FirstWaveBackground.h"
+#include "NativeWavePlate.h"
 #include "ProsperismoNativeBackground.h"
 #include "codegen/react/components/ProsperismoShell/ProsperismoNativeBackground.g.h"
 
@@ -314,19 +314,16 @@ struct NativeBackgroundViewState
         return;
       }
 
+      // Plane2 advances its integer permutation phase once per rendered shell
+      // frame. Keep the recovered 60Hz source clock even though this native
+      // composition producer itself refreshes at 30Hz.
       auto const elapsed = std::chrono::duration<float>(
           std::chrono::steady_clock::now() - m_timeOrigin).count();
-      Prosperismo::FirstWave::Parameters firstWave{
-          1.0f,
-          1.0f,
-          1.0f,
-          elapsed,
-          Prosperismo::FirstWave::Firmware1240ResetPalette(),
-      };
+      auto const sourceFrame = static_cast<std::int64_t>(elapsed * 60.0f);
       auto const baseStride = m_width * 4u;
-      m_firstWavePixels.resize(static_cast<size_t>(baseStride) * m_height);
-      if (!Prosperismo::FirstWave::RenderBackgroundBgra8Premultiplied(
-              m_firstWavePixels.data(), m_width, m_height, baseStride, firstWave)) {
+      m_nativeWavePixels.resize(static_cast<size_t>(baseStride) * m_height);
+      if (!Prosperismo::NativeWave::RenderHomePlateBgra8Premultiplied(
+              m_nativeWavePixels.data(), m_width, m_height, baseStride, sourceFrame)) {
         return;
       }
 
@@ -336,13 +333,13 @@ struct NativeBackgroundViewState
           D2D1_ALPHA_MODE_PREMULTIPLIED};
       properties.dpiX = 96.0f;
       properties.dpiY = 96.0f;
-      winrt::com_ptr<ID2D1Bitmap1> firstWaveBitmap;
+      winrt::com_ptr<ID2D1Bitmap1> nativeWaveBitmap;
       winrt::check_hresult(target->CreateBitmap(
           {m_width, m_height},
-          m_firstWavePixels.data(),
+          m_nativeWavePixels.data(),
           baseStride,
           &properties,
-          firstWaveBitmap.put()));
+          nativeWaveBitmap.put()));
       target->Clear(D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 0.0f});
       D2D1_RECT_F destination{
           static_cast<float>(offset.x),
@@ -351,7 +348,7 @@ struct NativeBackgroundViewState
           static_cast<float>(offset.y + m_height)};
       target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
       target->DrawBitmap(
-          firstWaveBitmap.get(),
+          nativeWaveBitmap.get(),
           &destination,
           1.0f,
           D2D1_INTERPOLATION_MODE_LINEAR);
@@ -396,7 +393,7 @@ struct NativeBackgroundViewState
   std::atomic_bool m_stopped{false};
   std::atomic_bool m_particleOverlayEnabled{true};
   std::chrono::steady_clock::time_point m_timeOrigin{std::chrono::steady_clock::now()};
-  std::vector<uint8_t> m_firstWavePixels;
+  std::vector<uint8_t> m_nativeWavePixels;
   uint32_t m_width{};
   uint32_t m_height{};
 };

@@ -82,9 +82,13 @@ shared with the FirstWave mesh/OIT stages.
 ## Integration boundary
 
 `RenderBackgroundBgra8Premultiplied` renders directly into the same BGRA8
-premultiplied format used by the RNW drawing surface. It should own the
-persistent background visual on both Home and Settings. The separately
-recovered particle producer remains a Home-only additive layer above it.
+premultiplied format used by the RNW drawing surface. It is a validated
+FirstWave fallback/pass seam, not the primary SharpEmu shell plate. The
+recovered SharpEmu route instead uses the separately ported Plane2
+`wave_bg_p` evaluator; see
+[`native-wave-plate-port.md`](native-wave-plate-port.md). The separately
+recovered particle producer remains a Home-only additive layer above the
+primary plate.
 
 This module closes the plate math, not the entire FirstWave stack. The animated
 folded mesh still requires `fw_flow_vl/h/dv`, OIT composition, blur, and FXAA.

@@ -47,6 +47,12 @@ timeline as Home (show delay, travel driver, exterior distance-field line,
 area wash, and inherited radius). No Search, Library, Settings, context-menu,
 profile, or dialog route has an independent static white focus border.
 
+The persistent native background also follows the original shell ownership:
+the firmware-derived Plane2 / `wave_bg_p` evaluator is the primary animated
+plate, then title artwork and the recovered particle overlay compose above it.
+Its direct native port is documented in
+[`native-wave-plate-port.md`](native-wave-plate-port.md).
+
 ## Deliberately deferred
 
 - `GameSurfaceHost`, `VulkanHostSurface`, process-session popups and launch
