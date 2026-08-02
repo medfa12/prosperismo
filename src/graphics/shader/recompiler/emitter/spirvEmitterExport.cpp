@@ -225,6 +225,16 @@ static uint32_t EmitReplayLoad(EmitterState& state, uint32_t index) {
 	return value;
 }
 
+// Loads a replay-buffer dword at a runtime-computed index.
+static uint32_t EmitReplayLoadAt(EmitterState& state, uint32_t index_id) {
+	const auto pointer = state.builder.AllocateId();
+	const auto value   = state.builder.AllocateId();
+	state.builder.AddFunction({OpAccessChain, state.ptr_storage_buffer_uint, pointer,
+	                           state.geometry_replay_variable, ConstantU32(state, 0), index_id});
+	state.builder.AddFunction({OpLoad, state.uint_type, value, pointer});
+	return value;
+}
+
 // Dword index of this subgroup's replay block: header + workgroup * stride.
 static uint32_t EmitReplayBlockBase(EmitterState& state, const IR::GeometryReplayLayout& layout) {
 	const auto wg = EmitInputComponentU32(state, IR::StageInputKind::WorkgroupId, 0);
@@ -388,6 +398,64 @@ void EmitGeometryReplayInputRegisters(EmitterState& state) {
 		packed = EmitReplayBinaryU32(state, OpBitwiseOr, packed,
 		                             ConstantU32(state, wave_count << 28u));
 		state.builder.AddFunction({OpStore, s3_pointer, packed});
+	}
+}
+
+// Vertex-stage half of the geometry replay: each vertex of the flat
+// triangle-list draw resolves its replay-buffer slot from VertexIndex and
+// seeds v0..v3 with the position dwords and v4.. with the parameter dwords,
+// which the synthetic passthrough shader then exports normally. A sentinel
+// primitive word (0x80000000) decodes to vertex slot 0 for every corner and
+// therefore rasterizes as a zero-area triangle.
+void EmitGeometryReplayVertexFetch(EmitterState& state) {
+	if (state.stage != ShaderType::Vertex || !state.program.geometry_replay ||
+	    state.geometry_replay_variable == 0) {
+		return;
+	}
+	const auto layout = GeometryReplayLayoutFor(state);
+	const auto vid    = EmitInputScalarU32(state, IR::StageInputKind::VertexIndex);
+	const auto prim   = EmitReplayBinaryU32(state, OpUDiv, vid, ConstantU32(state, 3u));
+	const auto corner = EmitReplayBinaryU32(state, OpUMod, vid, ConstantU32(state, 3u));
+	const auto subgroup =
+	    EmitReplayBinaryU32(state, OpUDiv, prim, ConstantU32(state, layout.primitive_slots));
+	const auto slot =
+	    EmitReplayBinaryU32(state, OpUMod, prim, ConstantU32(state, layout.primitive_slots));
+	const auto scaled =
+	    EmitReplayBinaryU32(state, OpIMul, subgroup, ConstantU32(state, layout.BlockStride()));
+	const auto base = EmitReplayBinaryU32(
+	    state, OpIAdd, scaled, ConstantU32(state, IR::GeometryReplayLayout::HeaderDwords));
+
+	auto prim_index = EmitReplayBinaryU32(state, OpIAdd, base,
+	                                      ConstantU32(state, layout.PrimitiveOffset()));
+	prim_index      = EmitReplayBinaryU32(state, OpIAdd, prim_index, slot);
+	const auto word = EmitReplayLoadAt(state, prim_index);
+
+	// 10-bit vertex slot index for this corner; bit 31 marks a culled slot.
+	const auto shift = EmitReplayBinaryU32(state, OpIMul, corner, ConstantU32(state, 10u));
+	const auto shifted = EmitReplayBinaryU32(state, OpShiftRightLogical, word, shift);
+	const auto idx = EmitReplayBinaryU32(state, OpBitwiseAnd, shifted, ConstantU32(state, 0x3ffu));
+	const auto vertex_dwords = EmitReplayBinaryU32(state, OpIMul, idx, ConstantU32(state, 4u));
+
+	const auto seed_vec4 = [&](uint32_t block_offset, uint32_t first_vgpr) {
+		auto index = EmitReplayBinaryU32(state, OpIAdd, base, ConstantU32(state, block_offset));
+		index      = EmitReplayBinaryU32(state, OpIAdd, index, vertex_dwords);
+		for (uint32_t c = 0; c < 4u; c++) {
+			const auto pointer =
+			    PointerForRegister(state, {IR::RegisterFile::Vector, first_vgpr + c});
+			if (pointer == 0) {
+				continue;
+			}
+			const auto component_index =
+			    c == 0 ? index
+			           : EmitReplayBinaryU32(state, OpIAdd, index, ConstantU32(state, c));
+			state.builder.AddFunction(
+			    {OpStore, pointer, EmitReplayLoadAt(state, component_index)});
+		}
+	};
+
+	seed_vec4(layout.PositionOffset(), 0u);
+	for (uint32_t p = 0; p < layout.parameter_count; p++) {
+		seed_vec4(layout.ParameterOffset(p), 4u + p * 4u);
 	}
 }
 

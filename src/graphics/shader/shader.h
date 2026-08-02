@@ -86,6 +86,13 @@ struct ShaderVertexInputInfo {
 	uint32_t                param_export_mask = 0;
 	bool                    fetch_external    = false;
 	bool                    fetch_embedded    = false;
+	// When enabled, vertex registers are seeded from the geometry replay
+	// storage buffer instead of guest vertex buffers (see
+	// ShaderGeometryReplayInfo below); the fields mirror the compute half.
+	bool                    geometry_replay                 = false;
+	uint32_t                geometry_replay_vertex_slots    = 0;
+	uint32_t                geometry_replay_primitive_slots = 0;
+	uint32_t                geometry_replay_parameter_count = 0;
 };
 
 // Merged ES/GS geometry replay executed as a compute dispatch. Exports are

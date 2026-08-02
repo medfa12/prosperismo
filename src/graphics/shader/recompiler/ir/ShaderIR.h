@@ -817,6 +817,10 @@ struct Program {
 	bool                    geometry_replay         = false;
 	uint32_t                geometry_replay_vertex_slots    = 0;
 	uint32_t                geometry_replay_primitive_slots = 0;
+	// Nonzero forces the replay-buffer parameter count (vertex replay reads
+	// must match the layout the compute half produced); zero derives it from
+	// this program's own parameter exports.
+	uint32_t                geometry_replay_parameter_count = 0;
 };
 
 // Number of distinct parameter export targets used by a geometry-replay

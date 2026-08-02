@@ -171,6 +171,7 @@ enum : uint32_t {
 	OpIMul                         = 132,
 	OpFMul                         = 133,
 	OpUDiv                         = 134,
+	OpUMod                         = 137,
 	OpFDiv                         = 136,
 	OpIAddCarry                    = 149,
 	OpUMulExtended                 = 151,
@@ -796,6 +797,8 @@ uint32_t InputVariableForKind(const EmitterState& state, IR::StageInputKind kind
 uint32_t InputVariableForParameter(const EmitterState& state, uint32_t location);
 
 uint32_t EmitInputComponentU32(EmitterState& state, IR::StageInputKind kind, uint32_t component);
+
+uint32_t EmitInputScalarU32(EmitterState& state, IR::StageInputKind kind);
 
 uint32_t EmitLocalInvocationIndex(EmitterState& state);
 
@@ -1557,6 +1560,8 @@ void EmitComputeInputRegisters(EmitterState& state);
 bool GeometryReplayActive(const EmitterState& state);
 
 void EmitGeometryReplayInputRegisters(EmitterState& state);
+
+void EmitGeometryReplayVertexFetch(EmitterState& state);
 
 void EmitGeometryReplayExport(EmitterState& state, const IR::Instruction& inst);
 

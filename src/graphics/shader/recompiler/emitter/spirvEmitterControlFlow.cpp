@@ -1129,6 +1129,9 @@ void EmitFunction(EmitterState& state, const IR::Program& program) {
 	EmitGeometryReplayInputRegisters(state);
 	EmitPixelInputRegisters(state);
 	EmitVertexInputRegisters(state);
+	// Replay vertex fetch overwrites the fetched registers, so it must run
+	// after the regular vertex input seeding.
+	EmitGeometryReplayVertexFetch(state);
 	EmitStorageBufferOffsets(state);
 	if (state.dispatcher_fallback) {
 		EmitDispatcherFunction(state, program);

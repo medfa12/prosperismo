@@ -1231,6 +1231,9 @@ bool LowerProgram(const Decoder::Program& decoded, const CFG::Graph& cfg, Shader
 }
 
 uint32_t GeometryReplayParameterCount(const Program& program) {
+	if (program.geometry_replay_parameter_count != 0) {
+		return program.geometry_replay_parameter_count;
+	}
 	uint32_t count = 0;
 	for (const auto& block: program.blocks) {
 		for (const auto& inst: block.instructions) {

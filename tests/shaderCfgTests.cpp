@@ -1203,6 +1203,63 @@ void TestGeometryReplayCapturedAstroPair() {
 	             result.spirv.size());
 }
 
+// The vertex half of the geometry replay: a synthetic passthrough shader that
+// only exports v0..v11 must, in replay mode, seed those registers from the
+// replay buffer using VertexIndex-derived primitive/corner/slot indices.
+void TestGeometryReplayVertexFetch() {
+	const uint32_t shader[] = {
+	    EncodeExp0(0x0c, 0xf, true), EncodeExp1(0, 1, 2, 3),    // exp pos0 v0:v3 done
+	    EncodeExp0(0x20, 0xf, false), EncodeExp1(4, 5, 6, 7),   // exp param0 v4:v7
+	    EncodeExp0(0x21, 0xf, false), EncodeExp1(8, 9, 10, 11), // exp param1 v8:v11
+	    EncodeSopp(0x01, 0),                                    // s_endpgm
+	};
+
+	ShaderVertexInputInfo input;
+	input.geometry_replay                 = true;
+	input.geometry_replay_vertex_slots    = 216;
+	input.geometry_replay_primitive_slots = 210;
+	input.geometry_replay_parameter_count = 2;
+
+	ShaderRecompiler::CompileOptions options;
+	options.stage             = ShaderType::Vertex;
+	options.dump_ir           = true;
+	options.vertex_input_info = &input;
+
+	ShaderRecompiler::CompileResult result;
+	std::string                     error;
+	const bool ok = ShaderRecompiler::TryRecompile(shader, options, result, &error);
+	if (!ok) {
+		std::fprintf(stderr, "ShaderCfgTests: replay vertex fetch recompile error: %s\n",
+		             error.c_str());
+	}
+	Check(ok, "replay passthrough vertex shader did not recompile");
+	Check(result.program.geometry_replay, "vertex replay flag did not reach the IR program");
+	// The host-provided count wins over the shader's own exports so producer
+	// and consumer derive the same buffer layout.
+	Check(ShaderRecompiler::IR::GeometryReplayParameterCount(result.program) == 2,
+	      "vertex replay parameter count override was not honored");
+	bool has_replay_binding = false;
+	for (const auto& binding: result.program.bindings.descriptors) {
+		if (binding.kind == ShaderRecompiler::IR::DescriptorBindingKind::GeometryReplay) {
+			has_replay_binding = true;
+		}
+	}
+	Check(has_replay_binding, "vertex replay did not allocate the replay descriptor binding");
+	Check(Common::ContainsStr(result.ir_dump, "position"), "replay VS lost its position export");
+	CheckSpirvBinaryValidates(result.spirv);
+
+	// Without the replay flag the same shader must not declare the binding.
+	ShaderRecompiler::CompileOptions plain_options;
+	plain_options.stage = ShaderType::Vertex;
+	ShaderRecompiler::CompileResult plain;
+	Check(ShaderRecompiler::TryRecompile(shader, plain_options, plain, &error),
+	      "plain passthrough vertex shader did not recompile");
+	for (const auto& binding: plain.program.bindings.descriptors) {
+		Check(binding.kind != ShaderRecompiler::IR::DescriptorBindingKind::GeometryReplay,
+		      "replay binding leaked into a non-replay vertex shader");
+	}
+}
+
 void TestNewShaderRecompilerSopkWaitcntMarkers() {
 	const uint32_t shader[] = {
 	    EncodeSopk(0x17, 125, 0xffff), // s_waitcnt_vscnt null, 0xffff
@@ -7855,6 +7912,7 @@ int main(int argc, char** argv) {
 	}
 	if (argc == 2 && std::strcmp(argv[1], "--geometry-replay-only") == 0) {
 		TestGeometryReplayComputeTranslation();
+		TestGeometryReplayVertexFetch();
 		TestGeometryReplayCapturedAstroPair();
 		return 0;
 	}
@@ -7869,6 +7927,7 @@ int main(int argc, char** argv) {
 	TestNewShaderRecompilerSMovB32();
 	TestNewShaderRecompilerSoppMarkers();
 	TestGeometryReplayComputeTranslation();
+	TestGeometryReplayVertexFetch();
 	TestGeometryReplayCapturedAstroPair();
 	TestGfx1013SonyNumericAndBarrierSemantics();
 	TestNewShaderRecompilerSopkWaitcntMarkers();

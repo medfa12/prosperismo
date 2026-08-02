@@ -757,6 +757,21 @@ bool TryRecompile(std::span<const uint32_t> code, const CompileOptions& options,
 		ir.geometry_replay_vertex_slots    = replay.vertex_slots;
 		ir.geometry_replay_primitive_slots = replay.primitive_slots;
 	}
+	if (options.stage == ShaderType::Vertex && options.vertex_input_info != nullptr &&
+	    options.vertex_input_info->geometry_replay) {
+		const auto& vi = *options.vertex_input_info;
+		if (vi.geometry_replay_vertex_slots == 0 || vi.geometry_replay_primitive_slots == 0 ||
+		    vi.geometry_replay_parameter_count == 0) {
+			if (error != nullptr) {
+				*error = "vertex geometry replay requires non-zero slot and parameter counts";
+			}
+			return false;
+		}
+		ir.geometry_replay                 = true;
+		ir.geometry_replay_vertex_slots    = vi.geometry_replay_vertex_slots;
+		ir.geometry_replay_primitive_slots = vi.geometry_replay_primitive_slots;
+		ir.geometry_replay_parameter_count = vi.geometry_replay_parameter_count;
+	}
 	LOGF("%s phase end: stage=%s hash=0x%016" PRIx64 " IR LowerProgram blocks=%" PRIu64
 	     " elapsed_ms=%" PRIu64 "\n",
 	     GetDumpLabel(options), StageName(options.stage), options.shader_hash,
