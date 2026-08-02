@@ -18,13 +18,18 @@ export const PROSPERISMO_SETTINGS_CATEGORIES = [
 const LIBRARY_SORT_FIELDS = ['titleName', 'titleId', 'gameVersion', 'firmwareVersion', 'gamePath', 'status', 'comment'] as const;
 const SHADER_OPTIMIZATIONS = ['None', 'Size', 'Performance'] as const;
 
-type FocusableUIManager = typeof UIManager & {focus(reactTag: number): void};
+type FocusableUIManager = typeof UIManager & {focus?(reactTag: number): void};
 type SettingRow = {label: string; value: string; onPress?: () => void};
 
 function focusNative(target: unknown): void {
+  if (typeof (target as {focus?(): void} | null)?.focus === 'function') {
+    (target as {focus(): void}).focus();
+    return;
+  }
   const tag = findNodeHandle(target as any);
-  if (tag !== null) {
-    (UIManager as FocusableUIManager).focus(tag);
+  const focus = (UIManager as FocusableUIManager).focus;
+  if (tag !== null && typeof focus === 'function') {
+    focus(tag);
   }
 }
 
@@ -183,7 +188,9 @@ const styles = StyleSheet.create({
   pageTitle: {position: 'absolute', left: 96, top: 82, color: '#fff', ...shellTextStyle('SizeLarge')},
   categoryList: {position: 'absolute', left: SHELL_SETTINGS_METRICS.listLeft, top: SHELL_SETTINGS_METRICS.listTop, width: SHELL_SETTINGS_METRICS.listWidth, height: SHELL_SETTINGS_METRICS.listHeight},
   categoryRow: {height: SHELL_SETTINGS_METRICS.capturedRowPitch, paddingLeft: SHELL_SETTINGS_METRICS.titleMarginLeft, paddingRight: SHELL_SETTINGS_METRICS.titleMarginRight, flexDirection: 'row', alignItems: 'center'},
-  focus: {position: 'absolute', left: SHELL_SETTINGS_METRICS.focusMargin, top: SHELL_SETTINGS_METRICS.focusMargin, right: SHELL_SETTINGS_METRICS.focusMargin, bottom: SHELL_SETTINGS_METRICS.focusMargin, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)', borderRadius: 16},
+  // FocusStyle.ListItem crops the target by 3px top/5px bottom, then the
+  // renderer places its 3px line at the recovered 3px exterior offset.
+  focus: {position: 'absolute', left: -6, top: -3, right: -6, bottom: -1, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)', borderRadius: 6},
   categoryGlyph: {width: SHELL_SETTINGS_METRICS.iconSize, height: SHELL_SETTINGS_METRICS.iconSize, marginRight: SHELL_SETTINGS_METRICS.imageMarginRight, alignItems: 'center', justifyContent: 'center'},
   glyphMark: {width: 28, height: 28, borderWidth: 3, borderColor: '#fff'}, glyphRound: {borderRadius: 14}, glyphDiamond: {transform: [{rotate: '45deg'}]}, glyphInner: {position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff'},
   categoryCopy: {flex: 1}, categoryTitle: {color: '#fff', ...shellTextStyle('SizeNormal')}, categoryDescription: {marginTop: 5, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')}, chevron: {width: 52, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXLarge')},

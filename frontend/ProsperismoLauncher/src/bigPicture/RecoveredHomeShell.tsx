@@ -11,6 +11,8 @@ import {
 import type {GameInstall} from '../core/models';
 import {
   focusAreaOpacityScale,
+  focusLineBody,
+  HomeGlanceState,
   HOME_GEOMETRY,
   HOME_SPRINGS,
   HomeStartupChoreography,
@@ -19,6 +21,8 @@ import {
   homeTileRadius,
   ShellFocusTimeline,
   ShellSpring,
+  systemIconFocusBackgroundOpacity,
+  systemIconFocusedChannel,
   type ShellFocusSnapshot,
   type ShellRect,
 } from './shellHomeMotion';
@@ -47,8 +51,6 @@ const SYSTEM_GROUP_WIDTH =
   + CLOCK_MARGIN_LEFT
   + CLOCK_WIDTH;
 const SYSTEM_GROUP_LEFT = DESIGN_WIDTH - CONTENT_INSET - SYSTEM_GROUP_WIDTH;
-const FOCUS_EXTERIOR = 6;
-
 interface TileMotion {
   left: ShellSpring;
   side: ShellSpring;
@@ -95,54 +97,51 @@ function fileSource(path: string | undefined): ImageSourcePropType | undefined {
   return path ? {uri: `file:///${path.replace(/\\/g, '/')}`} : undefined;
 }
 
-function SearchGlyph({dark}: {dark: boolean}) {
-  const color = dark ? '#333333' : '#FFFFFF';
+function SearchGlyph({color}: {color: string}) {
   return <View style={glyphStyles.search}>
     <View style={[glyphStyles.searchLens, {borderColor: color}]} />
     <View style={[glyphStyles.searchHandle, {backgroundColor: color}]} />
   </View>;
 }
 
-function SettingsGlyph({dark}: {dark: boolean}) {
-  const color = dark ? '#333333' : '#FFFFFF';
+function SettingsGlyph({color}: {color: string}) {
   return <View style={[glyphStyles.settingsOuter, {borderColor: color}]}>
     <View style={[glyphStyles.settingsInner, {borderColor: color}]} />
   </View>;
 }
 
-function ProfileGlyph({dark}: {dark: boolean}) {
-  const color = dark ? '#333333' : '#FFFFFF';
+function ProfileGlyph({color}: {color: string}) {
   return <View style={[glyphStyles.profile, {borderColor: color}]}>
     <View style={[glyphStyles.profileHead, {backgroundColor: color}]} />
     <View style={[glyphStyles.profileShoulders, {borderColor: color}]} />
   </View>;
 }
 
-function SystemGlyph({action, focused, settingsIconPath, searchIconPath}: {
+function SystemGlyph({action, tint, settingsIconPath, searchIconPath}: {
   action: SystemAction;
-  focused: boolean;
+  tint: string;
   settingsIconPath?: string;
   searchIconPath?: string;
 }) {
   if (action === 'settings' && settingsIconPath) {
     return <Image
       source={fileSource(settingsIconPath)}
-      style={[glyphStyles.firmwareIcon, focused ? glyphStyles.firmwareIconDark : glyphStyles.firmwareIconLight]}
+      style={[glyphStyles.firmwareIcon, {tintColor: tint}]}
     />;
   }
   if (action === 'search' && searchIconPath) {
     return <Image
       source={fileSource(searchIconPath)}
-      style={[glyphStyles.firmwareIcon, focused ? glyphStyles.firmwareIconDark : glyphStyles.firmwareIconLight]}
+      style={[glyphStyles.firmwareIcon, {tintColor: tint}]}
     />;
   }
   if (action === 'search') {
-    return <SearchGlyph dark={focused} />;
+    return <SearchGlyph color={tint} />;
   }
   if (action === 'settings') {
-    return <SettingsGlyph dark={focused} />;
+    return <SettingsGlyph color={tint} />;
   }
-  return <ProfileGlyph dark={focused} />;
+  return <ProfileGlyph color={tint} />;
 }
 
 function homeFocusTarget(
@@ -216,6 +215,14 @@ function tileMatStyle(opacity: number): ViewStyle {
   return {backgroundColor: `rgba(2,4,8,${opacity})`};
 }
 
+function systemGlanceStyle(scale: number): ViewStyle {
+  return {transform: [{scale}]};
+}
+
+function systemLabelStyle(opacity: number): ViewStyle {
+  return {opacity};
+}
+
 /**
  * A deliberately small port of the recovered SharpEmu HOME surface. Every
  * coordinate is authored in the firmware bundle's 1920 x 1080 design space,
@@ -256,6 +263,7 @@ export function RecoveredHomeShell({
   const focusTimeline = useRef(new ShellFocusTimeline());
   const startup = useRef(new HomeStartupChoreography());
   const tileMotion = useRef<TileMotion[]>([]);
+  const systemGlance = useRef(Array.from({length: SYSTEM_ICON_COUNT}, () => new HomeGlanceState()));
   const revealElapsedMs = useRef(0);
   const [, setMotionFrame] = useState(0);
 
@@ -291,6 +299,7 @@ export function RecoveredHomeShell({
     } else {
       focusTimeline.current.hide();
     }
+    systemGlance.current.forEach((glance, index) => glance.setGlanced(focusRegion === 'system' && selectedSystemIndex === index));
   }, [focusRegion, selectedSpace, selectedSystemIndex, visibleGames.length]);
 
   useEffect(() => {
@@ -315,6 +324,7 @@ export function RecoveredHomeShell({
         motion.side.advance(deltaMs / 1000);
       });
       focusTimeline.current.advance(deltaMs / 1000);
+      systemGlance.current.forEach(glance => glance.advance(deltaMs / 1000));
       setMotionFrame(value => value + 1);
       frameHandle = requestAnimationFrame(tick);
     };
@@ -339,7 +349,8 @@ export function RecoveredHomeShell({
     spaceTextSelected: {color: '#FFFFFF', fontWeight: '700'},
     spaceTextFocused: {textDecorationLine: 'underline'},
     systemButton: {position: 'absolute', top: s(35), width: s(SYSTEM_ICON_SIZE), height: s(SYSTEM_ICON_SIZE), borderRadius: s(28), alignItems: 'center', justifyContent: 'center'},
-    systemButtonFocused: {backgroundColor: '#FFFFFF'},
+    systemGlyphHost: {width: s(56), height: s(56), alignItems: 'center', justifyContent: 'center'},
+    systemLabel: {position: 'absolute', left: s(-156), top: s(60), width: s(368), color: '#FFFFFF', fontFamily: 'Fira Sans Light', fontSize: s(15), fontWeight: '300', textAlign: 'center'},
     clock: {position: 'absolute', left: s(SYSTEM_GROUP_LEFT + SYSTEM_ICON_COUNT * SYSTEM_ICON_PITCH - (SYSTEM_ICON_PITCH - SYSTEM_ICON_SIZE) + CLOCK_MARGIN_LEFT), top: s(43), width: s(CLOCK_WIDTH), color: '#FFFFFF', fontFamily: 'Fira Sans', fontSize: s(28), textAlign: 'right'},
     tile: {position: 'absolute', overflow: 'hidden', backgroundColor: '#292929'},
     tileImage: {width: '100%', height: '100%', resizeMode: 'cover'},
@@ -350,9 +361,8 @@ export function RecoveredHomeShell({
     focusWash: {position: 'absolute', overflow: 'hidden'},
     focusShimmer: {position: 'absolute', left: '-18%', top: '-18%', width: '136%', height: '136%', backgroundColor: '#FFFFFF', transform: [{rotate: '-18deg'}]},
     tileMat: {position: 'absolute', left: 0, top: 0, right: 0, bottom: 0},
-    titleBlock: {position: 'absolute', left: s(TITLE_LEFT), top: s(TITLE_TOP), width: s(560), height: s(62), justifyContent: 'center'},
-    title: {fontFamily: 'Fira Sans', color: '#FFFFFF', fontSize: s(30), fontWeight: '600'},
-    metadata: {fontFamily: 'Fira Sans', marginTop: s(6), color: 'rgba(255,255,255,0.7)', fontSize: s(18)},
+    titleBlock: {position: 'absolute', left: s(TITLE_LEFT), top: s(TITLE_TOP), width: s(1132), height: s(62), justifyContent: 'center'},
+    title: {fontFamily: 'Fira Sans Light', color: '#FFFFFF', fontSize: s(26), fontWeight: '300'},
     library: {position: 'absolute', left: s(1602), top: s(IDLE_TILE_TOP), width: s(IDLE_TILE_SIZE), height: s(IDLE_TILE_SIZE), borderRadius: s(16), alignItems: 'center', justifyContent: 'center', backgroundColor: '#353535'},
     libraryIcon: {width: s(40), height: s(32), resizeMode: 'contain', tintColor: '#FFFFFF'},
     libraryFallback: {fontFamily: 'Fira Sans', color: '#FFFFFF', fontSize: s(34)},
@@ -365,12 +375,7 @@ export function RecoveredHomeShell({
   const genericGameIcon = fileSource(genericGameIconPath);
   const entrance = startup.current;
   const focus = focusTimeline.current.snapshot();
-  const focusScale = focus.inOutScale;
-  const focusWidth = focus.rect.width * focusScale;
-  const focusHeight = focus.rect.height * focusScale;
-  const focusX = focus.rect.x - (focusWidth - focus.rect.width) / 2;
-  const focusY = focus.rect.y - (focusHeight - focus.rect.height) / 2;
-  const focusExterior = FOCUS_EXTERIOR + Math.max(0, (focus.bandWidth - 3) / 2);
+  const focusBody = focusLineBody(focus.rect, focus.radius, focus.inOutScale);
   const washScale = focusAreaOpacityScale(focus.rect, {width: DESIGN_WIDTH, height: DESIGN_HEIGHT});
   const shimmerOpacity = Math.max(0, Math.min(0.08 + ((focus.shimmer[0] + 1) * 0.045), 0.17));
 
@@ -396,7 +401,10 @@ export function RecoveredHomeShell({
       })}</View>
 
       {SYSTEM_ACTIONS.map((item, index) => {
-        const focused = focusRegion === 'system' && selectedSystemIndex === index;
+        const glance = systemGlance.current[index];
+        const backgroundOpacity = systemIconFocusBackgroundOpacity(glance.iconScale);
+        const tintChannel = systemIconFocusedChannel(glance.iconScale);
+        const tint = `rgb(${tintChannel},${tintChannel},${tintChannel})`;
         return <Pressable
           accessibilityLabel={item.label}
           accessibilityRole="button"
@@ -407,9 +415,12 @@ export function RecoveredHomeShell({
           style={[
             stageStyles.systemButton,
             {left: s(SYSTEM_GROUP_LEFT + index * SYSTEM_ICON_PITCH)},
-            focused && stageStyles.systemButtonFocused,
+            {backgroundColor: `rgba(255,255,255,${backgroundOpacity})`},
           ]}>
-          <SystemGlyph action={item.action} focused={focused} settingsIconPath={settingsIconPath} searchIconPath={searchIconPath} />
+          <View style={[stageStyles.systemGlyphHost, systemGlanceStyle(glance.iconScale)]}>
+            <SystemGlyph action={item.action} tint={tint} settingsIconPath={settingsIconPath} searchIconPath={searchIconPath} />
+          </View>
+          <Text numberOfLines={1} style={[stageStyles.systemLabel, systemLabelStyle(glance.labelOpacity)]}>{item.label}</Text>
         </Pressable>;
       })}
       <Text style={stageStyles.clock}>{clock}</Text>
@@ -455,9 +466,6 @@ export function RecoveredHomeShell({
         },
       ]}>
         <Text numberOfLines={1} style={stageStyles.title}>{selectedGame.titleName}</Text>
-        <Text numberOfLines={1} style={stageStyles.metadata}>
-          {selectedGame.titleId || 'Local title'}  ·  {selectedGame.gameVersion || 'Unknown version'}
-        </Text>
       </View>
     </> : <>
       <Text style={stageStyles.emptyTitle}>Your library is empty</Text>
@@ -488,11 +496,11 @@ export function RecoveredHomeShell({
         style={[
           stageStyles.focusWash,
           {
-            left: s(focusX + entrance.switcherTranslateX),
-            top: s(focusY + entrance.switcherTranslateY),
-            width: s(focusWidth),
-            height: s(focusHeight),
-            borderRadius: s(focus.radius * focusScale),
+            left: s(focus.rect.x + entrance.switcherTranslateX),
+            top: s(focus.rect.y + entrance.switcherTranslateY),
+            width: s(focus.rect.width),
+            height: s(focus.rect.height),
+            borderRadius: s(focus.radius),
             opacity: focus.areaOpacity * washScale,
           },
         ]}>
@@ -503,11 +511,11 @@ export function RecoveredHomeShell({
         style={[
           stageStyles.focusLine,
           {
-            left: s(focusX - focusExterior + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateX : 0)),
-            top: s(focusY - focusExterior + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateY : 0)),
-            width: s(focusWidth + focusExterior * 2),
-            height: s(focusHeight + focusExterior * 2),
-            borderRadius: s(focus.radius * focusScale + focusExterior),
+            left: s(focusBody.rect.x + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateX : 0)),
+            top: s(focusBody.rect.y + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateY : 0)),
+            width: s(focusBody.rect.width),
+            height: s(focusBody.rect.height),
+            borderRadius: s(focusBody.radius),
             borderWidth: Math.max(1, s(focus.bandWidth)),
             borderColor: focusRgba(focus),
             opacity: focus.lineOpacity,
@@ -519,9 +527,7 @@ export function RecoveredHomeShell({
 }
 
 const glyphStyles = StyleSheet.create({
-  firmwareIcon: {width: 36, height: 32, resizeMode: 'contain'},
-  firmwareIconDark: {tintColor: '#333333'},
-  firmwareIconLight: {tintColor: '#FFFFFF'},
+  firmwareIcon: {width: 48, height: 48, resizeMode: 'contain'},
   search: {width: 34, height: 34},
   searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 4, borderRadius: 10},
   searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 4, borderRadius: 2, transform: [{rotate: '47deg'}]},

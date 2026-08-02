@@ -38,7 +38,7 @@ export const SHELL_METRICS = {
     grey: '#292929',
     blank: 'rgba(255,255,255,0.05)',
     white: '#FFFFFF',
-    iconInverted: '#333333',
+    iconInverted: '#292929',
     obscure: 'rgba(13,13,13,0.6)',
     secondaryText: 'rgba(255,255,255,0.7)',
     weakDivider: 'rgba(255,255,255,0.1)',

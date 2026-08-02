@@ -56,22 +56,28 @@ function homeDirectionForKey(key: string | undefined): ShellDirection | undefine
 }
 
 type FocusableUIManager = typeof UIManager & {focus?(reactTag: number): void};
-function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect}: {
+function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect, onUnavailable}: {
   game: GameInstall;
   selectedIndex: number;
   onClose(): void;
   onPlay(): void;
   onSelect(index: number): void;
+  onUnavailable(label: string): void;
 }) {
   return <ShellContextMenu
+    anchor={{x: 172, y: 126, width: 168, height: 168}}
     entries={[
       {kind: 'header', id: 'game', label: game.titleName},
-      {kind: 'action', id: 'play', label: 'Play', onPress: onPlay},
-      {kind: 'action', id: 'cancel', label: 'Cancel', onPress: onClose},
+      {kind: 'action', id: 'play', label: 'Play Game', glyph: '▶', onPress: onPlay},
+      {kind: 'action', id: 'settings', label: 'Game Settings', glyph: '⚙', onPress: () => onUnavailable('Game Settings')},
+      {kind: 'action', id: 'folder', label: 'Open Game Folder', glyph: '□', onPress: () => onUnavailable('Open Game Folder')},
+      {kind: 'separator', id: 'separator'},
+      {kind: 'action', id: 'copy-id', label: `Copy Title ID${game.titleId ? `  ${game.titleId}` : ''}`, glyph: '⧉', onPress: () => onUnavailable('Copy Title ID')},
+      {kind: 'action', id: 'remove', label: 'Remove from Library', glyph: '−', destructive: true, onPress: () => onUnavailable('Remove from Library')},
     ]}
     onClose={onClose}
-    onSelect={index => onSelect(Math.max(0, index - 1))}
-    selectedIndex={selectedIndex + 1}
+    onSelect={onSelect}
+    selectedIndex={selectedIndex}
   />;
 }
 
@@ -119,7 +125,7 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
   const [state, dispatch] = useReducer(reduceShellState, INITIAL_SHELL_STATE);
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
-  const [optionIndex, setOptionIndex] = useState(0);
+  const [optionIndex, setOptionIndex] = useState(1);
   const [settingsDetail, setSettingsDetail] = useState<number>();
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -147,7 +153,8 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
     }
   };
   const launch = (game: GameInstall) => { setOptionsGame(undefined); setToast(`Launching ${game.titleName}`); onLaunch(game); };
-  const openOptions = (game: GameInstall) => { setOptionIndex(0); setOptionsGame(game); };
+  const openOptions = (game: GameInstall) => { setOptionIndex(1); setOptionsGame(game); };
+  const unavailableOption = (label: string) => { setOptionsGame(undefined); setToast(`${label} is available in Desktop Mode`); };
   useEffect(() => {
     if (optionsGame || errorMessage || settingsDetail !== undefined) {
       return;
@@ -175,11 +182,6 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
     }
     if (errorMessage) {
       if (key === 'Escape' || key === 'GamepadB' || key === 'Enter' || key === 'GamepadA') { onDismissError(); }
-      event.stopPropagation?.();
-      return;
-    }
-    if (optionsGame && (key === 'ArrowUp' || key === 'GamepadDPadUp' || key === 'ArrowDown' || key === 'GamepadDPadDown')) {
-      setOptionIndex(index => Math.max(0, Math.min(1, index + ((key === 'ArrowUp' || key === 'GamepadDPadUp') ? -1 : 1))));
       event.stopPropagation?.();
       return;
     }
@@ -252,7 +254,7 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
           ? [{kind: 'confirm', label: 'Select'}, {kind: 'options', label: 'Options'}]
           : [{kind: 'confirm', label: 'Select'}]}
         />}
-        {optionsGame && <OptionsModal game={optionsGame} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
+        {optionsGame && <OptionsModal game={optionsGame} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} onUnavailable={unavailableOption} />}
         {searchOpen && <SearchSurface games={games} onClose={() => { setSearchOpen(false); focusNative(systemRefs.current[0]); }} onLaunch={game => { setSearchOpen(false); launch(game); }} />}
         {profileOpen && <ProfileMenu onClose={() => { setProfileOpen(false); focusNative(systemRefs.current[2]); }} onDesktop={() => { setProfileOpen(false); onDesktop(); }} />}
         {errorMessage && <ShellDialog title="Unable to start game" message={errorMessage} onDismiss={onDismissError} />}
@@ -275,7 +277,7 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
     {state.surface === 'settings' && settingsDetail === undefined && <ProsperismoSettingsRoot onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={setSettingsDetail} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
     {state.surface === 'settings' && settingsDetail !== undefined && <ProsperismoSettingsDetail categoryIndex={settingsDetail} onBack={() => setSettingsDetail(undefined)} onSave={onSaveSettings} settings={settings} />}
     {!searchOpen && !profileOpen && !errorMessage && state.surface !== 'library' && <ShellButtonPrompts prompts={[{kind: 'confirm', label: 'Select'}, {kind: 'back', label: 'Back'}]} />}
-    {optionsGame && <OptionsModal game={optionsGame} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
+    {optionsGame && <OptionsModal game={optionsGame} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} onUnavailable={unavailableOption} />}
     {searchOpen && <SearchSurface games={games} onClose={() => { setSearchOpen(false); focusNative(systemRefs.current[0]); }} onLaunch={game => { setSearchOpen(false); launch(game); }} />}
     {profileOpen && <ProfileMenu onClose={() => { setProfileOpen(false); focusNative(systemRefs.current[2]); }} onDesktop={() => { setProfileOpen(false); onDesktop(); }} />}
     {errorMessage && <ShellDialog title="Unable to start game" message={errorMessage} onDismiss={onDismissError} />}

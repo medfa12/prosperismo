@@ -3,6 +3,7 @@ import {
   Animated,
   Easing,
   findNodeHandle,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -21,12 +22,17 @@ import {
 } from './shellSurfaces';
 import {shellTextStyle} from './shellTypography';
 
-type FocusableUIManager = typeof UIManager & {focus(reactTag: number): void};
+type FocusableUIManager = typeof UIManager & {focus?(reactTag: number): void};
 
 function focusNative(target: unknown): void {
+  if (typeof (target as {focus?(): void} | null)?.focus === 'function') {
+    (target as {focus(): void}).focus();
+    return;
+  }
   const tag = findNodeHandle(target as any);
-  if (tag !== null) {
-    (UIManager as FocusableUIManager).focus(tag);
+  const focus = (UIManager as FocusableUIManager).focus;
+  if (tag !== null && typeof focus === 'function') {
+    focus(tag);
   }
 }
 
@@ -115,20 +121,28 @@ export function SearchSurface({games, onClose, onLaunch}: {
       return;
     }
     if (key === 'ArrowDown' || key === 'GamepadDPadDown') {
-      const next = Math.min(results.length - 1, selectedIndex + 1);
+      const next = Math.min(results.length - 1, selectedIndex + 4);
       setSelectedIndex(Math.max(0, next));
       focusNative(resultRefs.current[next]);
       event.stopPropagation?.();
       return;
     }
     if (key === 'ArrowUp' || key === 'GamepadDPadUp') {
-      if (selectedIndex === 0) {
+      if (selectedIndex < 4) {
         inputRef.current?.focus();
       } else {
-        const next = selectedIndex - 1;
+        const next = selectedIndex - 4;
         setSelectedIndex(next);
         focusNative(resultRefs.current[next]);
       }
+      event.stopPropagation?.();
+      return;
+    }
+    if (key === 'ArrowLeft' || key === 'GamepadDPadLeft' || key === 'ArrowRight' || key === 'GamepadDPadRight') {
+      const delta = key === 'ArrowLeft' || key === 'GamepadDPadLeft' ? -1 : 1;
+      const next = Math.max(0, Math.min(results.length - 1, selectedIndex + delta));
+      setSelectedIndex(next);
+      focusNative(resultRefs.current[next]);
       event.stopPropagation?.();
     }
   };
@@ -150,17 +164,19 @@ export function SearchSurface({games, onClose, onLaunch}: {
       />
     </View>
     <Text style={styles.resultHeading}>{query.trim() ? `${results.length} results` : 'Games'}</Text>
-    <View style={styles.resultsList}>
+    <View style={styles.resultsGrid}>
       {results.map((game, index) => <Pressable
         ref={node => { resultRefs.current[index] = node; }}
         accessibilityRole="button"
         key={game.gamePath}
         onFocus={() => setSelectedIndex(index)}
         onPress={() => onLaunch(game)}
-        style={styles.resultRow}>
-        <FocusLine active={selectedIndex === index} />
-        <View style={styles.resultMonogram}><Text style={styles.resultMonogramText}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>
-        <View style={styles.resultCopy}><Text numberOfLines={1} style={styles.resultTitle}>{game.titleName}</Text><Text style={styles.resultMeta}>{game.titleId || 'Local game'}</Text></View>
+        style={[styles.resultTile, {left: (index % 4) * 402, top: Math.floor(index / 4) * 434}]}>
+        {game.iconPath || game.artworkPath
+          ? <Image resizeMode="cover" source={{uri: `file:///${(game.iconPath ?? game.artworkPath ?? '').replace(/\\/g, '/')}`}} style={styles.resultArt} />
+          : <View style={styles.resultMonogram}><Text style={styles.resultMonogramText}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}
+        {selectedIndex === index && <View pointerEvents="none" style={styles.resultTileFocus} />}
+        <Text numberOfLines={2} style={styles.resultTitle}>{game.titleName}</Text>
       </Pressable>)}
       {results.length === 0 && <Text style={styles.emptyText}>No games match “{query.trim()}”.</Text>}
     </View>
@@ -238,12 +254,20 @@ export type ShellMenuEntry =
   | {kind: 'separator'; id: string}
   | {kind: 'header'; id: string; label: string};
 
+export interface ShellMenuAnchor {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /** HOME OptionsMenu analogue with non-focusable headers and separators. */
-export function ShellContextMenu({entries, selectedIndex, onSelect, onClose}: {
+export function ShellContextMenu({entries, selectedIndex, onSelect, onClose, anchor}: {
   entries: readonly ShellMenuEntry[];
   selectedIndex: number;
   onSelect(index: number): void;
   onClose(): void;
+  anchor?: ShellMenuAnchor;
 }) {
   const actionIndexes = entries.map((entry, index) => entry.kind === 'action' ? index : -1).filter(index => index >= 0);
   const move = (delta: number) => {
@@ -270,7 +294,10 @@ export function ShellContextMenu({entries, selectedIndex, onSelect, onClose}: {
   };
   return <View style={styles.menuLayer} {...({onKeyDownCapture: onKeyDown} as any)}>
     <Pressable accessibilityLabel="Close options menu" onPress={onClose} style={styles.menuScrim} />
-    <View style={styles.shellContextPanel}>
+    <View style={[
+      styles.shellContextPanel,
+      anchor && {left: anchor.x + anchor.width - 3, right: undefined, top: anchor.y + 3},
+    ]}>
       {entries.map((entry, index) => entry.kind === 'separator'
         ? <View key={entry.id} style={styles.shellMenuSeparator} />
         : entry.kind === 'header'
@@ -383,7 +410,7 @@ export function ShellSurfaceTransition({children}: {children: React.ReactNode}) 
 }
 
 const styles = StyleSheet.create({
-  focusLine: {position: 'absolute', left: 0, top: 3, right: 0, bottom: 5, zIndex: 1, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)'},
+  focusLine: {position: 'absolute', left: -6, top: -6, right: -6, bottom: -6, zIndex: 1, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)'},
   avatarGlyph: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
   avatarHead: {position: 'absolute', top: 5, width: 14, height: 14, borderRadius: 7},
   avatarShoulders: {position: 'absolute', top: 22, width: 30, height: 22, borderRadius: 15},
@@ -397,18 +424,20 @@ const styles = StyleSheet.create({
   promptOptions: {width: 22, height: 18, justifyContent: 'space-between', paddingVertical: 2},
   promptOptionsLine: {height: 2, width: 22, borderRadius: 1, backgroundColor: '#fff'},
   fullSurface: {position: 'absolute', inset: 0, zIndex: 15, backgroundColor: 'rgba(2,4,8,0.96)'},
-  pageTitle: {position: 'absolute', left: 304, top: 76, color: '#fff', ...shellTextStyle('SizeXLarge')},
-  searchBox: {position: 'absolute', left: 304, top: 166, width: 1130, height: 72, borderRadius: 16, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.5)'},
+  pageTitle: {position: 'absolute', left: 172, top: 76, color: '#fff', ...shellTextStyle('SizeXLarge')},
+  searchBox: {position: 'absolute', left: 172, top: 166, width: 1576, height: 72, borderRadius: 16, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.5)'},
   searchGlyph: {width: 34, height: 34, marginLeft: 24, marginRight: 20},
   searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 3, borderRadius: 10, borderColor: '#fff'},
   searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 3, borderRadius: 2, backgroundColor: '#fff', transform: [{rotate: '47deg'}]},
   searchInput: {flex: 1, height: 68, paddingVertical: 0, paddingRight: 24, color: '#fff', ...shellTextStyle('SizeNormal')},
-  resultHeading: {position: 'absolute', left: 304, top: 280, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size2XSmall')},
-  resultsList: {position: 'absolute', left: 304, top: 318, width: 1130},
-  resultRow: {height: 82, borderRadius: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center'},
-  resultMonogram: {width: 56, height: 56, borderRadius: 10, marginRight: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center'},
-  resultMonogramText: {color: '#fff', ...shellTextStyle('SizeSmall', '600')},
-  resultCopy: {flex: 1}, resultTitle: {color: '#fff', ...shellTextStyle('SizeXSmall')}, resultMeta: {marginTop: 3, color: 'rgba(255,255,255,0.62)', ...shellTextStyle('Size4XSmall')},
+  resultHeading: {position: 'absolute', left: 172, top: 270, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size2XSmall')},
+  resultsGrid: {position: 'absolute', left: 172, top: 318, width: 1576, height: 762, overflow: 'hidden'},
+  resultTile: {position: 'absolute', width: 370, height: 430, overflow: 'visible'},
+  resultArt: {position: 'absolute', left: 0, top: 0, width: 370, height: 370, borderRadius: 16},
+  resultMonogram: {width: 370, height: 370, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center'},
+  resultMonogramText: {color: '#fff', ...shellTextStyle('SizeXLarge', '600')},
+  resultTileFocus: {position: 'absolute', left: -6, top: -6, width: 382, height: 382, borderWidth: 3, borderRadius: 19, borderColor: '#fff'},
+  resultTitle: {position: 'absolute', left: 0, top: 382, width: 370, height: 48, color: '#fff', ...shellTextStyle('SizeXSmall')},
   emptyText: {marginTop: 60, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('SizeXSmall')},
   menuLayer: {position: 'absolute', inset: 0, zIndex: 25}, menuScrim: {position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)'},
   profilePanel: {position: 'absolute', top: 126, left: 1188, width: 652, minHeight: 306, maxHeight: 810, borderRadius: 16, overflow: 'hidden', padding: 8, backgroundColor: '#080a0f'},
@@ -423,7 +452,7 @@ const styles = StyleSheet.create({
   utilityLabel: {position: 'absolute', top: 72, left: -140, width: 336, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXSmall')},
   shellContextPanel: {position: 'absolute', right: 80, top: 126, minWidth: 652, maxWidth: 784, paddingVertical: 8, overflow: 'hidden', borderRadius: 16, backgroundColor: '#080a0f'},
   shellMenuRow: {height: 98, flexDirection: 'row', alignItems: 'center'},
-  shellMenuFocus: {position: 'absolute', inset: 3, borderWidth: 3, borderRadius: 16, borderColor: '#fff'},
+  shellMenuFocus: {position: 'absolute', inset: -6, borderWidth: 3, borderRadius: 22, borderColor: '#fff'},
   shellMenuIcon: {width: 72, height: 98, alignItems: 'center', justifyContent: 'center'},
   shellMenuGlyph: {color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXSmall')},
   shellMenuText: {flex: 1, paddingRight: 24, color: '#fff', ...shellTextStyle('SizeXSmall')},
@@ -441,7 +470,7 @@ const styles = StyleSheet.create({
   dialogButtons: {position: 'absolute', height: 72, flexDirection: 'row'},
   dialogButton: {width: 384, height: 72, marginRight: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)'},
   dialogButtonLast: {marginRight: 0},
-  dialogButtonFocus: {position: 'absolute', inset: -6, borderWidth: 3, borderRadius: 19, borderColor: '#fff'},
+  dialogButtonFocus: {position: 'absolute', inset: -6, borderWidth: 3, borderRadius: 22, borderColor: '#fff'},
   dialogButtonText: {color: '#fff', ...shellTextStyle('SizeNormal')},
   transitionSurface: {position: 'absolute', inset: 0},
 });

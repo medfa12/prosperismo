@@ -533,6 +533,61 @@ export class HomeGlanceState {
   }
 }
 
+/**
+ * ButtonBase.visibleOnFocus progress, derived from the recovered 48 -> 56
+ * system-icon glance scale. Keeping this as a pure function ensures the white
+ * plate and the glyph tint are driven by the same spring value.
+ */
+export function systemIconFocusProgress(iconScale: number): number {
+  const rest = HOME_GEOMETRY.systemIconRestSize / HOME_GEOMETRY.systemIconSize;
+  return clamp01((iconScale - rest) / (1 - rest));
+}
+
+/** HOME ShellNavBand: lerp(.08*t, 1*t, t). */
+export function systemIconFocusBackgroundOpacity(iconScale: number): number {
+  const progress = systemIconFocusProgress(iconScale);
+  return 0.08 * progress + 0.92 * progress * progress;
+}
+
+/** HOME ButtonBase stock inversion: white (255) to #292929 (41). */
+export function systemIconFocusedChannel(iconScale: number): number {
+  const progress = systemIconFocusProgress(iconScale);
+  return Math.round(255 + (41 - 255) * progress);
+}
+
+/**
+ * FocusRenderManager line body. InOutScale affects only the recovered
+ * thickness+offset margin; it never scales the focused widget's own rect.
+ */
+export function focusLineBody(
+  rect: ShellRect,
+  radius: number,
+  inOutScale: number,
+  lineScale = 1,
+): {rect: ShellRect; radius: number} {
+  const safeLineScale = Math.max(0.25, Math.min(lineScale, 2));
+  const inflate = (3 + 3) * Math.max(0, inOutScale) * safeLineScale;
+  return {
+    rect: {
+      x: rect.x - inflate,
+      y: rect.y - inflate,
+      width: rect.width + inflate * 2,
+      height: rect.height + inflate * 2,
+    },
+    radius: Math.max(0, radius) + inflate,
+  };
+}
+
+/** FocusStyle.ListItem: 3 px off the top and 5 px off the bottom. */
+export function focusListItemRect(rect: ShellRect): ShellRect {
+  return {
+    x: rect.x,
+    y: rect.y + 3,
+    width: rect.width,
+    height: Math.max(0, rect.height - 8),
+  };
+}
+
 class AnalyticSpring {
   private from: number;
   private target: number;

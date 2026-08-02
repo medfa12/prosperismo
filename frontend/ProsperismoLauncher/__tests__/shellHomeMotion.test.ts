@@ -1,6 +1,8 @@
 import {createHomeFocusGraph, HOME_FOCUS_REGIONS} from '../src/bigPicture/shellFocusGraph';
 import {
   focusAreaOpacityScale,
+  focusLineBody,
+  focusListItemRect,
   focusInOutCurve,
   focusMomentumFor,
   focusMovingCurve,
@@ -14,6 +16,9 @@ import {
   homeTileRadius,
   ShellFocusTimeline,
   ShellSpring,
+  systemIconFocusBackgroundOpacity,
+  systemIconFocusedChannel,
+  systemIconFocusProgress,
   HOME_SPRINGS,
 } from '../src/bigPicture/shellHomeMotion';
 
@@ -92,6 +97,31 @@ describe('recovered HOME geometry and motion', () => {
     glance.advance(10);
     expect(glance.iconScale).toBeCloseTo(1, 5);
     expect(glance.labelOpacity).toBeCloseTo(0, 5);
+  });
+
+  it('drives system-icon fill and inversion from the same recovered glance progress', () => {
+    expect(systemIconFocusProgress(48 / 56)).toBe(0);
+    expect(systemIconFocusBackgroundOpacity(48 / 56)).toBe(0);
+    expect(systemIconFocusedChannel(48 / 56)).toBe(255);
+    expect(systemIconFocusProgress(52 / 56)).toBeCloseTo(0.5, 12);
+    expect(systemIconFocusBackgroundOpacity(52 / 56)).toBeCloseTo(0.27, 12);
+    expect(systemIconFocusedChannel(52 / 56)).toBe(148);
+    expect(systemIconFocusBackgroundOpacity(1)).toBe(1);
+    expect(systemIconFocusedChannel(1)).toBe(41);
+  });
+
+  it('inflates only the focus margin and applies the exact ListItem crop', () => {
+    expect(focusLineBody({x: 100, y: 80, width: 56, height: 56}, 28, 1)).toEqual({
+      rect: {x: 94, y: 74, width: 68, height: 68},
+      radius: 34,
+    });
+    expect(focusLineBody({x: 100, y: 80, width: 56, height: 56}, 28, 1.2)).toEqual({
+      rect: {x: 92.8, y: 72.8, width: 70.4, height: 70.4},
+      radius: 35.2,
+    });
+    expect(focusListItemRect({x: 0, y: 0, width: 1312, height: 102})).toEqual({
+      x: 0, y: 3, width: 1312, height: 94,
+    });
   });
 
   it('releases startup layers on the exact recovered schedule', () => {
