@@ -72,17 +72,24 @@ function useFocusPhase(focused: boolean, delay = 0): Animated.Value {
 function CardFocusPass({phase}: {phase: Animated.Value}) {
   const shimmer = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    const animation = Animated.loop(Animated.timing(shimmer, {toValue: 1, duration: 5000, easing: Easing.linear, useNativeDriver: true}));
+    // FocusRenderManager's ShimmerSpeed=1 / ShimmerFrequency=5 path is idle
+    // for three seconds, then runs a two-second cosine pulse. This is only the
+    // RN fallback for the unrecovered shimmer texture, not a substitute shader.
+    const animation = Animated.loop(Animated.sequence([
+      Animated.delay(3000),
+      Animated.timing(shimmer, {toValue: 1, duration: 1000, easing: Easing.sin, useNativeDriver: true}),
+      Animated.timing(shimmer, {toValue: 0, duration: 1000, easing: Easing.in(Easing.sin), useNativeDriver: true}),
+    ]));
     animation.start();
     return () => animation.stop();
   }, [shimmer]);
-  const shimmerTranslate = shimmer.interpolate({inputRange: [0, 1], outputRange: [-220, 220]});
+  const shimmerTranslate = shimmer.interpolate({inputRange: [0, 1], outputRange: [-196, 196]});
   return (
     <Animated.View pointerEvents="none" style={[shellStyles.focusFrame, {opacity: phase}]}>
       <View style={shellStyles.focusLine} />
       <View style={shellStyles.focusWashClip}>
         <View style={shellStyles.focusWash} />
-        <Animated.View style={[shellStyles.focusShimmer, {transform: [{translateX: shimmerTranslate}, {rotate: '-24deg'}]}]} />
+        <Animated.View style={[shellStyles.focusShimmer, {opacity: shimmer, transform: [{translateX: shimmerTranslate}, {rotate: '-24deg'}]}]} />
       </View>
     </Animated.View>
   );
