@@ -9,6 +9,7 @@ import {
 import type {GameInstall, LibrarySortField, SortDirection} from '../core/models';
 import {shellTextStyle} from './shellTypography';
 import {ShellButtonPrompts} from './ShellUtilitySurfaces';
+import {ShellFocusOverlay} from './ShellFocusOverlay';
 import {
   SHELL_LIBRARY_METRICS,
   SHELL_LIBRARY_SORT_OPTIONS,
@@ -55,7 +56,7 @@ function LibraryTile({game, focused, onFocus, onPress}: {
       <Text numberOfLines={1} style={styles.tileTitle}>{game.titleName}</Text>
       <Text numberOfLines={1} style={styles.tileSubLabel}>{game.titleId || 'Local game'}</Text>
     </View>}
-    {focused && <View pointerEvents="none" style={styles.tileFocus} />}
+    <ShellFocusOverlay active={focused} width={296} height={296} radius={0} />
   </Pressable>;
 }
 
@@ -161,7 +162,7 @@ export function ShellAllGamesSurface({games, initialField = 'titleName', initial
           onFocus={() => setSortIndex(index)}
           onPress={() => { setField(option.field); setDirection(option.direction); setSortOpen(false); }}
           style={styles.sortOption}>
-          {index === sortIndex && <View style={styles.sortFocus} />}
+          <ShellFocusOverlay active={index === sortIndex} width={384} height={72} radius={16} />
           <Text style={styles.sortCheck}>{option.field === field && option.direction === direction ? '\u2713' : ''}</Text>
           <Text style={styles.sortOptionText}>{option.label}</Text>
         </Pressable>)}
@@ -201,10 +202,8 @@ const styles = StyleSheet.create({
   tileMeta: {position: 'absolute', left: 16, right: 16, bottom: 16},
   tileTitle: {color: '#fff', ...shellTextStyle('Size2XSmall')},
   tileSubLabel: {marginTop: 8, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')},
-  tileFocus: {position: 'absolute', left: -6, right: -6, top: -6, bottom: -6, borderWidth: 3, borderRadius: 6, borderColor: '#fff'},
   sortPanel: {position: 'absolute', left: 52, top: 258, minWidth: 384, paddingVertical: 8, zIndex: 20, borderRadius: 16, backgroundColor: '#080a0f'},
   sortOption: {height: 72, minWidth: 384, paddingLeft: 72, paddingRight: 20, flexDirection: 'row', alignItems: 'center'},
-  sortFocus: {position: 'absolute', inset: -6, borderWidth: 3, borderRadius: 6, borderColor: '#fff'},
   sortCheck: {position: 'absolute', left: 16, width: 40, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXSmall')},
   sortOptionText: {color: '#fff', ...shellTextStyle('SizeXSmall')},
   emptyHost: {position: 'absolute', left: 172, top: 104, width: 1576, height: 824, alignItems: 'center', justifyContent: 'center'},

@@ -1,7 +1,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   Animated,
-  Easing,
   findNodeHandle,
   Image,
   Pressable,
@@ -12,7 +11,6 @@ import {
   View,
 } from 'react-native';
 import type {GameInstall} from '../core/models';
-import {SHELL_METRICS} from './shellMetrics';
 import {
   SHELL_OVERLAY_METRICS,
   shellDialogButtonRowWidth,
@@ -21,6 +19,7 @@ import {
   shellUtilityWidth,
 } from './shellSurfaces';
 import {shellTextStyle} from './shellTypography';
+import {ShellFocusOverlay} from './ShellFocusOverlay';
 
 type FocusableUIManager = typeof UIManager & {focus?(reactTag: number): void};
 
@@ -34,21 +33,6 @@ function focusNative(target: unknown): void {
   if (tag !== null && typeof focus === 'function') {
     focus(tag);
   }
-}
-
-function FocusLine({active, radius = 16}: {active: boolean; radius?: number}) {
-  const phase = useRef(new Animated.Value(active ? 1 : 0)).current;
-  useEffect(() => {
-    const animation = Animated.timing(phase, {
-      toValue: active ? 1 : 0,
-      duration: active ? 250 : 180,
-      easing: Easing.out(Easing.exp),
-      useNativeDriver: true,
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [active, phase]);
-  return <Animated.View pointerEvents="none" style={[styles.focusLine, {borderRadius: radius, opacity: phase}]} />;
 }
 
 /** Neutral local-user avatar. It intentionally has no Sony account imagery. */
@@ -175,7 +159,7 @@ export function SearchSurface({games, onClose, onLaunch}: {
         {game.iconPath || game.artworkPath
           ? <Image resizeMode="cover" source={{uri: `file:///${(game.iconPath ?? game.artworkPath ?? '').replace(/\\/g, '/')}`}} style={styles.resultArt} />
           : <View style={styles.resultMonogram}><Text style={styles.resultMonogramText}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}
-        {selectedIndex === index && <View pointerEvents="none" style={styles.resultTileFocus} />}
+        <ShellFocusOverlay active={selectedIndex === index} width={370} height={370} radius={16} />
         <Text numberOfLines={2} style={styles.resultTitle}>{game.titleName}</Text>
       </Pressable>)}
       {results.length === 0 && <Text style={styles.emptyText}>No games match “{query.trim()}”.</Text>}
@@ -213,7 +197,7 @@ export function ProfileMenu({onClose, onDesktop}: {onClose(): void; onDesktop():
     <View style={styles.profilePanel}>
       <View style={styles.profileHeader}><View style={styles.profileAvatar}><GenericAvatar /></View><View><Text style={styles.profileName}>Local User</Text><Text style={styles.profileStatus}>Prosperismo</Text></View></View>
       <View style={styles.profileDivider} />
-      {items.map((item, index) => <Pressable ref={node => { refs.current[index] = node; }} accessibilityRole="button" key={item.label} onFocus={() => setSelectedIndex(index)} onPress={item.action} style={styles.menuRow}><FocusLine active={selectedIndex === index} /><Text style={styles.menuRowText}>{item.label}</Text></Pressable>)}
+      {items.map((item, index) => <Pressable ref={node => { refs.current[index] = node; }} accessibilityRole="button" key={item.label} onFocus={() => setSelectedIndex(index)} onPress={item.action} style={styles.menuRow}><ShellFocusOverlay active={selectedIndex === index} width={636} height={90} radius={16} /><Text style={styles.menuRowText}>{item.label}</Text></Pressable>)}
     </View>
     <ShellButtonPrompts prompts={[{kind: 'confirm', label: 'Select'}, {kind: 'back', label: 'Back'}]} />
   </View>;
@@ -309,7 +293,7 @@ export function ShellContextMenu({entries, selectedIndex, onSelect, onClose, anc
             onHoverIn={() => onSelect(index)}
             onPress={entry.onPress}
             style={styles.shellMenuRow}>
-            {selectedIndex === index && <View pointerEvents="none" style={styles.shellMenuFocus} />}
+            <ShellFocusOverlay active={selectedIndex === index} width={652} height={98} radius={16} />
             <View style={styles.shellMenuIcon}><Text style={[styles.shellMenuGlyph, entry.destructive && styles.destructiveText]}>{entry.glyph ?? ''}</Text></View>
             <Text style={[styles.shellMenuText, entry.destructive && styles.destructiveText]}>{entry.label}</Text>
           </Pressable>)}
@@ -386,7 +370,7 @@ export function ShellDialogSurface({title, body, errorCode, buttons, fullScreen 
         onHoverIn={() => setFocusedIndex(index)}
         onPress={button.onPress}
         style={[styles.dialogButton, index === buttons.length - 1 && styles.dialogButtonLast]}>
-        {focusedIndex === index && <View pointerEvents="none" style={styles.dialogButtonFocus} />}
+        <ShellFocusOverlay active={focusedIndex === index} width={384} height={72} radius={16} />
         <Text style={styles.dialogButtonText}>{button.label}</Text>
       </Pressable>)}
     </View>
@@ -410,7 +394,6 @@ export function ShellSurfaceTransition({children}: {children: React.ReactNode}) 
 }
 
 const styles = StyleSheet.create({
-  focusLine: {position: 'absolute', left: -6, top: -6, right: -6, bottom: -6, zIndex: 1, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)'},
   avatarGlyph: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
   avatarHead: {position: 'absolute', top: 5, width: 14, height: 14, borderRadius: 7},
   avatarShoulders: {position: 'absolute', top: 22, width: 30, height: 22, borderRadius: 15},
@@ -436,7 +419,6 @@ const styles = StyleSheet.create({
   resultArt: {position: 'absolute', left: 0, top: 0, width: 370, height: 370, borderRadius: 16},
   resultMonogram: {width: 370, height: 370, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center'},
   resultMonogramText: {color: '#fff', ...shellTextStyle('SizeXLarge', '600')},
-  resultTileFocus: {position: 'absolute', left: -6, top: -6, width: 382, height: 382, borderWidth: 3, borderRadius: 19, borderColor: '#fff'},
   resultTitle: {position: 'absolute', left: 0, top: 382, width: 370, height: 48, color: '#fff', ...shellTextStyle('SizeXSmall')},
   emptyText: {marginTop: 60, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('SizeXSmall')},
   menuLayer: {position: 'absolute', inset: 0, zIndex: 25}, menuScrim: {position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)'},
@@ -452,7 +434,6 @@ const styles = StyleSheet.create({
   utilityLabel: {position: 'absolute', top: 72, left: -140, width: 336, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXSmall')},
   shellContextPanel: {position: 'absolute', right: 80, top: 126, minWidth: 652, maxWidth: 784, paddingVertical: 8, overflow: 'hidden', borderRadius: 16, backgroundColor: '#080a0f'},
   shellMenuRow: {height: 98, flexDirection: 'row', alignItems: 'center'},
-  shellMenuFocus: {position: 'absolute', inset: -6, borderWidth: 3, borderRadius: 22, borderColor: '#fff'},
   shellMenuIcon: {width: 72, height: 98, alignItems: 'center', justifyContent: 'center'},
   shellMenuGlyph: {color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXSmall')},
   shellMenuText: {flex: 1, paddingRight: 24, color: '#fff', ...shellTextStyle('SizeXSmall')},
@@ -470,7 +451,6 @@ const styles = StyleSheet.create({
   dialogButtons: {position: 'absolute', height: 72, flexDirection: 'row'},
   dialogButton: {width: 384, height: 72, marginRight: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)'},
   dialogButtonLast: {marginRight: 0},
-  dialogButtonFocus: {position: 'absolute', inset: -6, borderWidth: 3, borderRadius: 22, borderColor: '#fff'},
   dialogButtonText: {color: '#fff', ...shellTextStyle('SizeNormal')},
   transitionSurface: {position: 'absolute', inset: 0},
 });

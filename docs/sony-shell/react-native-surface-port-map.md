@@ -42,6 +42,11 @@ strand and terminal Library shortcut are distinct named nodes, so controller
 navigation reaches the shortcut without pretending it is an installed game.
 Route code clears Home ownership before mounting All Games or Settings.
 
+All route-local targets now use `ShellFocusOverlay`, the same translated UI3
+timeline as Home (show delay, travel driver, exterior distance-field line,
+area wash, and inherited radius). No Search, Library, Settings, context-menu,
+profile, or dialog route has an independent static white focus border.
+
 ## Deliberately deferred
 
 - `GameSurfaceHost`, `VulkanHostSurface`, process-session popups and launch

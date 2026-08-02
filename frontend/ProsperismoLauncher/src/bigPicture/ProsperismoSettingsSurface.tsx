@@ -1,9 +1,9 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {findNodeHandle, Pressable, StyleSheet, Text, UIManager, View} from 'react-native';
 import type {LauncherSettings} from '../core/models';
-import {SHELL_METRICS} from './shellMetrics';
 import {SHELL_SETTINGS_METRICS} from './shellSurfaces';
 import {shellTextStyle} from './shellTypography';
+import {ShellFocusOverlay} from './ShellFocusOverlay';
 
 export const PROSPERISMO_SETTINGS_CATEGORIES = [
   ['General', 'Game folders, library order, and launcher behavior'],
@@ -37,8 +37,8 @@ function nextValue<T>(values: readonly T[], value: T): T {
   return values[(values.indexOf(value) + 1) % values.length];
 }
 
-function SettingsFocus({active}: {active: boolean}) {
-  return active ? <View pointerEvents="none" style={styles.focus} /> : null;
+function SettingsFocus({active, width, height}: {active: boolean; width: number; height: number}) {
+  return <ShellFocusOverlay active={active} width={width} height={height} radius={0} crop={{top: 3, bottom: 5}} />;
 }
 
 function CategoryGlyph({index}: {index: number}) {
@@ -65,7 +65,7 @@ export function ProsperismoSettingsRoot({selectedIndex, onSelect, onActivate, on
         onFocus={() => onSelect(index)}
         onPress={() => onActivate(index)}
         style={styles.categoryRow}>
-        <SettingsFocus active={index === selectedIndex} />
+        <SettingsFocus active={index === selectedIndex} width={SHELL_SETTINGS_METRICS.listWidth} height={SHELL_SETTINGS_METRICS.capturedRowPitch} />
         <CategoryGlyph index={index} />
         <View style={styles.categoryCopy}>
           <Text style={styles.categoryTitle}>{name}</Text>
@@ -163,7 +163,7 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
         onFocus={() => { setFocusColumn('tabs'); setActiveCategory(index); setFocusedIndex(0); }}
         onPress={() => { setActiveCategory(index); setFocusedIndex(0); setFocusColumn('rows'); }}
         style={styles.detailTab}>
-        {focusColumn === 'tabs' && activeCategory === index && <SettingsFocus active />}
+        <SettingsFocus active={focusColumn === 'tabs' && activeCategory === index} width={SHELL_SETTINGS_METRICS.tabWidth} height={SHELL_SETTINGS_METRICS.capturedTabPitch} />
         <Text style={[styles.detailTabText, activeCategory !== index && styles.detailTabTextDim]}>{label}</Text>
       </Pressable>)}
     </View>
@@ -175,7 +175,7 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
         onFocus={() => setFocusedIndex(index)}
         onPress={row.onPress}
         style={styles.detailRow}>
-        <SettingsFocus active={focusColumn === 'rows' && focusedIndex === index} />
+        <SettingsFocus active={focusColumn === 'rows' && focusedIndex === index} width={SHELL_SETTINGS_METRICS.tabPanelWidth} height={SHELL_SETTINGS_METRICS.detailRowPitch} />
         <Text style={styles.detailLabel}>{row.label}</Text>
         <Text numberOfLines={1} style={styles.detailValue}>{row.value}</Text>
       </Pressable>)}
@@ -188,9 +188,6 @@ const styles = StyleSheet.create({
   pageTitle: {position: 'absolute', left: 96, top: 82, color: '#fff', ...shellTextStyle('SizeLarge')},
   categoryList: {position: 'absolute', left: SHELL_SETTINGS_METRICS.listLeft, top: SHELL_SETTINGS_METRICS.listTop, width: SHELL_SETTINGS_METRICS.listWidth, height: SHELL_SETTINGS_METRICS.listHeight},
   categoryRow: {height: SHELL_SETTINGS_METRICS.capturedRowPitch, paddingLeft: SHELL_SETTINGS_METRICS.titleMarginLeft, paddingRight: SHELL_SETTINGS_METRICS.titleMarginRight, flexDirection: 'row', alignItems: 'center'},
-  // FocusStyle.ListItem crops the target by 3px top/5px bottom, then the
-  // renderer places its 3px line at the recovered 3px exterior offset.
-  focus: {position: 'absolute', left: -6, top: -3, right: -6, bottom: -1, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)', borderRadius: 6},
   categoryGlyph: {width: SHELL_SETTINGS_METRICS.iconSize, height: SHELL_SETTINGS_METRICS.iconSize, marginRight: SHELL_SETTINGS_METRICS.imageMarginRight, alignItems: 'center', justifyContent: 'center'},
   glyphMark: {width: 28, height: 28, borderWidth: 3, borderColor: '#fff'}, glyphRound: {borderRadius: 14}, glyphDiamond: {transform: [{rotate: '45deg'}]}, glyphInner: {position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff'},
   categoryCopy: {flex: 1}, categoryTitle: {color: '#fff', ...shellTextStyle('SizeNormal')}, categoryDescription: {marginTop: 5, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')}, chevron: {width: 52, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXLarge')},
