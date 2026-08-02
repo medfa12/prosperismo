@@ -14,9 +14,9 @@ The single most important thing on this page: **`docs/ps5-figma-layout.md` is tr
 hand off screenshots by a member of the public. It is the weakest evidence in this
 corpus and it must never win an argument against a bundle constant.**
 
-For the KytyPS5 transfer, use **`docs/kytyps5-shell-migration-handoff.md`**. It pins the
-authoritative branch/commit, retained evidence roots, source-porting map, verification
-baseline, remaining work, and local worktree state at the 2026-08-02 handoff.
+For historical implementation provenance, use the archived migration material
+under `docs/imported/`. The active React Native implementation, current source
+locations, and verification baseline are in `react-native-shell-migration.md`.
 
 For the product-wide target and the current implementation ledger, start with
 **`docs/ps5-reactive-shell.md`**. This index ranks evidence; the reactive-shell

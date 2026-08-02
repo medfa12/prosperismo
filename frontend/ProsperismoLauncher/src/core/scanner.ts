@@ -58,13 +58,17 @@ export async function scanGameDirectories(
         entry => entry.kind === 'directory' && entry.name.toLocaleLowerCase('en-US') === 'sce_sys',
       );
       let paramJson: string | undefined;
-      let artworkPath: string | undefined;
+      let iconPath: string | undefined;
+      let backgroundPath: string | undefined;
       if (paramEntry) {
         const systemEntries = await safeList(host, paramEntry.path);
         const param = systemEntries.find(
           entry => entry.kind === 'file' && entry.name.toLocaleLowerCase('en-US') === 'param.json',
         );
-        const artwork = systemEntries.find(
+        const icon = systemEntries.find(
+          entry => entry.kind === 'file' && entry.name.toLocaleLowerCase('en-US') === 'icon0.png',
+        );
+        const background = systemEntries.find(
           entry => entry.kind === 'file' && entry.name.toLocaleLowerCase('en-US') === 'pic0.png',
         );
         if (param) {
@@ -74,7 +78,8 @@ export async function scanGameDirectories(
             paramJson = undefined;
           }
         }
-        artworkPath = artwork?.path;
+        iconPath = icon?.path;
+        backgroundPath = background?.path;
       }
 
       const metadata = parseParamJson(paramJson, baseName(directory.path));
@@ -84,7 +89,9 @@ export async function scanGameDirectories(
         baseDirectory: directory.path,
         gamePath,
         ebootPath: eboot.path || joinPath(directory.path, 'eboot.bin'),
-        artworkPath,
+        iconPath,
+        backgroundPath,
+        artworkPath: iconPath,
         executable: 'eboot.bin',
         customSettings: Boolean(custom),
         settings: {...(custom ?? globalSettings)},
