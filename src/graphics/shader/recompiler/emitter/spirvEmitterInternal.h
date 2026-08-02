@@ -107,6 +107,7 @@ enum : uint32_t {
 	ScopeWorkgroup                 = 2,
 	ScopeSubgroup                  = 3,
 	MemorySemanticsNone            = 0,
+	MemorySemanticsAcquire         = 0x00000002u,
 	MemorySemanticsAcquireRelease  = 0x00000008u,
 	MemorySemanticsUniformMemory   = 0x00000040u,
 	MemorySemanticsWorkgroupMemory = 0x00000100u,

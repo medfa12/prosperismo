@@ -137,6 +137,47 @@ uint32_t SpirvInstructionOpcodeCount(const std::vector<uint32_t>& binary, uint32
 	return count;
 }
 
+bool SpirvContainsAtomicWithScopeAndSemantics(const std::vector<uint32_t>& binary,
+                                              uint32_t opcode, uint32_t scope,
+                                              uint32_t semantics) {
+	auto ConstantValue = [&](uint32_t id, uint32_t* value) {
+		for (size_t i = 5; i < binary.size();) {
+			const uint32_t word       = binary[i];
+			const uint32_t op         = word & 0xffffu;
+			const uint32_t word_count = word >> 16u;
+			if (word_count == 0 || i + word_count > binary.size()) {
+				return false;
+			}
+			if (op == 43u && word_count >= 4u && binary[i + 2] == id) {
+				*value = binary[i + 3];
+				return true;
+			}
+			i += word_count;
+		}
+		return false;
+	};
+
+	for (size_t i = 5; i < binary.size();) {
+		const uint32_t word       = binary[i];
+		const uint32_t op         = word & 0xffffu;
+		const uint32_t word_count = word >> 16u;
+		if (word_count == 0 || i + word_count > binary.size()) {
+			return false;
+		}
+		if (op == opcode && word_count >= 6u) {
+			uint32_t actual_scope     = 0;
+			uint32_t actual_semantics = 0;
+			if (ConstantValue(binary[i + 4], &actual_scope) &&
+			    ConstantValue(binary[i + 5], &actual_semantics) && actual_scope == scope &&
+			    actual_semantics == semantics) {
+				return true;
+			}
+		}
+		i += word_count;
+	}
+	return false;
+}
+
 bool SpirvContainsVectorShuffle(const std::vector<uint32_t>&   binary,
                                 const std::array<uint32_t, 4>& selectors) {
 	for (size_t i = 5; i < binary.size();) {
@@ -4991,6 +5032,40 @@ void TestNewShaderRecompilerDsSubDwordLowering() {
 	CheckSpirvBinaryValidates(result.spirv);
 }
 
+void TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain() {
+	const uint32_t shader[] = {
+	    EncodeDs0(0xde, 0), EncodeDs1(0, 2, 1), // ds_write_b96 v[2:4], v1
+	    EncodeDs0(0x00, 0), EncodeDs1(0, 5, 1), // ds_add_u32 v1, v5
+	    EncodeDs0(0x36, 0), EncodeDs1(6, 0, 1), // ds_read_b32 v6, v1
+	    0xbf810000u,
+	};
+
+	ShaderRecompiler::CompileOptions options;
+	options.stage   = ShaderType::Compute;
+	options.dump_ir = true;
+
+	ShaderRecompiler::CompileResult result;
+	std::string                     error;
+	Check(ShaderRecompiler::TryRecompile(shader, options, result, &error), error.c_str());
+	Check(Common::ContainsStr(result.ir_dump, "DsWriteB32"),
+	      "ordinary LDS write did not lower through shared DS store IR");
+	Check(Common::ContainsStr(result.ir_dump, "AtomicAddU32"),
+	      "DS atomic add did not lower through shared LDS atomic IR");
+	Check(Common::ContainsStr(result.ir_dump, "DsReadB32"),
+	      "ordinary LDS read did not lower through shared DS load IR");
+	Check(SpirvContainsAtomicWithScopeAndSemantics(result.spirv, 227, 2, 0x102),
+	      "ordinary LDS read is not an acquire Workgroup OpAtomicLoad");
+	Check(SpirvContainsAtomicWithScopeAndSemantics(result.spirv, 229, 2, 0x108),
+	      "ordinary LDS write is not an acquire-release Workgroup OpAtomicExchange");
+	Check(SpirvInstructionOpcodeCount(result.spirv, 229) >= 3,
+	      "wide ordinary LDS write did not keep all dwords in the atomic memory domain");
+	Check(SpirvContainsOpcode(result.spirv, 234),
+	      "mixed LDS program does not contain the DS OpAtomicIAdd");
+	Check(SpirvContainsOpcode(result.spirv, 250),
+	      "ordinary LDS write is not guarded by the active EXEC mask");
+	CheckSpirvBinaryValidates(result.spirv);
+}
+
 void TestNewShaderRecompilerDsWideAndAtomicLowering() {
 	const uint32_t shader[] = {
 	    EncodeDs0(0x4d, 4),  EncodeDs1(0, 10, 1), // ds_write_b64 v[10:11], v1
@@ -7413,6 +7488,10 @@ int main(int argc, char** argv) {
 	using namespace Libs::Graphics;
 
 	EnsureConfigInitialized();
+	if (argc == 2 && std::strcmp(argv[1], "--lds-atomic-domain-only") == 0) {
+		TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain();
+		return 0;
+	}
 	if (argc == 2 && std::strcmp(argv[1], "--scalar-u64-compare-only") == 0) {
 		TestNewShaderRecompilerScalarBitfieldAlu();
 		return 0;
@@ -7478,6 +7557,7 @@ int main(int argc, char** argv) {
 	TestNewShaderRecompilerFlatStoreLowering();
 	TestNewShaderRecompilerAtomicLowering();
 	TestNewShaderRecompilerDsReadWrite2Lowering();
+	TestOrdinaryLdsAccessesShareTheWorkgroupAtomicMemoryDomain();
 	TestNewShaderRecompilerDsSubDwordLowering();
 	TestNewShaderRecompilerDsWideAndAtomicLowering();
 	TestNewShaderRecompilerDsSwizzleLowering();

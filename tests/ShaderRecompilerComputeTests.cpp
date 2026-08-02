@@ -13366,6 +13366,30 @@ TestCase DsAtomicReturnVariants() {
 	         O::DsXorRtnB32, O::DsWrxchgRtnB32, O::DsReadB32, O::BufferStoreDword, O::SEndpgm}};
 }
 
+TestCase LdsOrdinaryAccessesShareAtomicDomain() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	AppendVMovU32(&code, 1, 0);
+	AppendVMovU32(&code, 2, 10);
+	code.push_back(EncodeDs0(0x0d, 0));
+	code.push_back(EncodeDs1(0, 2, 1));
+	AppendVMovU32(&code, 3, 5);
+	code.push_back(EncodeDs0(0x00, 0));
+	code.push_back(EncodeDs1(0, 3, 1));
+	code.push_back(EncodeDs0(0x36, 0));
+	code.push_back(EncodeDs1(4, 0, 1));
+	AppendStoreVgpr(&code, 4, 0);
+	AppendEnd(&code);
+
+	return {"LdsOrdinaryAtomicDomain",
+	        code,
+	        {0},
+	        {15},
+	        {O::VMovB32, O::DsWriteB32, O::DsAddU32, O::DsReadB32, O::BufferStoreDword,
+	         O::SEndpgm}};
+}
+
 TestCase DsMiscVariants() {
 	using O = ShaderOpcode;
 
@@ -14873,6 +14897,7 @@ std::vector<TestCase> MakeCases() {
 	AddCase(DsReadWrite2Variants);
 	AddCase(DsAtomicNoReturnVariants);
 	AddCase(DsAtomicReturnVariants);
+	AddCase(LdsOrdinaryAccessesShareAtomicDomain);
 	AddCase(DsMiscVariants);
 	AddCase(DsFloatMinMaxUsesSeparateCompareOperand);
 	AddCase(DsSwizzleInvalidSourceLaneZero);
@@ -17563,6 +17588,11 @@ int main(int argc, char** argv) {
 	EnsureConfigInitialized();
 	CheckLeastRecentlyUsedCacheOrdering();
 	CheckColorDccDescriptorIdentity();
+	if (argc == 2 && std::strcmp(argv[1], "--lds-atomic-domain-only") == 0) {
+		VulkanHarness vulkan;
+		RunCase(&vulkan, LdsOrdinaryAccessesShareAtomicDomain());
+		return 0;
+	}
 	if (argc == 2 && std::strcmp(argv[1], "--vop3-u64-compare-only") == 0) {
 		VulkanHarness vulkan;
 		RunCase(&vulkan, VectorVop3CompareGtU64OnGpu());

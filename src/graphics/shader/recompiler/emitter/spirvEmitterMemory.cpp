@@ -480,6 +480,25 @@ uint32_t EmitLdsElementPointer(EmitterState& state, uint32_t index) {
 	return pointer;
 }
 
+// LDS ordinary and DS atomic operations can address the same workgroup word. Keep both in the
+// SPIR-V atomic domain; mixing OpLoad/OpStore with atomics on that word is a Vulkan data race.
+uint32_t EmitLdsAtomicLoadU32(EmitterState& state, uint32_t pointer) {
+	const auto value     = state.builder.AllocateId();
+	const auto semantics = MemorySemanticsAcquire | MemorySemanticsWorkgroupMemory;
+	state.builder.AddFunction({OpAtomicLoad, state.uint_type, value, pointer,
+	                           ConstantU32(state, ScopeWorkgroup),
+	                           ConstantU32(state, semantics)});
+	return value;
+}
+
+void EmitLdsAtomicExchangeU32(EmitterState& state, uint32_t pointer, uint32_t value) {
+	const auto previous  = state.builder.AllocateId();
+	const auto semantics = MemorySemanticsAcquireRelease | MemorySemanticsWorkgroupMemory;
+	state.builder.AddFunction({OpAtomicExchange, state.uint_type, previous, pointer,
+	                           ConstantU32(state, ScopeWorkgroup),
+	                           ConstantU32(state, semantics), value});
+}
+
 uint32_t EmitLdsElementInBounds(EmitterState& state, uint32_t index) {
 	const auto in_bounds = state.builder.AllocateId();
 	const auto dwords    = state.needs_function_lds ? 8192u : 1024u;
@@ -511,7 +530,7 @@ uint32_t EmitMemoryLoadDwordValueU32(EmitterState& state, const IR::Instruction&
 		return value;
 	};
 	if (mem.kind == IR::ResourceKind::Lds) {
-		return LoadFromPointer(EmitLdsElementPointer(state, index));
+		return EmitLdsAtomicLoadU32(state, EmitLdsElementPointer(state, index));
 	}
 	if (mem.kind == IR::ResourceKind::Gds) {
 		const auto in_bounds = EmitGdsElementInBounds(state, index);
@@ -566,15 +585,20 @@ uint32_t EmitMemoryLoadSubDwordValueU32(EmitterState& state, const IR::Instructi
 	const auto index   = state.builder.AllocateId();
 	state.builder.AddFunction(
 	    {OpShiftRightLogical, state.uint_type, index, address, ConstantU32(state, 2)});
-	auto LoadFromPointer = [&](uint32_t pointer) {
-		const auto word         = state.builder.AllocateId();
+	auto LoadFromPointer = [&](uint32_t pointer, bool atomic) {
+		uint32_t   word         = 0;
 		const auto byte_in_word = state.builder.AllocateId();
 		const auto shift        = state.builder.AllocateId();
 		const auto shifted      = state.builder.AllocateId();
 		const auto masked       = state.builder.AllocateId();
 		const auto value        = sign_extend ? state.builder.AllocateId() : masked;
 		const auto mask         = data_bits == 8u ? 0xffu : 0xffffu;
-		state.builder.AddFunction({OpLoad, state.uint_type, word, pointer});
+		if (atomic) {
+			word = EmitLdsAtomicLoadU32(state, pointer);
+		} else {
+			word = state.builder.AllocateId();
+			state.builder.AddFunction({OpLoad, state.uint_type, word, pointer});
+		}
 		state.builder.AddFunction(
 		    {OpBitwiseAnd, state.uint_type, byte_in_word, address, ConstantU32(state, 3)});
 		state.builder.AddFunction(
@@ -593,18 +617,18 @@ uint32_t EmitMemoryLoadSubDwordValueU32(EmitterState& state, const IR::Instructi
 		return value;
 	};
 	if (mem.kind == IR::ResourceKind::Lds) {
-		return LoadFromPointer(EmitLdsElementPointer(state, index));
+		return LoadFromPointer(EmitLdsElementPointer(state, index), true);
 	}
 	if (mem.kind == IR::ResourceKind::Gds) {
 		const auto in_bounds = EmitGdsElementInBounds(state, index);
 		return EmitValueOrZeroIfCondition(state, in_bounds, [&]() {
-			return LoadFromPointer(EmitGdsElementPointer(state, index));
+			return LoadFromPointer(EmitGdsElementPointer(state, index), false);
 		});
 	}
 	if (IsStorageBufferMemoryKind(mem.kind)) {
 		const auto in_bounds = EmitStorageBufferElementInBounds(state, mem, index, inst.pc);
 		return EmitValueOrZeroIfCondition(state, in_bounds, [&]() {
-			return LoadFromPointer(EmitStorageBufferElementPointer(state, mem, index, inst.pc));
+			return LoadFromPointer(EmitStorageBufferElementPointer(state, mem, index, inst.pc), false);
 		});
 	}
 	return ConstantU32(state, 0);
@@ -635,7 +659,11 @@ void EmitMemoryStoreU32(EmitterState& state, const IR::Instruction& inst, IR::Re
 	}
 	EmitIfCondition(state, in_bounds, [&]() {
 		const auto pointer = EmitMemoryElementPointer(state, store_inst.memory, index, inst.pc);
-		state.builder.AddFunction({OpStore, pointer, value});
+		if (store_inst.memory.kind == IR::ResourceKind::Lds) {
+			EmitLdsAtomicExchangeU32(state, pointer, value);
+		} else {
+			state.builder.AddFunction({OpStore, pointer, value});
+		}
 	});
 }
 
@@ -1468,14 +1496,13 @@ void EmitDsWriteAddtidB32(EmitterState& state, const IR::Instruction& inst) {
 	const auto value   = EmitValueLoad(state, inst.src[0]);
 	const auto index   = EmitDsAddtidDwordIndex(state, inst, 1);
 	const auto pointer = EmitLdsElementPointer(state, index);
-	state.builder.AddFunction({OpStore, pointer, value});
+	EmitLdsAtomicExchangeU32(state, pointer, value);
 }
 
 void EmitDsReadAddtidB32(EmitterState& state, const IR::Instruction& inst) {
 	const auto index   = EmitDsAddtidDwordIndex(state, inst, 0);
 	const auto pointer = EmitLdsElementPointer(state, index);
-	const auto value   = state.builder.AllocateId();
-	state.builder.AddFunction({OpLoad, state.uint_type, value, pointer});
+	const auto value   = EmitLdsAtomicLoadU32(state, pointer);
 	EmitStoreU32(state, inst.dst, value);
 }
 
