@@ -122,6 +122,10 @@ void CommandBuffer::End() const {
 	auto buffer = Handle();
 
 	auto result = buffer.end();
+	if (result != vk::Result::eSuccess) {
+		LOGF("CommandBuffer::End failed: result=%d debug_op=%u submit=%" PRIu64 "\n",
+		     static_cast<int>(result), m_debug_op, m_debug_submit_id);
+	}
 
 	EXIT_NOT_IMPLEMENTED(result != vk::Result::eSuccess);
 }
