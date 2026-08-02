@@ -88,6 +88,18 @@ struct ShaderVertexInputInfo {
 	bool                    fetch_embedded    = false;
 };
 
+// Merged ES/GS geometry replay executed as a compute dispatch. Exports are
+// redirected into a storage buffer sized per subgroup: positions and
+// parameters per vertex slot, packed connectivity per primitive slot, and the
+// GS_ALLOC_REQ counts.
+struct ShaderGeometryReplayInfo {
+	bool     enabled         = false;
+	uint32_t vertex_slots    = 0;
+	uint32_t primitive_slots = 0;
+
+	bool operator==(const ShaderGeometryReplayInfo& other) const = default;
+};
+
 struct ShaderComputeInputInfo {
 	uint32_t           threads_num[3]             = {0, 0, 0};
 	uint32_t           dispatch_threads_num[3]    = {0, 0, 0};
@@ -98,6 +110,7 @@ struct ShaderComputeInputInfo {
 	int                thread_ids_num             = 0;
 	int                workgroup_register         = 0;
 	bool               tg_size_en                 = false;
+	ShaderGeometryReplayInfo geometry_replay;
 	ShaderStageRuntime stage;
 };
 

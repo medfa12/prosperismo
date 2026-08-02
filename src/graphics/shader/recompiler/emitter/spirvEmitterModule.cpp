@@ -369,6 +369,10 @@ void AddDescriptorAnnotationsAndNames(EmitterState& state) {
 	if (state.gds_variable != 0) {
 		Decorate(state.gds_variable, "gds", IR::DescriptorBindingKind::Gds);
 	}
+	if (state.geometry_replay_variable != 0) {
+		Decorate(state.geometry_replay_variable, "geometry_replay",
+		         IR::DescriptorBindingKind::GeometryReplay);
+	}
 	if (state.flattened_srt_variable != 0) {
 		Decorate(state.flattened_srt_variable, "flattened_srt",
 		         IR::DescriptorBindingKind::FlattenedSrt);
@@ -681,6 +685,10 @@ void EmitHeaderAndTypes(EmitterState& state) {
 		state.builder.AddType(
 		    {OpVariable, state.ptr_storage_buffer, state.gds_variable, StorageClassStorageBuffer});
 	}
+	if (state.geometry_replay_variable != 0) {
+		state.builder.AddType({OpVariable, state.ptr_storage_buffer,
+		                       state.geometry_replay_variable, StorageClassStorageBuffer});
+	}
 	if (state.push_constant_variable != 0) {
 		const auto dword_count =
 		    ConstantU32(state, state.program.bindings.push_constant_size / sizeof(uint32_t));
@@ -833,6 +841,9 @@ void AllocateDescriptorVariables(EmitterState& state) {
 	}
 	if (DescriptorBinding(state, IR::DescriptorBindingKind::Gds) != nullptr) {
 		state.gds_variable = state.builder.AllocateId();
+	}
+	if (DescriptorBinding(state, IR::DescriptorBindingKind::GeometryReplay) != nullptr) {
+		state.geometry_replay_variable = state.builder.AllocateId();
 	}
 }
 

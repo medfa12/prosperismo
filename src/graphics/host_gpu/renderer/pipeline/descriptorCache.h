@@ -59,6 +59,7 @@ public:
 		std::vector<vk::Sampler>    samplers;
 		std::vector<BufferView>     addresses;
 		BufferView                  gds;
+		BufferView                  geometry_replay;
 		BufferView                  flattened_srt;
 		BufferView                  user_data;
 	};

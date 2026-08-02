@@ -144,6 +144,10 @@ void CollectComputeInputs(const Program& program, const ShaderComputeInputInfo* 
 		if (compute->dispatch_thread_dimensions) {
 			AddInput(info, StageInputKind::GlobalInvocationId, 0, 3, "gl_GlobalInvocationID");
 		}
+		if (compute->geometry_replay.enabled) {
+			AddInput(info, StageInputKind::WorkgroupId, 0, 3, "gl_WorkGroupID");
+			AddInput(info, StageInputKind::LocalInvocationIndex, 0, 1, "gl_LocalInvocationIndex");
+		}
 	}
 	if (NeedsLocalInvocationIndex(program)) {
 		AddInput(info, StageInputKind::LocalInvocationIndex, 0, 1, "gl_LocalInvocationIndex");

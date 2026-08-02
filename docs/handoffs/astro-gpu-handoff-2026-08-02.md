@@ -309,16 +309,22 @@ blank transition frames separate from the later title/world-map lifetime:
    required by the following indexed-indirect draw~~ -- both halves are done:
    the LDS allocation reaches IR/SPIR-V/cache-key, and the shader-write
    barrier now reaches DrawIndirect/IndirectCommandRead;
-4. replay the captured `0x500704F00` / `0x500705600` pair as a 256-invocation
-   merged ES/GS compute pass. Preserve Workgroup LDS, barriers and EXEC; map the
-   terminal ES `s_setpc_b64 s[6:7]` to the known GS phase; synthesize the exact
-   topology-dependent ESGS offsets and vertex/instance inputs; then retain
-   wave-zero dynamic `GS_ALLOC_REQ`, target-20 connectivity, POS/PARAM exports
-   and issue the resulting indexed-indirect draw. This exact shader needs no
-   emit/cut lowering. A direct mesh-stage shortcut is unavailable on the
-   measured host, whose required-subgroup-size support is compute-only. Admit
-   both measured launch shapes: auto point-list 1x1 and indexed point-list
-   1x512;
+4. replay the captured `0x500704F00` / `0x500705600` pair as a merged ES/GS
+   compute pass. The recompiler half of this is now DONE: the host merges the
+   pair byte-wise (`TryMergeEsGsForReplay`, terminal ES `s_setpc_b64 s[6:7]`
+   patched to `s_nop`), and the recompiler compiles the merged program as
+   Compute in geometry-replay mode (`ShaderComputeInputInfo::geometry_replay`).
+   In that mode POS/PARAM/PRIM exports become storage-buffer writes into a
+   per-subgroup replay block (layout `IR::GeometryReplayLayout`: pos[216]vec4 |
+   params[n][216]vec4 | prim[210] | counts[2], 8-dword header), wave-zero
+   `GS_ALLOC_REQ` stores the m0 vertex/primitive counts, and the emitter seeds
+   v0 = tid*4 (ESGS ring offset), v8 = global instance index and the packed
+   SGPR3 wave-launch word. The captured pair recompiles offline to validating
+   SPIR-V (`shader_cfg_tests --geometry-replay-only`, artifact-gated).
+   Remaining host half: allocate/fill the replay SSBO (prim slots pre-filled
+   `0x80000000`), dispatch subgroup-count workgroups at the measured launch
+   shapes (auto 1x1 and indexed 1x512), barrier, then a synthetic passthrough
+   draw expanding target-20 connectivity;
 5. keep unsupported launch shapes fail-closed. A register classifier that
    recognizes the state is useful, but it is not a render fix without the
    ES/GS ring, output allocation, vertex/primitive export and indirect replay;

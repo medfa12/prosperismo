@@ -970,8 +970,18 @@ bool LowerControlInstruction(const Decoder::Instruction& decoded, BasicBlock& bl
 			return LowerControlMarker(decoded, block, Opcode::Waitcnt, true, error);
 		case Decoder::Opcode::SBarrier:
 			return LowerControlMarker(decoded, block, Opcode::Barrier, false, error);
-		case Decoder::Opcode::SSendmsg:
-			return LowerControlMarker(decoded, block, Opcode::Sendmsg, true, error);
+		case Decoder::Opcode::SSendmsg: {
+			if (!LowerControlMarker(decoded, block, Opcode::Sendmsg, true, error)) {
+				return false;
+			}
+			auto&      inst = block.instructions.back();
+			const auto m0   = M0Operand();
+			if (!LowerSourceOperand(m0, inst.src[1], error)) {
+				return false;
+			}
+			inst.src_count = 2;
+			return true;
+		}
 		case Decoder::Opcode::SSetregB32:
 		case Decoder::Opcode::SSleep:
 			return LowerControlMarker(decoded, block, Opcode::ControlNop, true, error);
@@ -1218,6 +1228,19 @@ bool LowerProgram(const Decoder::Program& decoded, const CFG::Graph& cfg, Shader
 	}
 
 	return true;
+}
+
+uint32_t GeometryReplayParameterCount(const Program& program) {
+	uint32_t count = 0;
+	for (const auto& block: program.blocks) {
+		for (const auto& inst: block.instructions) {
+			if (inst.op == Opcode::Export &&
+			    inst.export_info.kind == ExportTargetKind::Parameter) {
+				count = std::max(count, inst.export_info.index + 1u);
+			}
+		}
+	}
+	return count;
 }
 
 } // namespace Libs::Graphics::ShaderRecompiler::IR

@@ -290,6 +290,9 @@ bool AllocateBindings(Program& program, const BindingLayoutOptions& options, std
 	if (UsesGds(program)) {
 		AddBinding(next, DescriptorBindingKind::Gds);
 	}
+	if (program.geometry_replay) {
+		AddBinding(next, DescriptorBindingKind::GeometryReplay);
+	}
 	if (!program.info.addresses.empty()) {
 		std::vector<uint32_t> resources(program.info.addresses.size());
 		for (uint32_t i = 0; i < resources.size(); i++) {

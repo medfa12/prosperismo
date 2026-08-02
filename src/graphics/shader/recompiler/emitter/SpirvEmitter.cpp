@@ -252,6 +252,9 @@ bool ValidateNativeProgram(const IR::Program& program, std::string* error) {
 	if (uses_gds) {
 		Expect(Kind::Gds);
 	}
+	if (program.geometry_replay) {
+		Expect(Kind::GeometryReplay);
+	}
 	if (!program.info.addresses.empty()) {
 		Expect(Kind::AddressMemory, Dense(program.info.addresses.size()));
 	}

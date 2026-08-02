@@ -256,6 +256,7 @@ enum : uint32_t {
 	GlslSqrt           = 31,
 	GlslInverseSqrt    = 32,
 	GlslFMin           = 37,
+	GlslUMin           = 38,
 	GlslFMax           = 40,
 	GlslFClamp         = 43,
 	GlslLdexp          = 53,
@@ -375,6 +376,7 @@ struct EmitterState {
 	uint32_t                                         ptr_address_memory_array  = 0;
 	uint32_t                                         address_memory_variable   = 0;
 	uint32_t                                         gds_variable              = 0;
+	uint32_t                                         geometry_replay_variable  = 0;
 	uint32_t                                         push_constant_array_type  = 0;
 	uint32_t                                         push_constant_block_type  = 0;
 	uint32_t                                         ptr_push_constant_block   = 0;
@@ -1551,6 +1553,14 @@ uint32_t InitialRegisterValue(const EmitterState& state, IR::Register reg);
 void EmitRegisterVariables(EmitterState& state);
 
 void EmitComputeInputRegisters(EmitterState& state);
+
+bool GeometryReplayActive(const EmitterState& state);
+
+void EmitGeometryReplayInputRegisters(EmitterState& state);
+
+void EmitGeometryReplayExport(EmitterState& state, const IR::Instruction& inst);
+
+void EmitSendmsg(EmitterState& state, const IR::Instruction& inst);
 
 void EmitPixelInputRegisters(EmitterState& state);
 

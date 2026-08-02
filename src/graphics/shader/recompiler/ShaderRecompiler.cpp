@@ -744,6 +744,19 @@ bool TryRecompile(std::span<const uint32_t> code, const CompileOptions& options,
 	ir.lds_dword_count = options.lds_dword_count;
 	ir.user_data_base  = options.user_data_base;
 	ir.user_data_count = options.user_data_count;
+	if (options.stage == ShaderType::Compute && options.compute_input_info != nullptr &&
+	    options.compute_input_info->geometry_replay.enabled) {
+		const auto& replay = options.compute_input_info->geometry_replay;
+		if (replay.vertex_slots == 0 || replay.primitive_slots == 0) {
+			if (error != nullptr) {
+				*error = "geometry replay requires non-zero vertex and primitive slot counts";
+			}
+			return false;
+		}
+		ir.geometry_replay                 = true;
+		ir.geometry_replay_vertex_slots    = replay.vertex_slots;
+		ir.geometry_replay_primitive_slots = replay.primitive_slots;
+	}
 	LOGF("%s phase end: stage=%s hash=0x%016" PRIx64 " IR LowerProgram blocks=%" PRIu64
 	     " elapsed_ms=%" PRIu64 "\n",
 	     GetDumpLabel(options), StageName(options.stage), options.shader_hash,

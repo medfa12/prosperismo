@@ -368,7 +368,7 @@ void EmitInstruction(EmitterState& state, const IR::Instruction& inst) {
 		case IR::Opcode::ControlNop: EmitControlNop(state, inst); break;
 		case IR::Opcode::Waitcnt: EmitWaitcnt(state, inst); break;
 		case IR::Opcode::Barrier: EmitBarrier(state, inst); break;
-		case IR::Opcode::Sendmsg:
+		case IR::Opcode::Sendmsg: EmitSendmsg(state, inst); break;
 		case IR::Opcode::TtraceData:
 		case IR::Opcode::InstPrefetch: EmitControlNop(state, inst); break;
 		case IR::Opcode::LoadInputF32: EmitLoadInputF32(state, inst); break;
@@ -1126,6 +1126,7 @@ void EmitFunction(EmitterState& state, const IR::Program& program) {
 
 	EmitRegisterVariables(state);
 	EmitComputeInputRegisters(state);
+	EmitGeometryReplayInputRegisters(state);
 	EmitPixelInputRegisters(state);
 	EmitVertexInputRegisters(state);
 	EmitStorageBufferOffsets(state);

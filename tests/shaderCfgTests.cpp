@@ -6,6 +6,7 @@
 #include "graphics/guest_gpu/pm4.h"
 #include "graphics/host_gpu/renderer/image/imageView.h"
 #include "graphics/host_gpu/renderer/image/textureCommon.h"
+#include "graphics/host_gpu/renderer/nativePrimitiveReplay.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderResourceBarrier.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderSubgroup.h"
 #include "graphics/shader/recompiler/ExecMask.h"
@@ -30,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iterator>
 #include <span>
 #include <sstream>
@@ -1034,6 +1036,171 @@ void TestNewShaderRecompilerSoppMarkers() {
 	Check(SpirvContainsControlBarrierWithSemantics(result.spirv, 2u, 2u, 0x948u),
 	      "SPIR-V barrier does not cover Uniform, Workgroup, and Image memory");
 	CheckSpirvBinaryValidates(result.spirv);
+}
+
+void TestGeometryReplayComputeTranslation() {
+	// Synthetic merged ES/GS pair exercising the replay-as-compute contract
+	// without shipping captured bytes: ES stages its payload through LDS and
+	// tail-calls the GS, which allocates via GS_ALLOC_REQ and exports
+	// position, one parameter, and packed connectivity.
+	const uint32_t es[] = {
+	    EncodeDs0(0x0d), EncodeDs1(0, 8, 0), // ds_write_b32 v0, v8
+	    EncodeSopp(0x0c, 0),                 // s_waitcnt 0
+	    EsGsMergeSetpcWord,                  // s_setpc_b64 s[6:7]
+	};
+	const uint32_t gs[] = {
+	    EncodeVop1(1, 0, 128),                // v_mov_b32 v0, 0
+	    EncodeVop1(1, 1, 128),                // v_mov_b32 v1, 0
+	    EncodeVop1(1, 2, 128),                // v_mov_b32 v2, 0
+	    EncodeVop1(1, 3, 242),                // v_mov_b32 v3, 1.0
+	    EncodeVop1(1, 4, 128),                // v_mov_b32 v4, 0
+	    EncodeVop1(1, 5, 128),                // v_mov_b32 v5, 0
+	    EncodeVop1(1, 6, 128),                // v_mov_b32 v6, 0
+	    EncodeVop1(1, 7, 242),                // v_mov_b32 v7, 1.0
+	    EncodeVop1(1, 12, 128),               // v_mov_b32 v12, 0 (connectivity)
+	    EncodeSMovB32(124, 255), 0x00001001u, // s_mov_b32 m0, verts=1|prims=1<<12
+	    EncodeSopp(0x10, 9),                  // s_sendmsg sendmsg(MSG_GS_ALLOC_REQ)
+	    EncodeExp0(20, 0x1, false), EncodeExp1(12, 0, 0, 0), // exp prim v12
+	    EncodeExp0(12, 0xf, true), EncodeExp1(0, 1, 2, 3),   // exp pos0 v0:v3 done
+	    EncodeExp0(32, 0xf, false), EncodeExp1(4, 5, 6, 7),  // exp param0 v4:v7
+	    EncodeSopp(0x01, 0),                                 // s_endpgm
+	};
+
+	std::vector<uint32_t> merged;
+	Check(TryMergeEsGsForReplay(es, std::size(es), gs, std::size(gs), merged),
+	      "ES/GS merge rejected a terminal s_setpc_b64 tail call");
+	Check(merged[std::size(es) - 1] == EsGsMergeNopWord,
+	      "ES/GS merge did not neutralize the tail call");
+	std::vector<uint32_t> rejected;
+	Check(!TryMergeEsGsForReplay(gs, std::size(gs), gs, std::size(gs), rejected),
+	      "ES/GS merge accepted a program without the tail call");
+
+	ShaderComputeInputInfo compute;
+	compute.threads_num[0]                  = 64;
+	compute.threads_num[1]                  = 1;
+	compute.threads_num[2]                  = 1;
+	compute.geometry_replay.enabled         = true;
+	compute.geometry_replay.vertex_slots    = 216;
+	compute.geometry_replay.primitive_slots = 210;
+
+	ShaderRecompiler::CompileOptions options;
+	options.stage              = ShaderType::Compute;
+	options.dump_ir            = true;
+	options.compute_input_info = &compute;
+
+	ShaderRecompiler::CompileResult result;
+	std::string                     error;
+	const bool ok = ShaderRecompiler::TryRecompile(merged, options, result, &error);
+	if (!ok) {
+		std::fprintf(stderr, "ShaderCfgTests: synthetic replay recompile error: %s\n",
+		             error.c_str());
+	}
+	Check(ok, "synthetic merged ES/GS pair did not recompile");
+	Check(Common::ContainsStr(result.ir_dump, "Sendmsg null, 0x00000009, m0"),
+	      "s_sendmsg did not carry m0 as an IR source");
+	Check(ShaderRecompiler::IR::GeometryReplayParameterCount(result.program) == 1,
+	      "geometry replay parameter count was not derived from the exports");
+	bool has_replay_binding = false;
+	for (const auto& binding: result.program.bindings.descriptors) {
+		if (binding.kind == ShaderRecompiler::IR::DescriptorBindingKind::GeometryReplay) {
+			has_replay_binding = true;
+		}
+	}
+	Check(has_replay_binding, "geometry replay descriptor binding was not allocated");
+	// Replay-mode exports must not create vertex-stage interface outputs.
+	Check(result.spirv.size() > 5, "geometry replay SPIR-V is implausibly small");
+	CheckSpirvBinaryValidates(result.spirv);
+
+	// The header-driven layout must match on both producer and consumer.
+	const ShaderRecompiler::IR::GeometryReplayLayout layout {216, 210, 1};
+	Check(layout.ParameterOffset(0) == 216u * 4u, "replay parameter offset drifted");
+	Check(layout.PrimitiveOffset() == 216u * 8u, "replay primitive offset drifted");
+	Check(layout.CountsOffset() == 216u * 8u + 210u, "replay counts offset drifted");
+	Check(layout.BlockStride() == 216u * 8u + 210u + 2u, "replay block stride drifted");
+}
+
+std::vector<uint32_t> LoadShaderWords(const std::string& path) {
+	std::ifstream file(path, std::ios::binary);
+	if (!file) {
+		return {};
+	}
+	std::vector<char> bytes((std::istreambuf_iterator<char>(file)),
+	                        std::istreambuf_iterator<char>());
+	std::vector<uint32_t> words(bytes.size() / sizeof(uint32_t));
+	std::memcpy(words.data(), bytes.data(), words.size() * sizeof(uint32_t));
+	return words;
+}
+
+// Recompiles the captured Astro ES/GS pair when the artifacts are present.
+// The bytes are Sony-copyrighted and never committed, so absence is a skip,
+// not a failure.
+void TestGeometryReplayCapturedAstroPair() {
+	const char*       env = std::getenv("PROSPERISMO_NATIVE_GE_DIR");
+	const std::string base =
+	    env != nullptr
+	        ? std::string(env)
+	        : "C:/prosperismo/artifacts/astro-runs/20260802-125515-native-ge-target-state/"
+	          "native-ge";
+	const auto es_words =
+	    LoadShaderWords(base + "/native-ge-es-0000000500704f00-gs-0000000500705600.es.bin");
+	const auto gs_words =
+	    LoadShaderWords(base + "/native-ge-es-0000000500704f00-gs-0000000500705600.gs.bin");
+	if (es_words.empty() || gs_words.empty()) {
+		std::fprintf(stderr,
+		             "ShaderCfgTests: skipping captured ES/GS replay (artifacts not found)\n");
+		return;
+	}
+
+	// The live ES program ends at its terminal tail call; trailing pad bytes
+	// in the capture are not part of the program.
+	size_t es_live = 0;
+	for (size_t i = 0; i < es_words.size(); i++) {
+		if (es_words[i] == EsGsMergeSetpcWord) {
+			es_live = i + 1;
+			break;
+		}
+	}
+	Check(es_live != 0, "captured ES has no terminal s_setpc_b64 s[6:7]");
+
+	std::vector<uint32_t> merged;
+	Check(TryMergeEsGsForReplay(es_words.data(), es_live, gs_words.data(), gs_words.size(),
+	                            merged),
+	      "captured ES/GS pair did not merge");
+
+	ShaderComputeInputInfo compute;
+	compute.threads_num[0]                  = 64;
+	compute.threads_num[1]                  = 1;
+	compute.threads_num[2]                  = 1;
+	compute.geometry_replay.enabled         = true;
+	compute.geometry_replay.vertex_slots    = 216;
+	compute.geometry_replay.primitive_slots = 210;
+
+	ShaderRecompiler::CompileOptions options;
+	options.stage              = ShaderType::Compute;
+	options.dump_ir            = true;
+	options.lds_dword_count    = 0xC00; // measured 12 KiB LDS requirement
+	options.compute_input_info = &compute;
+
+	ShaderRecompiler::CompileResult result;
+	std::string                     error;
+	const bool ok = ShaderRecompiler::TryRecompile(merged, options, result, &error);
+	if (!ok) {
+		std::fprintf(stderr, "ShaderCfgTests: captured replay recompile error: %s\n",
+		             error.c_str());
+	}
+	Check(ok, "captured merged ES/GS pair did not recompile");
+	Check(ShaderRecompiler::IR::GeometryReplayParameterCount(result.program) == 2,
+	      "captured GS should export exactly two parameters");
+	bool has_replay_binding = false;
+	for (const auto& binding: result.program.bindings.descriptors) {
+		if (binding.kind == ShaderRecompiler::IR::DescriptorBindingKind::GeometryReplay) {
+			has_replay_binding = true;
+		}
+	}
+	Check(has_replay_binding, "captured replay pair did not allocate the replay binding");
+	CheckSpirvBinaryValidates(result.spirv);
+	std::fprintf(stderr, "ShaderCfgTests: captured ES/GS replay recompiled (%zu words)\n",
+	             result.spirv.size());
 }
 
 void TestNewShaderRecompilerSopkWaitcntMarkers() {
@@ -7686,6 +7853,11 @@ int main(int argc, char** argv) {
 		TestGfx1013SonyNumericAndBarrierSemantics();
 		return 0;
 	}
+	if (argc == 2 && std::strcmp(argv[1], "--geometry-replay-only") == 0) {
+		TestGeometryReplayComputeTranslation();
+		TestGeometryReplayCapturedAstroPair();
+		return 0;
+	}
 	if (argc != 1) {
 		std::fprintf(stderr, "unknown test selector: %s\n", argv[1]);
 		return 2;
@@ -7696,6 +7868,8 @@ int main(int argc, char** argv) {
 	TestNativeSubgroupPolicy();
 	TestNewShaderRecompilerSMovB32();
 	TestNewShaderRecompilerSoppMarkers();
+	TestGeometryReplayComputeTranslation();
+	TestGeometryReplayCapturedAstroPair();
 	TestGfx1013SonyNumericAndBarrierSemantics();
 	TestNewShaderRecompilerSopkWaitcntMarkers();
 	TestNewShaderRecompilerRdna2ScalarOpcodes();

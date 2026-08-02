@@ -147,6 +147,11 @@ void EmitMrtZExport(EmitterState& state, const IR::Instruction& inst) {
 }
 
 void EmitExport(EmitterState& state, const IR::Instruction& inst) {
+	if (GeometryReplayActive(state)) {
+		EmitGeometryReplayExport(state, inst);
+		return;
+	}
+
 	if (inst.export_info.kind == IR::ExportTargetKind::Null ||
 	    inst.export_info.kind == IR::ExportTargetKind::Primitive) {
 		return;
@@ -184,6 +189,206 @@ void EmitExport(EmitterState& state, const IR::Instruction& inst) {
 
 bool ExportUsesPixelValidMask(const EmitterState& state, const IR::Instruction& inst) {
 	return state.stage == ShaderType::Pixel && inst.export_info.vm && state.needs_pixel_valid_mask;
+}
+
+bool GeometryReplayActive(const EmitterState& state) {
+	return state.stage == ShaderType::Compute && state.program.geometry_replay &&
+	       state.geometry_replay_variable != 0;
+}
+
+static IR::GeometryReplayLayout GeometryReplayLayoutFor(const EmitterState& state) {
+	return {state.program.geometry_replay_vertex_slots,
+	        state.program.geometry_replay_primitive_slots,
+	        IR::GeometryReplayParameterCount(state.program)};
+}
+
+static uint32_t EmitReplayBinaryU32(EmitterState& state, uint32_t opcode, uint32_t a, uint32_t b) {
+	const auto result = state.builder.AllocateId();
+	state.builder.AddFunction({opcode, state.uint_type, result, a, b});
+	return result;
+}
+
+static void EmitReplayStore(EmitterState& state, uint32_t index, uint32_t value) {
+	const auto pointer = state.builder.AllocateId();
+	state.builder.AddFunction({OpAccessChain, state.ptr_storage_buffer_uint, pointer,
+	                           state.geometry_replay_variable, ConstantU32(state, 0), index});
+	state.builder.AddFunction({OpStore, pointer, value});
+}
+
+static uint32_t EmitReplayLoad(EmitterState& state, uint32_t index) {
+	const auto pointer = state.builder.AllocateId();
+	const auto value   = state.builder.AllocateId();
+	state.builder.AddFunction({OpAccessChain, state.ptr_storage_buffer_uint, pointer,
+	                           state.geometry_replay_variable, ConstantU32(state, 0),
+	                           ConstantU32(state, index)});
+	state.builder.AddFunction({OpLoad, state.uint_type, value, pointer});
+	return value;
+}
+
+// Dword index of this subgroup's replay block: header + workgroup * stride.
+static uint32_t EmitReplayBlockBase(EmitterState& state, const IR::GeometryReplayLayout& layout) {
+	const auto wg = EmitInputComponentU32(state, IR::StageInputKind::WorkgroupId, 0);
+	const auto scaled =
+	    EmitReplayBinaryU32(state, OpIMul, wg, ConstantU32(state, layout.BlockStride()));
+	return EmitReplayBinaryU32(state, OpIAdd, scaled,
+	                           ConstantU32(state, IR::GeometryReplayLayout::HeaderDwords));
+}
+
+static void EmitReplayVec4Store(EmitterState& state, const IR::Instruction& inst, uint32_t base,
+                                uint32_t slot_offset) {
+	const auto local = EmitLocalInvocationIndex(state);
+	const auto slot  = EmitReplayBinaryU32(state, OpIMul, local, ConstantU32(state, 4u));
+	auto       index = EmitReplayBinaryU32(state, OpIAdd, base, slot);
+	if (slot_offset != 0) {
+		index = EmitReplayBinaryU32(state, OpIAdd, index, ConstantU32(state, slot_offset));
+	}
+	const auto vec = EmitExportVec4F32(state, inst);
+	for (uint32_t c = 0; c < 4u; c++) {
+		const auto component = state.builder.AllocateId();
+		const auto bits      = state.builder.AllocateId();
+		state.builder.AddFunction({OpCompositeExtract, state.float_type, component, vec, c});
+		state.builder.AddFunction({OpBitcast, state.uint_type, bits, component});
+		const auto slot_index =
+		    c == 0 ? index : EmitReplayBinaryU32(state, OpIAdd, index, ConstantU32(state, c));
+		EmitReplayStore(state, slot_index, bits);
+	}
+}
+
+void EmitGeometryReplayExport(EmitterState& state, const IR::Instruction& inst) {
+	const auto layout = GeometryReplayLayoutFor(state);
+	const auto kind   = inst.export_info.kind;
+	if (kind == IR::ExportTargetKind::Position) {
+		if (inst.export_info.index != 0 || inst.export_info.en == 0) {
+			return;
+		}
+		const auto base = EmitReplayBlockBase(state, layout);
+		EmitReplayVec4Store(state, inst, base, layout.PositionOffset());
+		return;
+	}
+	if (kind == IR::ExportTargetKind::Parameter) {
+		if (inst.export_info.index >= layout.parameter_count || inst.export_info.en == 0) {
+			return;
+		}
+		const auto base = EmitReplayBlockBase(state, layout);
+		EmitReplayVec4Store(state, inst, base, layout.ParameterOffset(inst.export_info.index));
+		return;
+	}
+	if (kind == IR::ExportTargetKind::Primitive) {
+		if ((inst.export_info.en & 0x1u) == 0 || inst.src_count == 0) {
+			return;
+		}
+		const auto base  = EmitReplayBlockBase(state, layout);
+		const auto local = EmitLocalInvocationIndex(state);
+		auto       index = EmitReplayBinaryU32(state, OpIAdd, base, local);
+		index = EmitReplayBinaryU32(state, OpIAdd, index,
+		                            ConstantU32(state, layout.PrimitiveOffset()));
+		EmitReplayStore(state, index, EmitValueLoad(state, inst.src[0]));
+		return;
+	}
+}
+
+void EmitSendmsg(EmitterState& state, const IR::Instruction& inst) {
+	// Only GS_ALLOC_REQ (message 9) carries replay counts; every other
+	// message stays a no-op, as does replay-disabled compilation.
+	if (!GeometryReplayActive(state) || inst.src_count < 2 ||
+	    inst.src[0].kind != IR::OperandKind::ImmediateU32 || (inst.src[0].imm & 0xfu) != 9u) {
+		return;
+	}
+	const auto layout = GeometryReplayLayoutFor(state);
+	const auto local  = EmitLocalInvocationIndex(state);
+	const auto first  = state.builder.AllocateId();
+	state.builder.AddFunction({OpIEqual, state.bool_type, first, local, ConstantU32(state, 0)});
+	const auto store_label = state.builder.AllocateId();
+	const auto merge_label = state.builder.AllocateId();
+	state.builder.AddFunction({OpSelectionMerge, merge_label, SelectionControlNone});
+	state.builder.AddFunction({OpBranchConditional, first, store_label, merge_label});
+	state.builder.AddFunction({OpLabel, store_label});
+	// m0 = vertex_count | primitive_count << 12 at GS_ALLOC_REQ time.
+	const auto m0    = EmitValueLoad(state, inst.src[1]);
+	const auto verts = EmitReplayBinaryU32(state, OpBitwiseAnd, m0, ConstantU32(state, 0xfffu));
+	const auto shifted =
+	    EmitReplayBinaryU32(state, OpShiftRightLogical, m0, ConstantU32(state, 12u));
+	const auto prims =
+	    EmitReplayBinaryU32(state, OpBitwiseAnd, shifted, ConstantU32(state, 0xfffu));
+	const auto base = EmitReplayBlockBase(state, layout);
+	const auto counts =
+	    EmitReplayBinaryU32(state, OpIAdd, base, ConstantU32(state, layout.CountsOffset()));
+	EmitReplayStore(state, counts, verts);
+	EmitReplayStore(state, EmitReplayBinaryU32(state, OpIAdd, counts, ConstantU32(state, 1u)),
+	                prims);
+	state.builder.AddFunction({OpBranch, merge_label});
+	state.builder.AddFunction({OpLabel, merge_label});
+}
+
+// Seeds the launch contract for a merged ES/GS replay subgroup:
+// v0 = ESGS ring offset (thread * 4), v8 = global primitive index (single-index
+// instanced draws), s3 = per-wave GS launch word per TryPackGsWaveLaunch.
+void EmitGeometryReplayInputRegisters(EmitterState& state) {
+	if (!GeometryReplayActive(state)) {
+		return;
+	}
+	const auto local = EmitLocalInvocationIndex(state);
+
+	const auto v0_pointer = PointerForRegister(state, {IR::RegisterFile::Vector, 0});
+	if (v0_pointer != 0) {
+		const auto offset =
+		    EmitReplayBinaryU32(state, OpShiftLeftLogical, local, ConstantU32(state, 2u));
+		state.builder.AddFunction({OpStore, v0_pointer, offset});
+	}
+
+	const auto total = EmitReplayLoad(state, 0u);
+	const auto full  = EmitReplayLoad(state, 1u);
+	const auto wg    = EmitInputComponentU32(state, IR::StageInputKind::WorkgroupId, 0);
+	const auto wg_base = EmitReplayBinaryU32(state, OpIMul, wg, full);
+
+	const auto v8_pointer = PointerForRegister(state, {IR::RegisterFile::Vector, 8});
+	if (v8_pointer != 0) {
+		const auto instance = EmitReplayBinaryU32(state, OpIAdd, wg_base, local);
+		state.builder.AddFunction({OpStore, v8_pointer, instance});
+	}
+
+	const auto s3_pointer = PointerForRegister(state, {IR::RegisterFile::Scalar, 3});
+	if (s3_pointer != 0) {
+		const uint32_t wave_size = state.wave_size != 0 ? state.wave_size : 64u;
+		uint32_t       total_threads = 1;
+		if (state.compute_input_info != nullptr) {
+			total_threads = std::max<uint32_t>(state.compute_input_info->threads_num[0], 1u) *
+			                std::max<uint32_t>(state.compute_input_info->threads_num[1], 1u) *
+			                std::max<uint32_t>(state.compute_input_info->threads_num[2], 1u);
+		}
+		const uint32_t wave_count =
+		    std::min<uint32_t>((total_threads + wave_size - 1u) / wave_size, 0xfu);
+		// Primitives assigned to this subgroup: min(full, total - wg * full).
+		const auto remaining = EmitReplayBinaryU32(state, OpISub, total, wg_base);
+		const auto prims_sub = state.builder.AllocateId();
+		state.builder.AddFunction({OpExtInst, state.uint_type, prims_sub, state.glsl_std450,
+		                           GlslUMin, full, remaining});
+		// Per-wave residual count clamped to [0, wave_size].
+		const auto wave =
+		    EmitReplayBinaryU32(state, OpUDiv, local, ConstantU32(state, wave_size));
+		const auto wave_start =
+		    EmitReplayBinaryU32(state, OpIMul, wave, ConstantU32(state, wave_size));
+		const auto has_work = state.builder.AllocateId();
+		state.builder.AddFunction(
+		    {OpUGreaterThan, state.bool_type, has_work, prims_sub, wave_start});
+		const auto residual = EmitReplayBinaryU32(state, OpISub, prims_sub, wave_start);
+		const auto capped   = state.builder.AllocateId();
+		state.builder.AddFunction({OpExtInst, state.uint_type, capped, state.glsl_std450, GlslUMin,
+		                           residual, ConstantU32(state, wave_size)});
+		const auto count = state.builder.AllocateId();
+		state.builder.AddFunction(
+		    {OpSelect, state.uint_type, count, has_work, capped, ConstantU32(state, 0)});
+		// s3 = verts[7:0] | prims[15:8] | wave[27:24] | wave_count[31:28].
+		const auto prim_bits =
+		    EmitReplayBinaryU32(state, OpShiftLeftLogical, count, ConstantU32(state, 8u));
+		const auto wave_bits =
+		    EmitReplayBinaryU32(state, OpShiftLeftLogical, wave, ConstantU32(state, 24u));
+		auto packed = EmitReplayBinaryU32(state, OpBitwiseOr, count, prim_bits);
+		packed      = EmitReplayBinaryU32(state, OpBitwiseOr, packed, wave_bits);
+		packed = EmitReplayBinaryU32(state, OpBitwiseOr, packed,
+		                             ConstantU32(state, wave_count << 28u));
+		state.builder.AddFunction({OpStore, s3_pointer, packed});
+	}
 }
 
 void EmitKillIfBoolFalse(EmitterState& state, uint32_t active) {

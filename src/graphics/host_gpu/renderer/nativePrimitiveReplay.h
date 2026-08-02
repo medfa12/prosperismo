@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace Libs::Graphics {
 
@@ -228,6 +229,30 @@ struct GsSubgroupLaunchPlan {
 	plan.primitives_per_full_subgroup = full_primitives;
 	plan.tail_subgroup_primitives     = tail_primitives;
 	plan.waves_per_subgroup           = waves;
+	return true;
+}
+
+// Classic export-ES epilogues tail-call the GS copy shader through
+// s_setpc_b64 s[6:7]. Replay-as-compute merges both programs into one blob:
+// the tail call becomes s_nop so execution falls through into the appended GS
+// words. Both encodings are architectural GFX10 opcodes, not captured bytes.
+inline constexpr uint32_t EsGsMergeSetpcWord = 0xBE802006u; // s_setpc_b64 s[6:7]
+inline constexpr uint32_t EsGsMergeNopWord   = 0xBF800000u; // s_nop 0
+
+// The ES span must be the live ES program ending in its terminal
+// s_setpc_b64 s[6:7]; anything else is rejected rather than guessed at.
+[[nodiscard]] inline bool TryMergeEsGsForReplay(const uint32_t* es_words, size_t es_count,
+                                                const uint32_t* gs_words, size_t gs_count,
+                                                std::vector<uint32_t>& merged) {
+	merged.clear();
+	if (es_words == nullptr || es_count == 0 || gs_words == nullptr || gs_count == 0 ||
+	    es_words[es_count - 1] != EsGsMergeSetpcWord) {
+		return false;
+	}
+	merged.reserve(es_count + gs_count);
+	merged.assign(es_words, es_words + es_count);
+	merged.back() = EsGsMergeNopWord;
+	merged.insert(merged.end(), gs_words, gs_words + gs_count);
 	return true;
 }
 

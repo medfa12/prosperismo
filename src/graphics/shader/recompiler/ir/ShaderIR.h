@@ -717,7 +717,34 @@ enum class DescriptorBindingKind {
 	AddressMemory,
 	FlattenedSrt,
 	UserData,
+	GeometryReplay,
 	Count,
+};
+
+// Dword layout of the geometry-replay storage buffer. A fixed header is
+// followed by one block per dispatched subgroup. All quantities are dwords.
+// Header: [0]=total primitives, [1]=primitives per full subgroup,
+// [2]=vertex slots, [3]=primitive slots, [4..7]=reserved.
+// Block: position[vertex_slots*4] | parameters[parameter_count][vertex_slots*4]
+//        | primitive[primitive_slots] | counts[2] (vertices, primitives).
+struct GeometryReplayLayout {
+	static constexpr uint32_t HeaderDwords = 8;
+
+	uint32_t vertex_slots    = 0;
+	uint32_t primitive_slots = 0;
+	uint32_t parameter_count = 0;
+
+	[[nodiscard]] constexpr uint32_t PositionOffset() const { return 0; }
+	[[nodiscard]] constexpr uint32_t ParameterOffset(uint32_t index) const {
+		return vertex_slots * 4u + index * vertex_slots * 4u;
+	}
+	[[nodiscard]] constexpr uint32_t PrimitiveOffset() const {
+		return vertex_slots * 4u * (1u + parameter_count);
+	}
+	[[nodiscard]] constexpr uint32_t CountsOffset() const {
+		return PrimitiveOffset() + primitive_slots;
+	}
+	[[nodiscard]] constexpr uint32_t BlockStride() const { return CountsOffset() + 2u; }
 };
 
 struct DescriptorBinding {
@@ -787,7 +814,15 @@ struct Program {
 	bool                    shader_info_complete       = false;
 	BindingLayout           bindings;
 	bool                    binding_layout_complete = false;
+	bool                    geometry_replay         = false;
+	uint32_t                geometry_replay_vertex_slots    = 0;
+	uint32_t                geometry_replay_primitive_slots = 0;
 };
+
+// Number of distinct parameter export targets used by a geometry-replay
+// program; deterministic for a given shader so the recompiler and the host
+// side derive identical replay-buffer layouts.
+uint32_t GeometryReplayParameterCount(const Program& program);
 
 bool LowerProgram(const Decoder::Program& decoded, const CFG::Graph& cfg, ShaderType stage,
                   uint32_t wave_size, Program& program, std::string* error);

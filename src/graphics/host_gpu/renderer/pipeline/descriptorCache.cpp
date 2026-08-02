@@ -263,6 +263,9 @@ VulkanDescriptorSet& DescriptorCache::GetDescriptor(Stage                       
 				break;
 			case BindingKind::UserData: buffer_infos.push_back(BufferInfo(data.user_data)); break;
 			case BindingKind::Gds: buffer_infos.push_back(BufferInfo(data.gds)); break;
+			case BindingKind::GeometryReplay:
+				buffer_infos.push_back(BufferInfo(data.geometry_replay));
+				break;
 			case BindingKind::Samplers:
 				for (const auto resource: binding.resources) {
 					const auto sampler = data.samplers.at(resource);
