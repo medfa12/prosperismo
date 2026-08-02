@@ -169,12 +169,12 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
       } else if (state.focusRegion === 'library-shortcut') {
         focusNative(libraryRef.current);
       } else if (state.focusRegion === 'spaces' || shellGames.length === 0) {
-        focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]);
+        focusNative(spaceRefs.current[state.spaceCursor === 'games' ? 0 : 1]);
       } else {
         focusNative(strandRefs.current[Math.min(state.selectedIndex, shellGames.length - 1)]);
       }
     }
-  }, [errorMessage, optionsGame, settingsDetail, shellGames.length, state.focusRegion, state.selectedIndex, state.settingsIndex, state.space, state.surface, state.systemIndex]);
+  }, [errorMessage, optionsGame, settingsDetail, shellGames.length, state.focusRegion, state.selectedIndex, state.settingsIndex, state.spaceCursor, state.surface, state.systemIndex]);
   const handleKeyDown = (event: any) => {
     const key = event?.nativeEvent?.key;
     if (searchOpen || profileOpen) {
@@ -235,9 +235,11 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
         onOpenLibrary={() => dispatch({type: 'open-library'})}
         onOptions={openOptions}
         onSelectGame={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})}
-        onSelectSpace={space => dispatch({type: 'set-space', space})}
+        onFocusSpace={space => dispatch({type: 'focus-space', space})}
+        onActivateSpace={space => dispatch({type: 'set-space', space})}
         onSelectSystem={index => dispatch({type: 'select-system', index})}
         selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))}
+        focusedSpace={state.spaceCursor}
         selectedSpace={state.space}
         selectedSystemIndex={state.systemIndex}
         settingsIconPath={firmwareShellIcons.settings}

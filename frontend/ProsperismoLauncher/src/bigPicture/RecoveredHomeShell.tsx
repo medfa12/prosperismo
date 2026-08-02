@@ -70,6 +70,7 @@ export interface RecoveredHomeShellProps {
   focusRegion: ShellFocusRegion;
   selectedIndex: number;
   selectedSpace: ShellSpace;
+  focusedSpace: ShellSpace;
   selectedSystemIndex: number;
   clock: string;
   backgroundPath?: string;
@@ -82,7 +83,8 @@ export interface RecoveredHomeShellProps {
   onSelectGame(index: number): void;
   onLaunch(game: GameInstall): void;
   onOptions(game: GameInstall): void;
-  onSelectSpace(space: ShellSpace): void;
+  onFocusSpace(space: ShellSpace): void;
+  onActivateSpace(space: ShellSpace): void;
   onSelectSystem(index: number): void;
   onActivateSystem(action: SystemAction): void;
   onOpenLibrary(): void;
@@ -235,6 +237,7 @@ export function RecoveredHomeShell({
   focusRegion,
   selectedIndex,
   selectedSpace,
+  focusedSpace,
   selectedSystemIndex,
   clock,
   backgroundPath,
@@ -247,7 +250,8 @@ export function RecoveredHomeShell({
   onSelectGame,
   onLaunch,
   onOptions,
-  onSelectSpace,
+  onFocusSpace,
+  onActivateSpace,
   onSelectSystem,
   onActivateSystem,
   onOpenLibrary,
@@ -289,7 +293,7 @@ export function RecoveredHomeShell({
   }, [clampedIndex, visibleGames.length]);
 
   useEffect(() => {
-    const target = homeFocusTarget(focusRegion, selectedSpace, selectedSystemIndex, visibleGames.length > 0);
+    const target = homeFocusTarget(focusRegion, focusedSpace, selectedSystemIndex, visibleGames.length > 0);
     if (target) {
       if (focusTimeline.current.snapshot().state === 'hidden') {
         focusTimeline.current.showAt(target.rect, target.radius);
@@ -300,7 +304,7 @@ export function RecoveredHomeShell({
       focusTimeline.current.hide();
     }
     systemGlance.current.forEach((glance, index) => glance.setGlanced(focusRegion === 'system' && selectedSystemIndex === index));
-  }, [focusRegion, selectedSpace, selectedSystemIndex, visibleGames.length]);
+  }, [focusRegion, focusedSpace, selectedSystemIndex, visibleGames.length]);
 
   useEffect(() => {
     let active = true;
@@ -385,13 +389,13 @@ export function RecoveredHomeShell({
     <View style={[stageStyles.topBand, {top: s(entrance.systemTranslateY), opacity: entrance.systemAlpha}]}>
       <View style={stageStyles.spaces}>{(['games', 'media'] as const).map((space, index) => {
         const selected = selectedSpace === space;
-        const focused = focusRegion === 'spaces' && selected;
+        const focused = focusRegion === 'spaces' && focusedSpace === space;
         return <Pressable
           accessibilityLabel={space === 'games' ? 'Games' : 'Media'}
           accessibilityRole="button"
           key={space}
-          onFocus={() => onSelectSpace(space)}
-          onPress={() => onSelectSpace(space)}
+          onFocus={() => onFocusSpace(space)}
+          onPress={() => onActivateSpace(space)}
           ref={node => { spaceRefs.current[index] = node; }}
           style={stageStyles.spaceButton}>
           <Text style={[stageStyles.spaceText, selected && stageStyles.spaceTextSelected, focused && stageStyles.spaceTextFocused]}>

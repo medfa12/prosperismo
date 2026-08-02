@@ -7,6 +7,7 @@ export type ShellDirection = 'left' | 'right' | 'up' | 'down';
 
 export interface ShellState {
   space: ShellSpace;
+  spaceCursor: ShellSpace;
   surface: ShellSurface;
   focusRegion: ShellFocusRegion;
   selectedIndex: number;
@@ -21,6 +22,7 @@ export type ShellAction =
   | {type: 'open-library'}
   | {type: 'open-settings'}
   | {type: 'home'}
+  | {type: 'focus-space'; space: ShellSpace}
   | {type: 'set-space'; space: ShellSpace}
   | {type: 'select-setting'; index: number}
   | {type: 'select-system'; index: number}
@@ -28,6 +30,7 @@ export type ShellAction =
 
 export const INITIAL_SHELL_STATE: ShellState = {
   space: 'games',
+  spaceCursor: 'games',
   surface: 'home',
   focusRegion: 'strand',
   selectedIndex: 0,
@@ -71,11 +74,11 @@ export function navigateHomeFocus(
   }
   if (state.focusRegion === 'spaces') {
     if (direction === 'left') {
-      return state.space === 'media' ? {...state, space: 'games'} : state;
+      return state.spaceCursor === 'media' ? {...state, spaceCursor: 'games'} : state;
     }
     if (direction === 'right') {
-      return state.space === 'games'
-        ? {...state, space: 'media'}
+      return state.spaceCursor === 'games'
+        ? {...state, spaceCursor: 'media'}
         : systemCount > 0
           ? {...state, focusRegion: 'system', systemIndex: clamp(state.systemIndex, systemCount)}
           : state;
@@ -104,7 +107,8 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
     case 'open-library': return {...state, surface: 'library', focusRegion: 'content'};
     case 'open-settings': return {...state, surface: 'settings', focusRegion: 'content'};
     case 'home': return {...state, surface: 'home', focusRegion: 'strand'};
-    case 'set-space': return {...state, space: action.space, focusRegion: 'spaces'};
+    case 'focus-space': return {...state, spaceCursor: action.space, focusRegion: 'spaces'};
+    case 'set-space': return {...state, space: action.space, spaceCursor: action.space, focusRegion: 'spaces'};
     case 'select-setting': return {...state, settingsIndex: Math.max(0, action.index), focusRegion: 'content'};
     case 'select-system': return {...state, systemIndex: Math.max(0, action.index), focusRegion: 'system'};
     case 'navigate-home': return navigateHomeFocus(state, action.direction, action.gameCount, action.systemCount);

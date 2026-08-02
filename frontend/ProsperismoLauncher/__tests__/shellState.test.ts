@@ -54,7 +54,8 @@ describe('Sony-grounded shell state', () => {
     expect(navigateHomeFocus(spaces, 'left', 5, 3)).toBe(spaces);
 
     const media = navigateHomeFocus(spaces, 'right', 5, 3);
-    expect(media.space).toBe('media');
+    expect(media.space).toBe('games');
+    expect(media.spaceCursor).toBe('media');
     expect(media.focusRegion).toBe('spaces');
 
     const system = navigateHomeFocus(media, 'right', 5, 3);
