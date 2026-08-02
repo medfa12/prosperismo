@@ -1643,6 +1643,7 @@ bool ShaderCompileGeometryReplayCS(std::span<const uint32_t> merged_code,
 // v0..v11) compiled with the replay fetch preamble enabled. It has no guest
 // resources, so cached programs never need runtime revalidation.
 bool ShaderCompileGeometryReplayVS(const ShaderGeometryReplayCompileInfo& replay,
+                                   ShaderLaneMaskMode                     lane_mask_mode,
                                    ShaderVertexInputInfo&                 input_info,
                                    std::span<const uint32_t>&             spirv) {
 	KYTY_PROFILER_FUNCTION(profiler::colors::Amber300);
@@ -1661,7 +1662,7 @@ bool ShaderCompileGeometryReplayVS(const ShaderGeometryReplayCompileInfo& replay
 	ShaderId program_id;
 	program_id.ids = {replay.vertex_slots, replay.primitive_slots, replay.parameter_count};
 	const auto key = MakeShaderStageProgramKey(ShaderType::Vertex, synthetic_hash, program_id,
-	                                           ShaderLaneMaskMode::NativeWave);
+	                                           lane_mask_mode);
 
 	{
 		std::scoped_lock lock(g_shader_program_cache_mutex);
@@ -1695,6 +1696,7 @@ bool ShaderCompileGeometryReplayVS(const ShaderGeometryReplayCompileInfo& replay
 	ShaderRecompiler::CompileOptions options;
 	options.stage                = ShaderType::Vertex;
 	options.shader_hash          = synthetic_hash;
+	options.lane_mask_mode       = lane_mask_mode;
 	options.user_data_count      = 0;
 	options.descriptor_set       = 0;
 	options.push_constant_offset = 0;

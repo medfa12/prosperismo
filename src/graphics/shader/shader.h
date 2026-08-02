@@ -292,6 +292,7 @@ bool ShaderCompileGeometryReplayCS(std::span<const uint32_t> merged_code,
                                    ShaderGeometryReplayCompileInfo& replay,
                                    ShaderComputeInputInfo& info, std::span<const uint32_t>& spirv);
 bool ShaderCompileGeometryReplayVS(const ShaderGeometryReplayCompileInfo& replay,
+                                   ShaderLaneMaskMode                     lane_mask_mode,
                                    ShaderVertexInputInfo&                 input_info,
                                    std::span<const uint32_t>&             spirv);
 bool ShaderAddressValid(uint64_t addr);

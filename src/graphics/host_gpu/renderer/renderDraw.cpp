@@ -1360,7 +1360,8 @@ bool RenderExecutor::TryExecuteGeometryReplayDraw(uint64_t submit_id, RenderComm
 		return false;
 	}
 
-	if (!ShaderCompileGeometryReplayVS(replay, state.vs_input_info, state.vs_shader)) {
+	if (!ShaderCompileGeometryReplayVS(replay, SelectGraphicsLaneMaskMode(64u),
+	                                   state.vs_input_info, state.vs_shader)) {
 		ResetBindings();
 		return false;
 	}
