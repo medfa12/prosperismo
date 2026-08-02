@@ -2,17 +2,19 @@ import React, {useCallback, useEffect, useMemo, useReducer, useRef, useState} fr
 import {
   Animated,
   Easing,
+  findNodeHandle,
   Image,
   type ImageSourcePropType,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  UIManager,
   useWindowDimensions,
   View,
 } from 'react-native';
 import type {GameInstall} from '../core/models';
-import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame, type ShellFocusRegion} from './shellState';
+import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame} from './shellState';
 import {
   SHELL_FOCUSED_TILE_RADIUS,
   SHELL_FOCUSED_TILE_SCALE,
@@ -79,7 +81,7 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
   );
 }
 
-function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress, onOptions}: {
+function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress, onOptions, onRef}: {
   game: GameInstall;
   index: number;
   selectedIndex: number;
@@ -87,6 +89,7 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
   onFocus(): void;
   onPress(): void;
   onOptions(): void;
+  onRef(node: any): void;
 }) {
   const baseX = shellTileBaseX(index, selectedIndex);
   const x = useRef(new Animated.Value(baseX)).current;
@@ -106,6 +109,7 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
     <Animated.View style={[shellStyles.tilePosition, {transform: [{translateX: x}]}]}>
       <Animated.View style={{transform: [{scale}]}}>
         <Pressable
+          ref={onRef}
           accessibilityLabel={`${game.titleName}, ${index + 1} of ${SHELL_METRICS.strand.maxItems}`}
           accessibilityRole="button"
           onFocus={onFocus}
@@ -121,6 +125,7 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
 }
 
 type SystemGlyphKind = typeof SYSTEM_ACTIONS[number]['glyph'];
+type FocusableUIManager = typeof UIManager & {focus(reactTag: number): void};
 
 function SystemGlyph({kind, color}: {kind: SystemGlyphKind; color: Animated.AnimatedInterpolation<string>}) {
   if (kind === 'search') {
@@ -132,12 +137,13 @@ function SystemGlyph({kind, color}: {kind: SystemGlyphKind; color: Animated.Anim
   return <View pointerEvents="none" style={shellStyles.profileGlyph}><Animated.View style={[shellStyles.profileFrame, {borderColor: color}]} /><Animated.View style={[shellStyles.profileSlash, {backgroundColor: color}]} /></View>;
 }
 
-function SystemIconButton({label, glyph, focused, onFocus, onPress}: {
+function SystemIconButton({label, glyph, focused, onFocus, onPress, onRef}: {
   label: string;
   glyph: SystemGlyphKind;
   focused: boolean;
   onFocus(): void;
   onPress(): void;
+  onRef(node: any): void;
 }) {
   const phase = useRef(new Animated.Value(focused ? 1 : 0)).current;
   useEffect(() => {
@@ -149,7 +155,7 @@ function SystemIconButton({label, glyph, focused, onFocus, onPress}: {
   }, [focused, phase]);
   const color = phase.interpolate({inputRange: [0, 1], outputRange: [SHELL_METRICS.colors.white, SHELL_METRICS.colors.iconInverted]});
   return (
-    <Pressable accessibilityLabel={label} accessibilityRole="button" onFocus={onFocus} onPress={onPress} style={shellStyles.systemButton}>
+    <Pressable ref={onRef} accessibilityLabel={label} accessibilityRole="button" onFocus={onFocus} onPress={onPress} style={shellStyles.systemButton}>
       <Animated.View pointerEvents="none" style={[shellStyles.systemFocusCircle, {opacity: phase}]} />
       <SystemGlyph kind={glyph} color={color} />
     </Pressable>
@@ -191,20 +197,21 @@ function ReactiveBackground({backgroundPath, fallback, dimmed}: {
   </>;
 }
 
-function HomeSurface({games, selectedIndex, onSelect, onLaunch, onOptions, onLibrary}: {
+function HomeSurface({games, selectedIndex, onSelect, onLaunch, onOptions, onLibrary, strandRefs}: {
   games: readonly GameInstall[];
   selectedIndex: number;
   onSelect(index: number): void;
   onLaunch(game: GameInstall): void;
   onOptions(game: GameInstall): void;
   onLibrary(): void;
+  strandRefs: React.MutableRefObject<any[]>;
 }) {
   const visibleGames = games.slice(0, SHELL_METRICS.strand.maxItems);
   const selected = visibleGames[selectedIndex];
   return (
     <>
       <View style={shellStyles.strand}>
-        {visibleGames.map((game, index) => <ExperienceTile game={game} index={index} key={game.gamePath} selectedIndex={selectedIndex} onFocus={() => onSelect(index)} onOptions={() => onOptions(game)} onPress={() => onLaunch(game)} selected={index === selectedIndex} />)}
+        {visibleGames.map((game, index) => <ExperienceTile game={game} index={index} key={game.gamePath} selectedIndex={selectedIndex} onRef={node => { strandRefs.current[index] = node; }} onFocus={() => onSelect(index)} onOptions={() => onOptions(game)} onPress={() => onLaunch(game)} selected={index === selectedIndex} />)}
         <Pressable accessibilityLabel="Game Library" accessibilityRole="button" onPress={onLibrary} style={shellStyles.libraryShortcut}>
           <Text style={shellStyles.libraryShortcutGlyph}>▦</Text>
         </Pressable>
@@ -255,18 +262,28 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
   const [toast, setToast] = useState<string>();
   const dismissToast = useCallback(() => setToast(undefined), []);
+  const spaceRefs = useRef<any[]>([]);
+  const strandRefs = useRef<any[]>([]);
+  const systemRefs = useRef<any[]>([]);
   const {width, height} = useWindowDimensions();
   const scale = Math.min(width / SHELL_METRICS.canvas.width, height / SHELL_METRICS.canvas.height);
   const selected = selectedShellGame(games, state);
   const shellGames = useMemo(() => games.slice(0, SHELL_METRICS.strand.maxItems), [games]);
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(timer); }, []);
-  const focus = (region: ShellFocusRegion) => dispatch({type: 'focus', region});
+  const focusNative = (target: any) => {
+    const tag = findNodeHandle(target);
+    if (tag !== null) {
+      (UIManager as FocusableUIManager).focus(tag);
+    }
+  };
   const launch = (game: GameInstall) => { setOptionsGame(undefined); setToast(`Launching ${game.titleName}`); onLaunch(game); };
   const handleKeyDown = (event: any) => {
     const key = event?.nativeEvent?.key;
-    if (key === 'ArrowUp') { if (state.focusRegion === 'strand') { focus('spaces'); } else if (state.focusRegion === 'content') { dispatch({type: 'home'}); } event.stopPropagation?.(); return; }
-    if (key === 'ArrowDown' && state.focusRegion === 'spaces') { focus('strand'); event.stopPropagation?.(); return; }
-    if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'strand') { dispatch({type: 'move', delta: key === 'ArrowLeft' ? -1 : 1, gameCount: shellGames.length}); event.stopPropagation?.(); return; }
+    if (key === 'ArrowUp') { if (state.focusRegion === 'strand') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'system') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'content') { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
+    if (key === 'ArrowDown' && (state.focusRegion === 'spaces' || state.focusRegion === 'system')) { focusNative(strandRefs.current[state.selectedIndex]); event.stopPropagation?.(); return; }
+    if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'strand') { const next = Math.max(0, Math.min(shellGames.length - 1, state.selectedIndex + (key === 'ArrowLeft' ? -1 : 1))); focusNative(strandRefs.current[next]); event.stopPropagation?.(); return; }
+    if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'system') { const next = Math.max(0, Math.min(SYSTEM_ACTIONS.length - 1, state.systemIndex + (key === 'ArrowLeft' ? -1 : 1))); focusNative(systemRefs.current[next]); event.stopPropagation?.(); return; }
+    if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'spaces') { const next = state.space === 'games' ? 1 : 0; focusNative(spaceRefs.current[next]); event.stopPropagation?.(); return; }
     if (key === 'Escape' || key === 'GamepadB') { if (optionsGame) { setOptionsGame(undefined); } else if (state.surface !== 'home') { dispatch({type: 'home'}); } event.stopPropagation?.(); }
   };
   // React Native Windows exposes this event at runtime, while the shared RN
@@ -274,9 +291,9 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
     <ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
-    <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map(space => <Pressable key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>
+    <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>
     {state.surface !== 'home' && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
-    {state.surface === 'home' && <HomeSurface games={shellGames} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={game => setOptionsGame(game)} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
+    {state.surface === 'home' && <HomeSurface games={shellGames} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={game => setOptionsGame(game)} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
     {state.surface === 'library' && <LibrarySurface games={games} onLaunch={launch} />}
     {state.surface === 'settings' && <SettingsSurface onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
     {state.surface === 'home' && selected && <Text style={shellStyles.keyGuide}>Enter Select   ·   Hold for Options</Text>}

@@ -44,6 +44,8 @@ It currently provides:
   the observed cool-to-warm edge treatment, plus a separate translucent card
   wash/shimmer pass;
 - a 56px circular system-icon focus surface with delayed glyph inversion;
+- real React Native Windows focus transfers between strand, spaces, and system
+  controls; Arrow Up/Down no longer leaves an old desktop target active;
 - selected-title `pic0` composition with the firmware default 1000ms
   cross-fade, while Settings returns to the shell plate;
 - Prosperismo-owned settings categories, an undimmed dark options popup using
