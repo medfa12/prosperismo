@@ -13,12 +13,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -395,6 +398,62 @@ struct PacketQueue {
 		q.clear();
 	}
 	std::deque<AVPacket*> q;
+};
+
+// Guest code legitimately calls AvPlayer from 32 KiB Prospero threads. FFmpeg 7.1.1's
+// H.264 slice parser alone reserves 0x8c38 bytes, so invoking it directly after switching
+// to the guest stack overflows before decoding the first frame. Keep the Sony-visible
+// thread contract intact and marshal only the synchronous host-codec operation to a
+// worker with a native Windows stack.
+class HostCodecRunner {
+public:
+	HostCodecRunner(): thread([this] { ThreadMain(); }) {}
+	~HostCodecRunner() {
+		{
+			std::lock_guard lock(mutex);
+			stopping = true;
+		}
+		ready.notify_one();
+		thread.join();
+	}
+	HostCodecRunner(const HostCodecRunner&)            = delete;
+	HostCodecRunner& operator=(const HostCodecRunner&) = delete;
+
+	int Run(std::function<int()> operation) {
+		std::unique_lock lock(mutex);
+		work      = std::move(operation);
+		completed = false;
+		ready.notify_one();
+		done.wait(lock, [this] { return completed; });
+		return result;
+	}
+
+private:
+	void ThreadMain() {
+		std::unique_lock lock(mutex);
+		while (true) {
+			ready.wait(lock, [this] { return stopping || static_cast<bool>(work); });
+			if (stopping) {
+				return;
+			}
+			auto operation = std::move(work);
+			lock.unlock();
+			const int operation_result = operation();
+			lock.lock();
+			result    = operation_result;
+			completed = true;
+			done.notify_one();
+		}
+	}
+
+	std::mutex              mutex;
+	std::condition_variable ready;
+	std::condition_variable done;
+	std::function<int()>    work;
+	int                     result    = 0;
+	bool                    completed = false;
+	bool                    stopping  = false;
+	std::thread             thread;
 };
 
 class GuestBuffer {
@@ -919,11 +978,17 @@ private:
 		return false;
 	}
 	bool DecodeVideo(AVPacket* p) {
-		if (video_ctx == nullptr || avcodec_send_packet(video_ctx, p) < 0) {
+		if (video_ctx == nullptr) {
 			return false;
 		}
-		AVFrame* f  = av_frame_alloc();
-		auto     rc = avcodec_receive_frame(video_ctx, f);
+		AVFrame* f = av_frame_alloc();
+		if (f == nullptr) {
+			return false;
+		}
+		auto rc = codec_runner.Run([this, p, f] {
+			const auto send_result = avcodec_send_packet(video_ctx, p);
+			return send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
+		});
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
@@ -933,11 +998,17 @@ private:
 		return true;
 	}
 	bool DecodeAudio(AVPacket* p) {
-		if (audio_ctx == nullptr || avcodec_send_packet(audio_ctx, p) < 0) {
+		if (audio_ctx == nullptr) {
 			return false;
 		}
-		AVFrame* f  = av_frame_alloc();
-		auto     rc = avcodec_receive_frame(audio_ctx, f);
+		AVFrame* f = av_frame_alloc();
+		if (f == nullptr) {
+			return false;
+		}
+		auto rc = codec_runner.Run([this, p, f] {
+			const auto send_result = avcodec_send_packet(audio_ctx, p);
+			return send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
+		});
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
@@ -1208,6 +1279,7 @@ private:
 	std::chrono::steady_clock::time_point    clock_start {};
 	std::chrono::steady_clock::time_point    pause_time {};
 	std::chrono::steady_clock::duration      paused_extra {};
+	HostCodecRunner                          codec_runner;
 };
 
 struct AvPlayerInternal {
