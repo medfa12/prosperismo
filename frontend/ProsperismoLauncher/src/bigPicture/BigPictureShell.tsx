@@ -13,7 +13,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import type {GameInstall} from '../core/models';
+import type {GameInstall, LauncherSettings} from '../core/models';
 import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame} from './shellState';
 import {
   SHELL_FOCUSED_TILE_RADIUS,
@@ -37,6 +37,13 @@ const SYSTEM_ACTIONS = [
   {label: 'Settings', glyph: 'settings'},
   {label: 'Desktop mode', glyph: 'profile'},
 ] as const;
+
+const LIBRARY_SORT_FIELDS = ['titleName', 'titleId', 'gameVersion', 'firmwareVersion', 'gamePath', 'status', 'comment'] as const;
+const SHADER_OPTIMIZATIONS = ['None', 'Size', 'Performance'] as const;
+
+function nextValue<T>(values: readonly T[], value: T): T {
+  return values[(values.indexOf(value) + 1) % values.length];
+}
 
 function formatClock(now: Date): string {
   return now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
@@ -278,6 +285,45 @@ function SettingsSurface({selectedIndex, onSelect, onActivate, onRef}: {
   return <View style={[shellStyles.contentSurface, shellStyles.settingsSurface]}><Text style={shellStyles.surfaceTitle}>Prosperismo Settings</Text><ScrollView contentContainerStyle={shellStyles.settingsList}>{SETTINGS_CATEGORIES.map(([category, detail], index) => { const selected = index === selectedIndex; return <Pressable ref={node => onRef(index, node)} accessibilityRole="button" key={category} onFocus={() => onSelect(index)} onPress={() => onActivate(index)} style={shellStyles.settingsRow}><FocusLine active={selected} /><View style={shellStyles.settingsGlyph} /><View style={shellStyles.settingsCopy}><Text style={shellStyles.settingsText}>{category}</Text><Text style={shellStyles.settingsDetail}>{detail}</Text></View><Text style={shellStyles.settingsChevron}>›</Text></Pressable>; })}</ScrollView></View>;
 }
 
+type SettingRow = {label: string; value: string; onPress?: () => void};
+
+function SettingsDetailSurface({categoryIndex, settings, onSave, onBack}: {
+  categoryIndex: number;
+  settings: LauncherSettings;
+  onSave(next: LauncherSettings): void;
+  onBack(): void;
+}) {
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const category = SETTINGS_CATEGORIES[categoryIndex] ?? SETTINGS_CATEGORIES[0];
+  const updateGlobal = <K extends keyof LauncherSettings['global']>(key: K, value: LauncherSettings['global'][K]) => onSave({...settings, global: {...settings.global, [key]: value}});
+  const rows: SettingRow[] = categoryIndex === 0 ? [
+    {label: 'Game folders', value: `${settings.gameDirectories.length} configured`},
+    {label: 'Library sort', value: settings.library.sortField, onPress: () => onSave({...settings, library: {...settings.library, sortField: nextValue(LIBRARY_SORT_FIELDS, settings.library.sortField)}})},
+    {label: 'Sort direction', value: settings.library.sortDirection, onPress: () => onSave({...settings, library: {...settings.library, sortDirection: settings.library.sortDirection === 'ascending' ? 'descending' : 'ascending'}})},
+  ] : categoryIndex === 1 ? [
+    {label: 'Resolution', value: settings.global.screenResolution, onPress: () => updateGlobal('screenResolution', settings.global.screenResolution === '1280x720' ? '1920x1080' : '1280x720')},
+    {label: 'Vblank frequency', value: `${settings.global.vblankFrequency} Hz`, onPress: () => updateGlobal('vblankFrequency', settings.global.vblankFrequency === 60 ? 120 : 60)},
+    {label: 'Shader optimization', value: settings.global.shaderOptimization, onPress: () => updateGlobal('shaderOptimization', nextValue(SHADER_OPTIMIZATIONS, settings.global.shaderOptimization))},
+  ] : categoryIndex === 2 ? [
+    {label: 'Vulkan validation', value: settings.global.vulkanValidation ? 'On' : 'Off', onPress: () => updateGlobal('vulkanValidation', !settings.global.vulkanValidation)},
+    {label: 'Shader validation', value: settings.global.shaderValidation ? 'On' : 'Off', onPress: () => updateGlobal('shaderValidation', !settings.global.shaderValidation)},
+    {label: 'RenderDoc', value: settings.global.renderDoc ? 'On' : 'Off', onPress: () => updateGlobal('renderDoc', !settings.global.renderDoc)},
+  ] : categoryIndex === 3 ? [
+    {label: 'Controller mapping', value: 'Managed by the Windows host'},
+    {label: 'Keyboard input', value: 'Managed by the Windows host'},
+  ] : categoryIndex === 4 ? [
+    {label: 'Shader log folder', value: settings.global.shaderLogFolder},
+    {label: 'Buffer dump folder', value: settings.global.commandBufferDumpFolder},
+  ] : categoryIndex === 5 ? [
+    {label: 'Patch titles', value: `${Object.keys(settings.patchSelections).length} configured`},
+    {label: 'Patch controls', value: 'Available per game in the desktop launcher'},
+  ] : [
+    {label: 'Prosperismo', value: 'React Native Windows shell'},
+    {label: 'Oracle', value: 'Firmware-derived presentation contracts'},
+  ];
+  return <View style={[shellStyles.contentSurface, shellStyles.settingsSurface]}><Pressable accessibilityRole="button" onPress={onBack} style={shellStyles.detailBack}><Text style={shellStyles.backText}>‹ Settings</Text></Pressable><Text style={shellStyles.surfaceTitle}>{category[0]}</Text><Text style={shellStyles.detailIntro}>{category[1]}</Text><View style={shellStyles.detailRows}>{rows.map((row, index) => <Pressable accessibilityRole="button" key={row.label} onFocus={() => setFocusedIndex(index)} onPress={row.onPress} style={shellStyles.detailRow}><FocusLine active={focusedIndex === index} /><Text style={shellStyles.detailLabel}>{row.label}</Text><Text style={shellStyles.detailValue}>{row.value}</Text></Pressable>)}</View></View>;
+}
+
 function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect, onRef}: {
   game: GameInstall;
   selectedIndex: number;
@@ -308,17 +354,20 @@ function ShellToast({message, onClose}: {message: string; onClose(): void}) {
 export interface BigPictureShellProps {
   games: readonly GameInstall[];
   artwork: ImageSourcePropType;
+  settings: LauncherSettings;
   /** Local, user-owned oracle outputs; not bundled application assets. */
   nativeBackgroundFrames?: readonly string[];
+  onSaveSettings(next: LauncherSettings): void;
   onDesktop(): void;
   onLaunch(game: GameInstall): void;
 }
 
-export function BigPictureShell({games, artwork, nativeBackgroundFrames = [], onDesktop, onLaunch}: BigPictureShellProps) {
+export function BigPictureShell({games, artwork, settings, nativeBackgroundFrames = [], onSaveSettings, onDesktop, onLaunch}: BigPictureShellProps) {
   const [state, dispatch] = useReducer(reduceShellState, INITIAL_SHELL_STATE);
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
   const [optionIndex, setOptionIndex] = useState(0);
+  const [settingsDetail, setSettingsDetail] = useState<number>();
   const [toast, setToast] = useState<string>();
   const dismissToast = useCallback(() => setToast(undefined), []);
   const spaceRefs = useRef<any[]>([]);
@@ -351,12 +400,12 @@ export function BigPictureShell({games, artwork, nativeBackgroundFrames = [], on
       event.stopPropagation?.();
       return;
     }
-    if (key === 'ArrowUp' || key === 'GamepadDPadUp') { if (state.focusRegion === 'strand') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'system') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'content' && state.surface === 'settings') { if (state.settingsIndex > 0) { focusNative(settingsRefs.current[state.settingsIndex - 1]); } else { focusNative(systemRefs.current[1]); } } else if (state.focusRegion === 'content') { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
-    if (key === 'ArrowDown' || key === 'GamepadDPadDown') { if (state.focusRegion === 'spaces' || state.focusRegion === 'system') { focusNative(strandRefs.current[state.selectedIndex]); event.stopPropagation?.(); return; } if (state.focusRegion === 'content' && state.surface === 'settings' && state.settingsIndex < SETTINGS_CATEGORIES.length - 1) { focusNative(settingsRefs.current[state.settingsIndex + 1]); event.stopPropagation?.(); return; } }
+    if (key === 'ArrowUp' || key === 'GamepadDPadUp') { if (state.focusRegion === 'strand') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'system') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'content' && state.surface === 'settings' && settingsDetail === undefined) { if (state.settingsIndex > 0) { focusNative(settingsRefs.current[state.settingsIndex - 1]); } else { focusNative(systemRefs.current[1]); } } else if (state.focusRegion === 'content' && settingsDetail === undefined) { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
+    if (key === 'ArrowDown' || key === 'GamepadDPadDown') { if (state.focusRegion === 'spaces' || state.focusRegion === 'system') { focusNative(strandRefs.current[state.selectedIndex]); event.stopPropagation?.(); return; } if (state.focusRegion === 'content' && state.surface === 'settings' && settingsDetail === undefined && state.settingsIndex < SETTINGS_CATEGORIES.length - 1) { focusNative(settingsRefs.current[state.settingsIndex + 1]); event.stopPropagation?.(); return; } }
     if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'strand') { const next = Math.max(0, Math.min(shellGames.length - 1, state.selectedIndex + (key === 'ArrowLeft' ? -1 : 1))); focusNative(strandRefs.current[next]); event.stopPropagation?.(); return; }
     if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'system') { const next = Math.max(0, Math.min(SYSTEM_ACTIONS.length - 1, state.systemIndex + (key === 'ArrowLeft' ? -1 : 1))); focusNative(systemRefs.current[next]); event.stopPropagation?.(); return; }
     if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'spaces') { const next = state.space === 'games' ? 1 : 0; focusNative(spaceRefs.current[next]); event.stopPropagation?.(); return; }
-    if (key === 'Escape' || key === 'GamepadB') { if (optionsGame) { setOptionsGame(undefined); } else if (state.surface !== 'home') { dispatch({type: 'home'}); } event.stopPropagation?.(); }
+    if (key === 'Escape' || key === 'GamepadB') { if (optionsGame) { setOptionsGame(undefined); } else if (settingsDetail !== undefined) { setSettingsDetail(undefined); } else if (state.surface !== 'home') { dispatch({type: 'home'}); } event.stopPropagation?.(); }
   };
   // React Native Windows exposes this event at runtime, while the shared RN
   // declaration used by this project does not include the Windows extension.
@@ -364,10 +413,11 @@ export function BigPictureShell({games, artwork, nativeBackgroundFrames = [], on
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
     <NativeFrameBackground framePaths={nativeBackgroundFrames} visible={state.surface === 'home'} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
     <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>
-    {state.surface !== 'home' && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
+    {state.surface !== 'home' && settingsDetail === undefined && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
     {state.surface === 'home' && <HomeSurface games={shellGames} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
     {state.surface === 'library' && <LibrarySurface games={games} onLaunch={launch} />}
-    {state.surface === 'settings' && <SettingsSurface onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={index => setToast(`${SETTINGS_CATEGORIES[index][0]} is available in the desktop launcher`)} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
+    {state.surface === 'settings' && settingsDetail === undefined && <SettingsSurface onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={setSettingsDetail} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
+    {state.surface === 'settings' && settingsDetail !== undefined && <SettingsDetailSurface categoryIndex={settingsDetail} onBack={() => setSettingsDetail(undefined)} onSave={onSaveSettings} settings={settings} />}
     {state.surface === 'home' && selected && <Text style={shellStyles.keyGuide}>Enter Select   ·   Hold for Options</Text>}
     {optionsGame && <OptionsModal game={optionsGame} onRef={(index, node) => { optionRefs.current[index] = node; }} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
     {toast && <ShellToast message={toast} onClose={dismissToast} />}
@@ -398,6 +448,7 @@ const shellStyles = StyleSheet.create({
   libraryGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 32, paddingBottom: 90}, libraryTile: {width: 370, marginBottom: 20}, libraryArt: {height: 220, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', resizeMode: 'cover'}, libraryMonogram: {color: '#fff', fontSize: 76, fontWeight: '700'}, libraryTitle: {color: '#fff', fontSize: 20, marginTop: 12},
   genericFocusFrame: {position: 'absolute', left: -SHELL_METRICS.focusLineOffset, top: -SHELL_METRICS.focusLineOffset, right: -SHELL_METRICS.focusLineOffset, bottom: -SHELL_METRICS.focusLineOffset, zIndex: 1}, genericFocusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)'},
   settingsSurface: {width: 1200}, settingsList: {padding: SHELL_METRICS.focusLineOffset, paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 6}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsChevron: {color: '#fff', fontSize: 34},
+  detailBack: {alignSelf: 'flex-start', paddingVertical: 12, paddingRight: 24, marginBottom: 12}, detailIntro: {maxWidth: 720, color: 'rgba(255,255,255,0.7)', fontSize: 20, marginTop: -18, marginBottom: 38}, detailRows: {padding: SHELL_METRICS.focusLineOffset}, detailRow: {width: 1040, minHeight: 86, borderRadius: 16, paddingHorizontal: 24, marginBottom: 10, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', fontSize: 24}, detailValue: {maxWidth: 440, color: 'rgba(255,255,255,0.72)', fontSize: 20, textAlign: 'right'},
   keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
 });
 

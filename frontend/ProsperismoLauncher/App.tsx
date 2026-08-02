@@ -394,6 +394,8 @@ export default function App() {
          artwork={brandArtwork.bigPicture}
          games={games}
          nativeBackgroundFrames={nativeBackgroundFrames}
+         settings={settings}
+         onSaveSettings={next => { void persist(next); }}
          onDesktop={() => setRoute('desktop')}
         onLaunch={game => {
           if (session.phase !== 'launching' && session.phase !== 'running') {
