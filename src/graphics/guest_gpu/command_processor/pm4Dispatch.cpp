@@ -170,6 +170,9 @@ constexpr auto MakeShaderDispatchTable() {
 	g_hw_sh_func[Pm4::SPI_SHADER_USER_DATA_ADDR_LO_HS] = HwShIgnoreRegisters;
 	g_hw_sh_func[Pm4::SPI_SHADER_USER_DATA_ADDR_HI_HS] = HwShIgnoreRegisters;
 	g_hw_sh_func[Pm4::SPI_SHADER_REQ_CTRL_LSHS]        = HwShIgnoreRegisters;
+	// Sony's ShShaderBaseEs contract includes RSRC1_ES as a fixed/default
+	// companion word to PGM_LO/HI_ES. It has no independent ES-stage state.
+	g_hw_sh_func[Pm4::SPI_SHADER_PGM_RSRC1_ES]          = HwShIgnoreRegisters;
 
 	return g_hw_sh_func;
 }

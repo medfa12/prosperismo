@@ -4300,6 +4300,13 @@ void GraphicsInitJmpTablesShIndirect() {
 		cp.GetShCtx().SetEsShaderBase(base);
 	};
 
+	// sce::Agc::ShShaderBaseEs treats its third register (RSRC1_ES) as an
+	// invariant kDefault word. The executable ES address is carried by LO/HI;
+	// merged-stage resource state is programmed through the GS registers.
+	g_hw_sh_indirect_func[Pm4::SPI_SHADER_PGM_RSRC1_ES] = [](KYTY_HW_SH_INDIRECT_ARGS) {
+		HwShIgnoreShaderRegister(cmd_offset, value);
+	};
+
 	g_hw_sh_indirect_func[Pm4::SPI_SHADER_PGM_LO_GS] = [](KYTY_HW_SH_INDIRECT_ARGS) {
 		auto base = cp.GetShCtx().GetVs().gs_regs.data_addr;
 		base &= 0xFFFFFF00000000FFull;
