@@ -90,12 +90,14 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
 
 /**
  * The native renderer owns a narrow line pass for list/menu rows. Keep the
- * row dark: this is not a white selected-row fill.
+ * row dark: this is not a white selected-row fill. The recovered renderer
+ * trims ListItem focus by 3 px at the top and 5 px at the bottom; its themed
+ * colour table is not recovered, so do not invent a coloured gradient here.
  */
 function FocusLine({active, radius = 16}: {active: boolean; radius?: number}) {
   const phase = useFocusPhase(active);
-  return <Animated.View pointerEvents="none" style={[shellStyles.genericFocusFrame, {borderRadius: radius + SHELL_METRICS.focusLineOffset, opacity: phase}]}>
-    <View style={[shellStyles.genericFocusLine, {borderRadius: radius + SHELL_METRICS.focusLineOffset}]} />
+  return <Animated.View pointerEvents="none" style={[shellStyles.genericFocusFrame, {borderRadius: radius, opacity: phase}]}>
+    <View style={[shellStyles.genericFocusLine, {borderRadius: radius}]} />
   </Animated.View>;
 }
 
@@ -446,7 +448,7 @@ const shellStyles = StyleSheet.create({
   experienceCaption: {position: 'absolute', top: SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', fontSize: 30, fontWeight: '600'}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', fontSize: 18}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
   backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},
   libraryGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 32, paddingBottom: 90}, libraryTile: {width: 370, marginBottom: 20}, libraryArt: {height: 220, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', resizeMode: 'cover'}, libraryMonogram: {color: '#fff', fontSize: 76, fontWeight: '700'}, libraryTitle: {color: '#fff', fontSize: 20, marginTop: 12},
-  genericFocusFrame: {position: 'absolute', left: -SHELL_METRICS.focusLineOffset, top: -SHELL_METRICS.focusLineOffset, right: -SHELL_METRICS.focusLineOffset, bottom: -SHELL_METRICS.focusLineOffset, zIndex: 1}, genericFocusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)'},
+  genericFocusFrame: {position: 'absolute', left: 0, top: 3, right: 0, bottom: 5, zIndex: 1}, genericFocusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.92)'},
   settingsSurface: {width: 1200}, settingsList: {padding: SHELL_METRICS.focusLineOffset, paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 6}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsChevron: {color: '#fff', fontSize: 34},
   detailBack: {alignSelf: 'flex-start', paddingVertical: 12, paddingRight: 24, marginBottom: 12}, detailIntro: {maxWidth: 720, color: 'rgba(255,255,255,0.7)', fontSize: 20, marginTop: -18, marginBottom: 38}, detailRows: {padding: SHELL_METRICS.focusLineOffset}, detailRow: {width: 1040, minHeight: 86, borderRadius: 16, paddingHorizontal: 24, marginBottom: 10, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', fontSize: 24}, detailValue: {maxWidth: 440, color: 'rgba(255,255,255,0.72)', fontSize: 20, textAlign: 'right'},
   keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
