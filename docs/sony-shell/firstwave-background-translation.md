@@ -88,6 +88,53 @@ recovered particle producer remains a Home-only additive layer above it.
 
 This module closes the plate math, not the entire FirstWave stack. The animated
 folded mesh still requires `fw_flow_vl/h/dv`, OIT composition, blur, and FXAA.
+
+## Firmware 12.40 program contract
+
+The missing stack is no longer being treated as an inferred visual effect.
+`tools/Prosperismo.NativeBackgroundProducer/FirstWaveFirmwareProgram.cs` reads
+all eleven FirstWave AGC programs directly from the user's decrypted
+`NPXS40087/eboot.bin`. It validates the shader registry name, AGC `1234`/version
+24 header, stage type, declared code length, and a SHA-256 fingerprint of every
+declared instruction span before exposing any bytes to a renderer. Prosperismo
+therefore contains offsets and fingerprints, but no copied Sony shader bytes.
+
+The 12.40 pass order and resource contracts recovered from those programs are:
+
+| pass | recovered resources / output |
+|---|---|
+| `fw_flow_vl` | FirstWave control-point input and shared constant buffer; local half of the tessellation pipeline |
+| `fw_flow_h` | root pointer in `s[0:1]`, descriptors at `+0x20/+0x30`, LDS reads, buffer stores; hull half |
+| `fw_flow_dv` | root `s[12:13]`, constants through `s[8:11]` at `+0x00/+0x80/+0xC0`, sixteen `buffer_load_dwordx4` reads from `s[0:3]`; exports position plus five parameters |
+| `fw_oit_p` | constants through `s[8:11]` at `+0x110/+0x150/+0x170/+0x184/+0x188/+0x18C/+0x190`; OIT UAV `s[0:3]`, count UAV `s[4:7]`, atomics and MRT0 |
+| `fw_comp_oit_p` | constants through `s[8:11]` at `+0x40/+0x110/+0x130/+0x180/+0x184/+0x18C`; OIT buffers `s[0:3]` and `s[4:7]`, MRT0 |
+| `fw_blurh_p`, `fw_blurv_p` | image `s[0:7]`, sampler `s[8:11]`, constants `s[12:15]`, fourteen samples, MRT0 |
+| `fw_fxaa_p` | image `s[0:7]`, sampler `s[8:11]`, gather/sample/resinfo, MRT0 |
+| `fw_background_p` | constants `s[0:3]`: projection `+0x40`, colours `+0x110/+0x120/+0x130`, opacity/time `+0x180`, dimensions `+0x190`; MRT0 |
+
+Run the validator without copying anything out of the oracle:
+
+```powershell
+Prosperismo.NativeBackgroundProducer --validate-firstwave <path-to-NPXS40087-eboot.bin>
+```
+
+`--compile-firstwave-post` additionally decodes and translates the six original
+pixel programs (`blurh`, `blurv`, OIT write, OIT resolve, FXAA, and background)
+to SPIR-V at runtime. The 12.40 oracle currently produces respectively
+`0xB38C`, `0xB38C`, `0x2C4EC`, `0xFFF4`, `0x2C2F0`, and `0x74B8` bytes. Those
+are translated Sony instruction streams, not rewritten look-alike shaders.
+
+```powershell
+Prosperismo.NativeBackgroundProducer --compile-firstwave-post <path-to-NPXS40087-eboot.bin>
+```
+
+The current Vulkan translator now accepts every FirstWave pixel stage, plus
+ordinary vertex and compute programs. It does not yet expose the firmware's
+local/hull/domain execution model, so the validated tessellation stages must
+not be relabelled as ordinary vertex shaders or replaced with a hand-authored
+mesh. Until that backend work lands, the native RNW view's `fw_background_p`
+output is an exact plate-only fallback, not a claim that the full dark
+folded-room renderer is complete.
 Do not describe the result as the complete native background until those passes
 are translated and visually validated.
 

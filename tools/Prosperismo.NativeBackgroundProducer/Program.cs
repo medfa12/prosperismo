@@ -35,6 +35,36 @@ internal static class Program
             return 0;
         }
 
+        if (args.Length == 2 && args[0] == "--validate-firstwave")
+        {
+            var program = FirstWaveFirmwareProgram.Load(args[1]);
+            Console.WriteLine("validated NPXS40087 12.40 FirstWave program: {0}", program.EbootPath);
+            foreach (var stage in program.Stages)
+            {
+                Console.WriteLine(
+                    "  {0,-18} type={1} header=0x{2:X} code=0x{3:X}+0x{4:X} sha256={5}",
+                    stage.Name,
+                    stage.ShaderType,
+                    stage.HeaderFileOffset,
+                    stage.CodeFileOffset,
+                    stage.CodeBytes,
+                    stage.Sha256);
+            }
+            return 0;
+        }
+
+        if (args.Length == 2 && args[0] == "--compile-firstwave-post")
+        {
+            var firmware = FirstWaveFirmwareProgram.Load(args[1]);
+            var programs = FirstWaveFirmwarePostCompiler.Compile(firmware);
+            Console.WriteLine("translated {0} original FirstWave pixel programs", programs.Count);
+            foreach (var program in programs)
+            {
+                Console.WriteLine("  {0,-18} SPIR-V bytes=0x{1:X}", program.Name, program.Spirv.Length);
+            }
+            return 0;
+        }
+
         var options = Options.Parse(args);
         if (options is null)
         {
@@ -293,6 +323,8 @@ internal static class Program
 
     private static void RunSelfTest()
     {
+        FirstWaveFirmwareProgram.ValidateContractTable();
+
         var converted = new byte[8];
         ConvertRgbaFramebufferToAdditiveBgra(
             new byte[] { 1, 1, 9, 255, 11, 21, 39, 255 },
@@ -401,6 +433,8 @@ internal static class Program
         public const string Usage =
             "usage: Prosperismo.NativeBackgroundProducer --cache-root <draw-cache> " +
             "--firmware-root <PS5 dump> [--width 1920] [--height 1080] [--frame-limit N]\n" +
+            "       Prosperismo.NativeBackgroundProducer --validate-firstwave <NPXS40087 eboot.bin>\n" +
+            "       Prosperismo.NativeBackgroundProducer --compile-firstwave-post <NPXS40087 eboot.bin>\n" +
             "       Prosperismo.NativeBackgroundProducer --self-test";
 
         public static Options? Parse(string[] args)
