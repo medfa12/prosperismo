@@ -1,5 +1,5 @@
-import {INITIAL_SHELL_STATE, isShellCardFocused, reduceShellState, selectedShellBackground} from '../src/bigPicture/shellState';
-import {SHELL_FOCUSED_TILE_SCALE, SHELL_METRICS, shellTileBaseX} from '../src/bigPicture/shellMetrics';
+import {INITIAL_SHELL_STATE, isShellCardFocused, navigateHomeFocus, reduceShellState, selectedShellBackground} from '../src/bigPicture/shellState';
+import {SHELL_FOCUSED_TILE_SCALE, SHELL_METRICS, shellEaseOutBlast, shellHomeFocusTarget, shellTileBaseX} from '../src/bigPicture/shellMetrics';
 
 describe('Sony-grounded shell state', () => {
   it('clamps strand selection to installed games', () => {
@@ -46,5 +46,39 @@ describe('Sony-grounded shell state', () => {
     const game = {backgroundPath: 'D:\\Games\\Astro\\sce_sys\\pic0.png'} as any;
     expect(selectedShellBackground(game, 'home')).toBe(game.backgroundPath);
     expect(selectedShellBackground(game, 'settings')).toBeUndefined();
+  });
+
+  it('uses the recovered named-neighbour graph without wrapping', () => {
+    const spaces = navigateHomeFocus(INITIAL_SHELL_STATE, 'up', 5, 3);
+    expect(spaces.focusRegion).toBe('spaces');
+    expect(navigateHomeFocus(spaces, 'left', 5, 3)).toBe(spaces);
+
+    const media = navigateHomeFocus(spaces, 'right', 5, 3);
+    expect(media.space).toBe('media');
+    expect(media.focusRegion).toBe('spaces');
+
+    const system = navigateHomeFocus(media, 'right', 5, 3);
+    expect(system.focusRegion).toBe('system');
+    expect(system.systemIndex).toBe(0);
+    expect(navigateHomeFocus(system, 'left', 5, 3).focusRegion).toBe('spaces');
+    expect(navigateHomeFocus(system, 'down', 5, 3).focusRegion).toBe('strand');
+  });
+
+  it('clamps within the strand and system regions', () => {
+    expect(navigateHomeFocus(INITIAL_SHELL_STATE, 'left', 5, 3).selectedIndex).toBe(0);
+    const lastSystem = {...INITIAL_SHELL_STATE, focusRegion: 'system' as const, systemIndex: 2};
+    expect(navigateHomeFocus(lastSystem, 'right', 5, 3).systemIndex).toBe(2);
+  });
+
+  it('positions the single HOME focus owner on recovered card and system geometry', () => {
+    expect(shellHomeFocusTarget('strand')).toMatchObject({kind: 'card', x: 166, y: 120, width: 180, height: 180});
+    expect(shellHomeFocusTarget('system', 0)).toMatchObject({kind: 'system', x: 1364, y: 35, width: 56, height: 56});
+    expect(shellHomeFocusTarget('system', 2).x).toBe(1572);
+  });
+
+  it('uses the exact EaseOutBlast r=10 i=0.5 curve', () => {
+    expect(shellEaseOutBlast(0)).toBe(0);
+    expect(shellEaseOutBlast(0.5)).toBeCloseTo(1 - Math.pow(0.75, 10), 12);
+    expect(shellEaseOutBlast(1)).toBeCloseTo(1023 / 1024, 12);
   });
 });

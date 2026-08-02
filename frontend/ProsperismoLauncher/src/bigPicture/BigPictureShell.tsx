@@ -14,33 +14,33 @@ import {
   View,
 } from 'react-native';
 import type {GameInstall, LauncherSettings} from '../core/models';
-import {INITIAL_SHELL_STATE, isShellCardFocused, reduceShellState, selectedShellBackground, selectedShellGame} from './shellState';
+import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame, type ShellDirection, type ShellFocusRegion} from './shellState';
 import {
   SHELL_FOCUSED_TILE_RADIUS,
   SHELL_FOCUSED_TILE_SCALE,
   SHELL_METRICS,
+  shellEaseOutBlast,
+  shellHomeFocusTarget,
   shellTileBaseX,
 } from './shellMetrics';
-import {nativeFrameIndexAtElapsed} from './nativeBackground';
-
-const SETTINGS_CATEGORIES = [
-  ['General', 'Library, startup, and default behavior'],
-  ['Graphics', 'Display, Vulkan, and capture'],
-  ['Audio and Interface', 'Controller and keyboard input'],
-  ['Emulation', 'Timing, shaders, and compatibility defaults'],
-  ['Logging', 'Shader, command-buffer, and printf output'],
-  ['Environment', 'Game locations, compatibility, and title patches'],
-  ['About Prosperismo', 'Version, diagnostics, and legal notices'],
-] as const;
+import NativeBackgroundSurface from './NativeBackgroundSurfaceNativeComponent';
+import {
+  PROSPERISMO_SETTINGS_CATEGORIES,
+  ProsperismoSettingsDetail,
+  ProsperismoSettingsRoot,
+} from './ProsperismoSettingsSurface';
+import {
+  GenericAvatar,
+  ProfileMenu,
+  SearchSurface,
+  ShellButtonPrompts,
+} from './ShellUtilitySurfaces';
 
 const SYSTEM_ACTIONS = [
   {label: 'Search', glyph: 'search'},
   {label: 'Settings', glyph: 'settings'},
-  {label: 'Desktop mode', glyph: 'profile'},
+  {label: 'Profile', glyph: 'profile'},
 ] as const;
-
-const LIBRARY_SORT_FIELDS = ['titleName', 'titleId', 'gameVersion', 'firmwareVersion', 'gamePath', 'status', 'comment'] as const;
-const SHADER_OPTIMIZATIONS = ['None', 'Size', 'Performance'] as const;
 
 export interface FirmwareShellIconPaths {
   settings?: string;
@@ -48,12 +48,16 @@ export interface FirmwareShellIconPaths {
   desktop?: string;
 }
 
-function nextValue<T>(values: readonly T[], value: T): T {
-  return values[(values.indexOf(value) + 1) % values.length];
-}
-
 function formatClock(now: Date): string {
   return now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+}
+
+function homeDirectionForKey(key: string | undefined): ShellDirection | undefined {
+  if (key === 'ArrowLeft' || key === 'GamepadDPadLeft') { return 'left'; }
+  if (key === 'ArrowRight' || key === 'GamepadDPadRight') { return 'right'; }
+  if (key === 'ArrowUp' || key === 'GamepadDPadUp') { return 'up'; }
+  if (key === 'ArrowDown' || key === 'GamepadDPadDown') { return 'down'; }
+  return undefined;
 }
 
 function easeOutBreeze(value: number): number {
@@ -62,10 +66,6 @@ function easeOutBreeze(value: number): number {
 
 function focusInOutCurve(value: number): number {
   return value > 0 ? 1 - Math.pow(1 - value * 0.5, 10) : 0;
-}
-
-function easeOutBlast(value: number): number {
-  return 1 - Math.pow(1 - value, 10);
 }
 
 function useFocusPhase(focused: boolean, delay = 200): Animated.Value {
@@ -84,7 +84,7 @@ function useFocusPhase(focused: boolean, delay = 200): Animated.Value {
 }
 
 /** Separate narrow line pass and translucent area pass. It is not a generic border. */
-function CardFocusPass({phase}: {phase: Animated.Value}) {
+function CardFocusPass() {
   const shimmer = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     // FocusRenderManager's ShimmerSpeed=1 / ShimmerFrequency=5 path is idle
@@ -100,13 +100,52 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
   }, [shimmer]);
   const shimmerTranslate = shimmer.interpolate({inputRange: [0, 1], outputRange: [-196, 196]});
   return (
-    <Animated.View pointerEvents="none" style={[shellStyles.focusFrame, {opacity: phase}]}>
+    <View pointerEvents="none" style={shellStyles.focusFrame}>
       <View style={shellStyles.focusLine} />
       <View style={shellStyles.focusWashClip}>
         <Animated.View style={[shellStyles.focusShimmer, {opacity: shimmer, transform: [{translateX: shimmerTranslate}, {rotate: '-24deg'}]}]} />
       </View>
-    </Animated.View>
+    </View>
   );
+}
+
+/** One FocusRenderManager-style owner travels between HOME focus targets. */
+function HomeFocusOverlay({focusRegion, systemIndex, hasGames}: {
+  focusRegion: ShellFocusRegion;
+  systemIndex: number;
+  hasGames: boolean;
+}) {
+  const initial = shellHomeFocusTarget('strand');
+  const left = useRef(new Animated.Value(initial.x)).current;
+  const top = useRef(new Animated.Value(initial.y)).current;
+  const width = useRef(new Animated.Value(initial.width)).current;
+  const height = useRef(new Animated.Value(initial.height)).current;
+  const radius = useRef(new Animated.Value(initial.radius)).current;
+  const visible = focusRegion === 'system' || (focusRegion === 'strand' && hasGames);
+  const cardActive = focusRegion === 'strand' && hasGames;
+  const systemActive = focusRegion === 'system';
+  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  const cardOpacity = useRef(new Animated.Value(cardActive ? 1 : 0)).current;
+  const systemOpacity = useRef(new Animated.Value(systemActive ? 1 : 0)).current;
+  useEffect(() => {
+    const target = shellHomeFocusTarget(systemActive ? 'system' : 'strand', systemIndex);
+    const animation = Animated.parallel([
+      Animated.timing(left, {toValue: target.x, duration: 300, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(top, {toValue: target.y, duration: 300, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(width, {toValue: target.width, duration: 300, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(height, {toValue: target.height, duration: 300, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(radius, {toValue: target.radius, duration: 300, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(opacity, {toValue: visible ? 1 : 0, duration: visible ? 300 : 120, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(cardOpacity, {toValue: cardActive ? 1 : 0, duration: 120, easing: shellEaseOutBlast, useNativeDriver: false}),
+      Animated.timing(systemOpacity, {toValue: systemActive ? 1 : 0, duration: 120, easing: shellEaseOutBlast, useNativeDriver: false}),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [cardActive, cardOpacity, hasGames, height, left, opacity, radius, systemActive, systemIndex, systemOpacity, top, visible, width]);
+  return <Animated.View pointerEvents="none" style={[shellStyles.homeFocusOverlay, {left, top, width, height, borderRadius: radius, opacity}]}>
+    <Animated.View style={[shellStyles.homeFocusPass, {opacity: cardOpacity}]}><CardFocusPass /></Animated.View>
+    <Animated.View style={[shellStyles.homeSystemFocusPass, {opacity: systemOpacity}]} />
+  </Animated.View>;
 }
 
 /**
@@ -122,12 +161,11 @@ function FocusLine({active, radius = 16}: {active: boolean; radius?: number}) {
   </Animated.View>;
 }
 
-function ExperienceTile({game, focused, index, selectedIndex, selected, onFocus, onPress, onOptions, onRef}: {
+function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress, onOptions, onRef}: {
   game: GameInstall;
   index: number;
   selectedIndex: number;
   selected: boolean;
-  focused: boolean;
   onFocus(): void;
   onPress(): void;
   onOptions(): void;
@@ -136,7 +174,6 @@ function ExperienceTile({game, focused, index, selectedIndex, selected, onFocus,
   const baseX = shellTileBaseX(index, selectedIndex);
   const x = useRef(new Animated.Value(baseX)).current;
   const scale = useRef(new Animated.Value(selected ? SHELL_FOCUSED_TILE_SCALE : 1)).current;
-  const focusPhase = useFocusPhase(focused);
   useEffect(() => {
     const animation = Animated.spring(x, {...SHELL_METRICS.strandSpring, toValue: shellTileBaseX(index, selectedIndex), useNativeDriver: true});
     animation.start();
@@ -161,7 +198,6 @@ function ExperienceTile({game, focused, index, selectedIndex, selected, onFocus,
           {game.artworkPath ? <Image source={{uri: `file:///${game.artworkPath.replace(/\\/g, '/')}`}} style={shellStyles.tileImage} /> : <View style={shellStyles.tileFallback}><Text style={shellStyles.tileMonogram}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}
         </Pressable>
       </Animated.View>
-      {focused && <CardFocusPass phase={focusPhase} />}
     </Animated.View>
   );
 }
@@ -179,7 +215,7 @@ function SystemGlyph({kind, color, sourcePath}: {kind: SystemGlyphKind; color: A
   if (kind === 'settings') {
     return <View pointerEvents="none" style={shellStyles.settingsGlyphIcon}><Animated.View style={[shellStyles.settingsCore, {borderColor: color}]} />{SYSTEM_GEAR_TOOTH_STYLES.map((toothStyle, index) => <Animated.View key={index} style={[shellStyles.settingsTooth, toothStyle, {backgroundColor: color}]} />)}</View>;
   }
-  return <View pointerEvents="none" style={shellStyles.profileGlyph}><Animated.View style={[shellStyles.profileFrame, {borderColor: color}]} /><Animated.View style={[shellStyles.profileSlash, {backgroundColor: color}]} /></View>;
+  return <GenericAvatar color={color} />;
 }
 
 function SystemIconButton({label, glyph, focused, sourcePath, onFocus, onPress, onRef}: {
@@ -194,15 +230,14 @@ function SystemIconButton({label, glyph, focused, sourcePath, onFocus, onPress, 
   const phase = useRef(new Animated.Value(focused ? 1 : 0)).current;
   useEffect(() => {
     const animation = focused
-      ? Animated.sequence([Animated.delay(100), Animated.timing(phase, {toValue: 1, duration: 500, easing: easeOutBlast, useNativeDriver: false})])
-      : Animated.timing(phase, {toValue: 0, duration: 200, easing: easeOutBlast, useNativeDriver: false});
+      ? Animated.sequence([Animated.delay(100), Animated.timing(phase, {toValue: 1, duration: 500, easing: shellEaseOutBlast, useNativeDriver: false})])
+      : Animated.timing(phase, {toValue: 0, duration: 200, easing: shellEaseOutBlast, useNativeDriver: false});
     animation.start();
     return () => animation.stop();
   }, [focused, phase]);
   const color = phase.interpolate({inputRange: [0, 1], outputRange: [SHELL_METRICS.colors.white, SHELL_METRICS.colors.iconInverted]});
   return (
     <Pressable ref={onRef} accessibilityLabel={label} accessibilityRole="button" onFocus={onFocus} onPress={onPress} style={shellStyles.systemButton}>
-      <Animated.View pointerEvents="none" style={[shellStyles.systemFocusCircle, {opacity: phase}]} />
       <SystemGlyph kind={glyph} color={color} sourcePath={sourcePath} />
     </Pressable>
   );
@@ -213,55 +248,19 @@ function fileImageSource(path: string | undefined): ImageSourcePropType | undefi
 }
 
 /**
- * Development bridge for frames emitted by the recovered native background
- * renderer. Frames live in the user's oracle, never inside the application
- * package. A real native-frame host can replace this adapter without changing
- * the shell layering contract.
- */
-function NativeFrameBackground({frameMs, framePaths}: {
-  frameMs: number;
-  framePaths: readonly string[];
-}) {
-  const [frameIndex, setFrameIndex] = useState(0);
-  const frames = useMemo(() => framePaths.map(fileImageSource).filter((source): source is ImageSourcePropType => Boolean(source)), [framePaths]);
-  useEffect(() => {
-    setFrameIndex(0);
-    if (frames.length < 2) {
-      return;
-    }
-    const startedAt = Date.now();
-    let timer: ReturnType<typeof setTimeout>;
-    const advance = () => {
-      const elapsed = Date.now() - startedAt;
-      setFrameIndex(nativeFrameIndexAtElapsed(elapsed, frames.length, frameMs));
-      const nextBoundary = (Math.floor(elapsed / frameMs) + 1) * frameMs;
-      timer = setTimeout(advance, Math.max(1, nextBoundary - (Date.now() - startedAt)));
-    };
-    timer = setTimeout(advance, frameMs);
-    return () => clearTimeout(timer);
-  }, [frameMs, frames.length]);
-  if (frames.length === 0) {
-    return null;
-  }
-  return <Image source={frames[Math.min(frameIndex, frames.length - 1)]} style={shellStyles.nativeFrameBackground} />;
-}
-
-/**
  * HOME selection requests the recovered Normal background transition degree:
  * 633.333ms of linear image handoff. The native slide/ripple shader path has
  * a separate renderer boundary, so this React Native bridge keeps only the
  * proven timing rather than inventing a spatial substitute.
  */
-function ReactiveBackground({backgroundPath, fallback, dimmed, suppressFallback}: {
+function ReactiveBackground({backgroundPath, dimmed}: {
   backgroundPath?: string;
-  fallback: ImageSourcePropType;
   dimmed: boolean;
-  suppressFallback: boolean;
 }) {
-  const nextSource = fileImageSource(backgroundPath) ?? fallback;
-  const nextKey = backgroundPath ?? 'shell-default';
+  const nextSource = fileImageSource(backgroundPath);
+  const nextKey = backgroundPath ?? 'none';
   const [current, setCurrent] = useState({key: nextKey, source: nextSource});
-  const [previous, setPrevious] = useState<{key: string; source: ImageSourcePropType}>();
+  const [previous, setPrevious] = useState<{key: string; source: ImageSourcePropType | undefined}>();
   const crossFade = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (current.key === nextKey) {
@@ -274,18 +273,17 @@ function ReactiveBackground({backgroundPath, fallback, dimmed, suppressFallback}
     animation.start(({finished}) => { if (finished) { setPrevious(undefined); } });
     return () => animation.stop();
   }, [crossFade, current, nextKey, nextSource]);
-  const targetOpacity = suppressFallback && current.key === 'shell-default' ? 0 : dimmed ? 0.1 : 0.18;
-  const previousOpacity = previous && suppressFallback && previous.key === 'shell-default' ? 0 : dimmed ? 0.1 : 0.18;
+  const targetOpacity = dimmed ? 0.1 : 0.18;
+  const previousOpacity = dimmed ? 0.1 : 0.18;
   return <>
-    {previous && <Animated.Image source={previous.source} style={[shellStyles.backgroundArtwork, {opacity: crossFade.interpolate({inputRange: [0, 1], outputRange: [previousOpacity, 0]})}]} />}
-    <Animated.Image source={current.source} style={[shellStyles.backgroundArtwork, {opacity: crossFade.interpolate({inputRange: [0, 1], outputRange: [0, targetOpacity]})}]} />
+    {previous?.source && <Animated.Image source={previous.source} style={[shellStyles.backgroundArtwork, {opacity: crossFade.interpolate({inputRange: [0, 1], outputRange: [previousOpacity, 0]})}]} />}
+    {current.source && <Animated.Image source={current.source} style={[shellStyles.backgroundArtwork, {opacity: crossFade.interpolate({inputRange: [0, 1], outputRange: [0, targetOpacity]})}]} />}
   </>;
 }
 
-function HomeSurface({games, selectedIndex, libraryIconPath, onSelect, onLaunch, onOptions, onLibrary, strandFocused, strandRefs}: {
+function HomeSurface({games, selectedIndex, libraryIconPath, onSelect, onLaunch, onOptions, onLibrary, strandRefs}: {
   games: readonly GameInstall[];
   selectedIndex: number;
-  strandFocused: boolean;
   libraryIconPath?: string;
   onSelect(index: number): void;
   onLaunch(game: GameInstall): void;
@@ -298,7 +296,7 @@ function HomeSurface({games, selectedIndex, libraryIconPath, onSelect, onLaunch,
   return (
     <>
       <View style={shellStyles.strand}>
-        {visibleGames.map((game, index) => <ExperienceTile game={game} focused={strandFocused && index === selectedIndex} index={index} key={game.gamePath} selectedIndex={selectedIndex} onRef={node => { strandRefs.current[index] = node; }} onFocus={() => onSelect(index)} onOptions={() => onOptions(game)} onPress={() => onLaunch(game)} selected={index === selectedIndex} />)}
+        {visibleGames.map((game, index) => <ExperienceTile game={game} index={index} key={game.gamePath} selectedIndex={selectedIndex} onRef={node => { strandRefs.current[index] = node; }} onFocus={() => onSelect(index)} onOptions={() => onOptions(game)} onPress={() => onLaunch(game)} selected={index === selectedIndex} />)}
         <Pressable accessibilityLabel="Game Library" accessibilityRole="button" onPress={onLibrary} style={shellStyles.libraryShortcut}>
           {libraryIconPath
             ? <Image source={fileImageSource(libraryIconPath)} style={shellStyles.libraryShortcutImage} />
@@ -314,85 +312,6 @@ function LibrarySurface({games, onLaunch}: {games: readonly GameInstall[]; onLau
   return <View style={shellStyles.contentSurface}><Text style={shellStyles.surfaceTitle}>Game Library</Text><ScrollView contentContainerStyle={shellStyles.libraryGrid}>{games.map(game => <Pressable accessibilityRole="button" key={game.gamePath} onPress={() => onLaunch(game)} style={shellStyles.libraryTile}>{game.artworkPath ? <Image source={{uri: `file:///${game.artworkPath.replace(/\\/g, '/')}`}} style={shellStyles.libraryArt} /> : <View style={shellStyles.libraryArt}><Text style={shellStyles.libraryMonogram}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}<Text numberOfLines={1} style={shellStyles.libraryTitle}>{game.titleName}</Text></Pressable>)}</ScrollView></View>;
 }
 
-function SettingsSurface({selectedIndex, settings, onSelect, onActivate, onRef}: {
-  selectedIndex: number;
-  settings: LauncherSettings;
-  onSelect(index: number): void;
-  onActivate(index: number): void;
-  onRef(index: number, node: any): void;
-}) {
-  const category = SETTINGS_CATEGORIES[selectedIndex] ?? SETTINGS_CATEGORIES[0];
-  const preview = selectedIndex === 0 ? [
-    ['Game folders', `${settings.gameDirectories.length} configured`],
-    ['Library sort', settings.library.sortField],
-    ['Sort direction', settings.library.sortDirection],
-  ] : selectedIndex === 1 ? [
-    ['Resolution', settings.global.screenResolution],
-    ['Vblank frequency', `${settings.global.vblankFrequency} Hz`],
-    ['Vulkan validation', settings.global.vulkanValidation ? 'On' : 'Off'],
-  ] : selectedIndex === 2 ? [
-    ['Controller mapping', 'Managed by the Windows host'],
-    ['Keyboard input', 'Managed by the Windows host'],
-  ] : selectedIndex === 3 ? [
-    ['Shader optimization', settings.global.shaderOptimization],
-    ['Shader validation', settings.global.shaderValidation ? 'On' : 'Off'],
-    ['NGG rectlist draw', settings.global.nggRectlistDraw ? 'On' : 'Off'],
-  ] : selectedIndex === 4 ? [
-    ['Shader log', settings.global.shaderLogDirection],
-    ['Command buffer dump', settings.global.commandBufferDump ? 'On' : 'Off'],
-    ['Printf output', settings.global.printfDirection],
-  ] : selectedIndex === 5 ? [
-    ['Patch titles', `${Object.keys(settings.patchSelections).length} configured`],
-    ['Compatibility profiles', `${Object.keys(settings.compatibility).length} imported`],
-  ] : [
-    ['Prosperismo', 'React Native Windows shell'],
-    ['Oracle', 'Firmware-derived presentation contracts'],
-  ];
-  return <View style={shellStyles.settingsStage}><Text style={shellStyles.settingsStageTitle}>Settings</Text><View style={shellStyles.settingsRail}>{SETTINGS_CATEGORIES.map(([name], index) => <Pressable ref={node => onRef(index, node)} accessibilityRole="button" key={name} onFocus={() => onSelect(index)} onPress={() => onActivate(index)} style={shellStyles.settingsRailRow}><FocusLine active={index === selectedIndex} radius={0} /><Text style={[shellStyles.settingsRailText, index === selectedIndex && shellStyles.settingsRailTextSelected]}>{name}</Text></Pressable>)}</View><View style={shellStyles.settingsLane}><Text style={shellStyles.settingsLaneTitle}>{category[0]}</Text><Text style={shellStyles.settingsLaneIntro}>{category[1]}</Text>{preview.map(([label, value]) => <View key={label} style={shellStyles.settingsLaneRow}><Text style={shellStyles.settingsLaneLabel}>{label}</Text><Text numberOfLines={1} style={shellStyles.settingsLaneValue}>{value}</Text></View>)}<Text style={shellStyles.settingsLaneHint}>Press Enter to change these Prosperismo settings.</Text></View></View>;
-}
-
-type SettingRow = {label: string; value: string; onPress?: () => void};
-
-function SettingsDetailSurface({categoryIndex, settings, onSave, onBack}: {
-  categoryIndex: number;
-  settings: LauncherSettings;
-  onSave(next: LauncherSettings): void;
-  onBack(): void;
-}) {
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const category = SETTINGS_CATEGORIES[categoryIndex] ?? SETTINGS_CATEGORIES[0];
-  const updateGlobal = <K extends keyof LauncherSettings['global']>(key: K, value: LauncherSettings['global'][K]) => onSave({...settings, global: {...settings.global, [key]: value}});
-  const rows: SettingRow[] = categoryIndex === 0 ? [
-    {label: 'Game folders', value: `${settings.gameDirectories.length} configured`},
-    {label: 'Library sort', value: settings.library.sortField, onPress: () => onSave({...settings, library: {...settings.library, sortField: nextValue(LIBRARY_SORT_FIELDS, settings.library.sortField)}})},
-    {label: 'Sort direction', value: settings.library.sortDirection, onPress: () => onSave({...settings, library: {...settings.library, sortDirection: settings.library.sortDirection === 'ascending' ? 'descending' : 'ascending'}})},
-  ] : categoryIndex === 1 ? [
-    {label: 'Resolution', value: settings.global.screenResolution, onPress: () => updateGlobal('screenResolution', settings.global.screenResolution === '1280x720' ? '1920x1080' : '1280x720')},
-    {label: 'Vblank frequency', value: `${settings.global.vblankFrequency} Hz`, onPress: () => updateGlobal('vblankFrequency', settings.global.vblankFrequency === 60 ? 120 : 60)},
-    {label: 'Vulkan validation', value: settings.global.vulkanValidation ? 'On' : 'Off', onPress: () => updateGlobal('vulkanValidation', !settings.global.vulkanValidation)},
-    {label: 'RenderDoc', value: settings.global.renderDoc ? 'On' : 'Off', onPress: () => updateGlobal('renderDoc', !settings.global.renderDoc)},
-  ] : categoryIndex === 2 ? [
-    {label: 'Controller mapping', value: 'Managed by the Windows host'},
-    {label: 'Keyboard input', value: 'Managed by the Windows host'},
-  ] : categoryIndex === 3 ? [
-    {label: 'Shader optimization', value: settings.global.shaderOptimization, onPress: () => updateGlobal('shaderOptimization', nextValue(SHADER_OPTIMIZATIONS, settings.global.shaderOptimization))},
-    {label: 'Shader validation', value: settings.global.shaderValidation ? 'On' : 'Off', onPress: () => updateGlobal('shaderValidation', !settings.global.shaderValidation)},
-    {label: 'NGG rectlist draw', value: settings.global.nggRectlistDraw ? 'On' : 'Off', onPress: () => updateGlobal('nggRectlistDraw', !settings.global.nggRectlistDraw)},
-  ] : categoryIndex === 4 ? [
-    {label: 'Shader log direction', value: settings.global.shaderLogDirection, onPress: () => updateGlobal('shaderLogDirection', nextValue(['Silent', 'Console', 'File'] as const, settings.global.shaderLogDirection))},
-    {label: 'Shader log folder', value: settings.global.shaderLogFolder},
-    {label: 'Buffer dump', value: settings.global.commandBufferDump ? 'On' : 'Off', onPress: () => updateGlobal('commandBufferDump', !settings.global.commandBufferDump)},
-    {label: 'Printf output', value: settings.global.printfDirection, onPress: () => updateGlobal('printfDirection', nextValue(['Silent', 'Console', 'File'] as const, settings.global.printfDirection))},
-  ] : categoryIndex === 5 ? [
-    {label: 'Patch titles', value: `${Object.keys(settings.patchSelections).length} configured`},
-    {label: 'Patch controls', value: 'Available per game in the desktop launcher'},
-  ] : [
-    {label: 'Prosperismo', value: 'React Native Windows shell'},
-    {label: 'Oracle', value: 'Firmware-derived presentation contracts'},
-  ];
-  return <View style={[shellStyles.contentSurface, shellStyles.settingsSurface]}><Pressable accessibilityRole="button" onPress={onBack} style={shellStyles.detailBack}><Text style={shellStyles.backText}>‹ Settings</Text></Pressable><Text style={shellStyles.surfaceTitle}>{category[0]}</Text><Text style={shellStyles.detailIntro}>{category[1]}</Text><View style={shellStyles.detailRows}>{rows.map((row, index) => <Pressable accessibilityRole="button" key={row.label} onFocus={() => setFocusedIndex(index)} onPress={row.onPress} style={shellStyles.detailRow}><FocusLine active={focusedIndex === index} /><Text style={shellStyles.detailLabel}>{row.label}</Text><Text style={shellStyles.detailValue}>{row.value}</Text></Pressable>)}</View></View>;
-}
-
 function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect, onRef}: {
   game: GameInstall;
   selectedIndex: number;
@@ -402,7 +321,7 @@ function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect, onRef}: {
   onRef(index: number, node: any): void;
 }) {
   const phase = useRef(new Animated.Value(0)).current;
-  useEffect(() => { const animation = Animated.sequence([Animated.delay(50), Animated.timing(phase, {toValue: 1, duration: 250, easing: easeOutBlast, useNativeDriver: true})]); animation.start(); return () => animation.stop(); }, [phase]);
+  useEffect(() => { const animation = Animated.sequence([Animated.delay(50), Animated.timing(phase, {toValue: 1, duration: 250, easing: shellEaseOutBlast, useNativeDriver: true})]); animation.start(); return () => animation.stop(); }, [phase]);
   return <View style={shellStyles.modalLayer}><Pressable accessibilityLabel="Close options" onPress={onClose} style={shellStyles.optionsDismissArea} /><Animated.View style={[shellStyles.optionsPanel, {opacity: phase}]}><Text style={shellStyles.optionsTitle}>{game.titleName}</Text><Pressable ref={node => onRef(0, node)} onFocus={() => onSelect(0)} onPress={onPlay} style={shellStyles.optionRow}><FocusLine active={selectedIndex === 0} /><Text style={shellStyles.optionText}>Play</Text></Pressable><Pressable ref={node => onRef(1, node)} onFocus={() => onSelect(1)} onPress={onClose} style={shellStyles.optionRow}><FocusLine active={selectedIndex === 1} /><Text style={shellStyles.optionText}>Cancel</Text></Pressable></Animated.View></View>;
 }
 
@@ -442,12 +361,8 @@ function ShellDialog({title, message, onDismiss, onRef}: {title: string; message
 
 export interface BigPictureShellProps {
   games: readonly GameInstall[];
-  artwork: ImageSourcePropType;
   firmwareShellIcons?: FirmwareShellIconPaths;
   settings: LauncherSettings;
-  /** Local, user-owned oracle outputs; not bundled application assets. */
-  nativeBackgroundFrameMs?: number;
-  nativeBackgroundFrames?: readonly string[];
   onSaveSettings(next: LauncherSettings): void;
   onDesktop(): void;
   onLaunch(game: GameInstall): void;
@@ -455,12 +370,14 @@ export interface BigPictureShellProps {
   onDismissError(): void;
 }
 
-export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settings, nativeBackgroundFrameMs = 100, nativeBackgroundFrames = [], onSaveSettings, onDesktop, onLaunch, errorMessage, onDismissError}: BigPictureShellProps) {
+export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSaveSettings, onDesktop, onLaunch, errorMessage, onDismissError}: BigPictureShellProps) {
   const [state, dispatch] = useReducer(reduceShellState, INITIAL_SHELL_STATE);
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
   const [optionIndex, setOptionIndex] = useState(0);
   const [settingsDetail, setSettingsDetail] = useState<number>();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [toast, setToast] = useState<string>();
   const dismissToast = useCallback(() => setToast(undefined), []);
   const spaceRefs = useRef<any[]>([]);
@@ -501,13 +418,20 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
       return;
     }
     if (state.surface === 'home') {
-      focusNative(shellGames.length > 0
-        ? strandRefs.current[Math.min(state.selectedIndex, shellGames.length - 1)]
-        : spaceRefs.current[0]);
+      if (state.focusRegion === 'system') {
+        focusNative(systemRefs.current[Math.min(state.systemIndex, SYSTEM_ACTIONS.length - 1)]);
+      } else if (state.focusRegion === 'spaces' || shellGames.length === 0) {
+        focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]);
+      } else {
+        focusNative(strandRefs.current[Math.min(state.selectedIndex, shellGames.length - 1)]);
+      }
     }
-  }, [errorMessage, optionsGame, settingsDetail, shellGames.length, state.selectedIndex, state.settingsIndex, state.surface]);
+  }, [errorMessage, optionsGame, settingsDetail, shellGames.length, state.focusRegion, state.selectedIndex, state.settingsIndex, state.space, state.surface, state.systemIndex]);
   const handleKeyDown = (event: any) => {
     const key = event?.nativeEvent?.key;
+    if (searchOpen || profileOpen) {
+      return;
+    }
     if (errorMessage) {
       if (key === 'Escape' || key === 'GamepadB') { onDismissError(); }
       event.stopPropagation?.();
@@ -518,26 +442,37 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
       event.stopPropagation?.();
       return;
     }
-    if (key === 'ArrowUp' || key === 'GamepadDPadUp') { if (state.focusRegion === 'strand') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'system') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'content' && state.surface === 'settings' && settingsDetail === undefined) { if (state.settingsIndex > 0) { focusNative(settingsRefs.current[state.settingsIndex - 1]); } else { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } } else if (state.focusRegion === 'content' && settingsDetail === undefined) { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
-    if (key === 'ArrowDown' || key === 'GamepadDPadDown') { if (state.focusRegion === 'spaces' || state.focusRegion === 'system') { focusNative(strandRefs.current[state.selectedIndex]); event.stopPropagation?.(); return; } if (state.focusRegion === 'content' && state.surface === 'settings' && settingsDetail === undefined && state.settingsIndex < SETTINGS_CATEGORIES.length - 1) { focusNative(settingsRefs.current[state.settingsIndex + 1]); event.stopPropagation?.(); return; } }
-    if ((key === 'ArrowLeft' || key === 'ArrowRight' || key === 'GamepadDPadLeft' || key === 'GamepadDPadRight') && state.focusRegion === 'strand') { const next = Math.max(0, Math.min(shellGames.length - 1, state.selectedIndex + ((key === 'ArrowLeft' || key === 'GamepadDPadLeft') ? -1 : 1))); focusNative(strandRefs.current[next]); event.stopPropagation?.(); return; }
-    if ((key === 'ArrowLeft' || key === 'ArrowRight' || key === 'GamepadDPadLeft' || key === 'GamepadDPadRight') && state.focusRegion === 'system') { const next = Math.max(0, Math.min(SYSTEM_ACTIONS.length - 1, state.systemIndex + ((key === 'ArrowLeft' || key === 'GamepadDPadLeft') ? -1 : 1))); focusNative(systemRefs.current[next]); event.stopPropagation?.(); return; }
-    if ((key === 'ArrowLeft' || key === 'ArrowRight' || key === 'GamepadDPadLeft' || key === 'GamepadDPadRight') && state.focusRegion === 'spaces') { const next = state.space === 'games' ? 1 : 0; focusNative(spaceRefs.current[next]); event.stopPropagation?.(); return; }
+    if (state.surface === 'home' && selected && (key === 'GamepadMenu' || key === 'ContextMenu' || key === 'F10')) {
+      openOptions(selected);
+      event.stopPropagation?.();
+      return;
+    }
+    const homeDirection = homeDirectionForKey(key);
+    if (state.surface === 'home' && homeDirection) {
+      dispatch({type: 'navigate-home', direction: homeDirection, gameCount: shellGames.length, systemCount: SYSTEM_ACTIONS.length});
+      event.stopPropagation?.();
+      return;
+    }
+    if (key === 'ArrowUp' || key === 'GamepadDPadUp') { if (state.focusRegion === 'content' && state.surface === 'settings' && settingsDetail === undefined) { if (state.settingsIndex > 0) { focusNative(settingsRefs.current[state.settingsIndex - 1]); } else { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } } else if (state.focusRegion === 'content' && settingsDetail === undefined) { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
+    if (key === 'ArrowDown' || key === 'GamepadDPadDown') { if (state.focusRegion === 'content' && state.surface === 'settings' && settingsDetail === undefined && state.settingsIndex < PROSPERISMO_SETTINGS_CATEGORIES.length - 1) { focusNative(settingsRefs.current[state.settingsIndex + 1]); event.stopPropagation?.(); return; } }
     if (key === 'Escape' || key === 'GamepadB') { if (optionsGame) { setOptionsGame(undefined); } else if (settingsDetail !== undefined) { setSettingsDetail(undefined); } else if (state.surface !== 'home') { dispatch({type: 'home'}); } event.stopPropagation?.(); }
   };
   // React Native Windows exposes this event at runtime, while the shared RN
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
-    <NativeFrameBackground frameMs={nativeBackgroundFrameMs} framePaths={nativeBackgroundFrames} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} suppressFallback={nativeBackgroundFrames.length > 0} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
-    {state.surface !== 'settings' && <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} sourcePath={action.glyph === 'settings' ? firmwareShellIcons.settings : action.glyph === 'profile' ? firmwareShellIcons.desktop : undefined} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>}
+    {state.surface === 'home' && <NativeBackgroundSurface collapsable={false} pointerEvents="none" style={shellStyles.nativeBackgroundSurface} />}<ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} />
+    {state.surface !== 'settings' && <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} sourcePath={action.glyph === 'settings' ? firmwareShellIcons.settings : undefined} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 0) { setSearchOpen(true); } else if (index === 1) { dispatch({type: 'open-settings'}); } else { setProfileOpen(true); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>}
     {state.surface !== 'home' && state.surface !== 'settings' && settingsDetail === undefined && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
-    {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandFocused={isShellCardFocused(state, state.selectedIndex)} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
+    {state.surface === 'home' && <HomeSurface games={shellGames} libraryIconPath={firmwareShellIcons.library} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
+    {state.surface === 'home' && <HomeFocusOverlay focusRegion={state.focusRegion} hasGames={shellGames.length > 0} systemIndex={state.systemIndex} />}
     {state.surface === 'library' && <LibrarySurface games={games} onLaunch={launch} />}
-    {state.surface === 'settings' && settingsDetail === undefined && <SettingsSurface settings={settings} onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={setSettingsDetail} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
-    {state.surface === 'settings' && settingsDetail !== undefined && <SettingsDetailSurface categoryIndex={settingsDetail} onBack={() => setSettingsDetail(undefined)} onSave={onSaveSettings} settings={settings} />}
-    {state.surface === 'home' && selected && <Text style={shellStyles.keyGuide}>Enter Select   ·   Hold for Options</Text>}
+    {state.surface === 'settings' && settingsDetail === undefined && <ProsperismoSettingsRoot onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={setSettingsDetail} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
+    {state.surface === 'settings' && settingsDetail !== undefined && <ProsperismoSettingsDetail categoryIndex={settingsDetail} onBack={() => setSettingsDetail(undefined)} onSave={onSaveSettings} settings={settings} />}
+    {!searchOpen && !profileOpen && !errorMessage && <ShellButtonPrompts prompts={state.surface === 'home' && selected ? [{kind: 'confirm', label: 'Select'}, {kind: 'options', label: 'Options'}] : [{kind: 'confirm', label: 'Select'}, {kind: 'back', label: 'Back'}]} />}
     {optionsGame && <OptionsModal game={optionsGame} onRef={(index, node) => { optionRefs.current[index] = node; }} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
+    {searchOpen && <SearchSurface games={games} onClose={() => { setSearchOpen(false); focusNative(systemRefs.current[0]); }} onLaunch={game => { setSearchOpen(false); launch(game); }} />}
+    {profileOpen && <ProfileMenu onClose={() => { setProfileOpen(false); focusNative(systemRefs.current[2]); }} onDesktop={() => { setProfileOpen(false); onDesktop(); }} />}
     {errorMessage && <ShellDialog title="Unable to start game" message={errorMessage} onDismiss={onDismissError} onRef={node => { dialogRef.current = node; }} />}
     {toast && <ShellToast message={toast} onClose={dismissToast} />}
   </View></View>;
@@ -546,14 +481,12 @@ export function BigPictureShell({games, artwork, firmwareShellIcons = {}, settin
 const shellStyles = StyleSheet.create({
   viewport: {flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#020408', overflow: 'hidden'},
   canvas: {position: 'absolute', width: 1920, height: 1080, backgroundColor: '#020408'},
+  nativeBackgroundSurface: {position: 'absolute', width: 1920, height: 1080},
   nativeFrameBackground: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'}, backgroundArtwork: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'},
-  backgroundMat: {position: 'absolute', width: 1920, height: 1080, backgroundColor: 'rgba(2,4,8,0.2)'},
-  backgroundShade: {position: 'absolute', width: 1920, height: 1080, backgroundColor: 'rgba(2,4,8,0.32)'},
-  systemBand: {height: 126, marginHorizontal: 84, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
+  systemBand: {height: 126, marginHorizontal: 84, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 3},
   spaces: {flexDirection: 'row', alignItems: 'center', gap: 64}, spaceButton: {paddingVertical: 8},
   spaceText: {color: 'rgba(255,255,255,0.6)', fontSize: 28, fontWeight: '400'}, spaceTextActive: {color: '#fff', fontWeight: '700'}, spaceTextFocused: {textDecorationLine: 'underline'},
   systemActions: {flexDirection: 'row', alignItems: 'center', gap: 48}, systemButton: {width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center'},
-  systemFocusCircle: {position: 'absolute', width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff'},
   systemImageGlyph: {width: 36, height: 32, resizeMode: 'contain'},
   searchGlyph: {width: 34, height: 34}, searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 4, borderRadius: 10}, searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 4, borderRadius: 2, transform: [{rotate: '47deg'}]},
   settingsGlyphIcon: {width: 34, height: 34, alignItems: 'center', justifyContent: 'center'}, settingsCore: {width: 15, height: 15, borderWidth: 4, borderRadius: 8}, settingsTooth: {position: 'absolute', width: 5, height: 9, borderRadius: 2}, settingsTooth0: {top: 0, left: 15}, settingsTooth1: {top: 4, right: 4, transform: [{rotate: '45deg'}]}, settingsTooth2: {top: 15, right: 0, transform: [{rotate: '90deg'}]}, settingsTooth3: {right: 4, bottom: 4, transform: [{rotate: '135deg'}]}, settingsTooth4: {bottom: 0, left: 15}, settingsTooth5: {bottom: 4, left: 4, transform: [{rotate: '45deg'}]}, settingsTooth6: {top: 15, left: 0, transform: [{rotate: '90deg'}]}, settingsTooth7: {top: 4, left: 4, transform: [{rotate: '135deg'}]},
@@ -561,7 +494,8 @@ const shellStyles = StyleSheet.create({
   clock: {marginLeft: 40, color: '#fff', fontSize: 28, minWidth: 120, textAlign: 'right'},
   strand: {position: 'absolute', left: 0, top: 0, width: 1920, height: 294}, tilePosition: {position: 'absolute', left: 0, top: 157, width: 106, height: 106, alignItems: 'center', justifyContent: 'center'},
   tile: {width: 106, height: 106, borderRadius: 16, overflow: 'hidden', backgroundColor: '#292929'}, tileImage: {width: '100%', height: '100%', resizeMode: 'cover'}, tileFallback: {flex: 1, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, tileMonogram: {fontSize: 48, color: '#fff', fontWeight: '700'},
-  focusFrame: {position: 'absolute', left: -37, top: -37, width: 180, height: 180, borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)', borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset}, focusWashClip: {position: 'absolute', left: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, top: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, width: 168, height: 168, overflow: 'hidden', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusShimmer: {position: 'absolute', left: -44, top: -70, width: 256, height: 308, backgroundColor: 'rgba(255,255,255,0.13)'},
+  homeFocusOverlay: {position: 'absolute', zIndex: 2, overflow: 'hidden'}, homeFocusPass: {position: 'absolute', inset: 0}, homeSystemFocusPass: {position: 'absolute', inset: 0, backgroundColor: '#fff'},
+  focusFrame: {position: 'absolute', inset: 0, borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset, overflow: 'hidden'}, focusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)', borderRadius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset}, focusWashClip: {position: 'absolute', left: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, top: SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset, width: 168, height: 168, overflow: 'hidden', borderRadius: SHELL_FOCUSED_TILE_RADIUS}, focusShimmer: {position: 'absolute', left: -44, top: -70, width: 256, height: 308, backgroundColor: 'rgba(255,255,255,0.13)'},
   libraryShortcut: {position: 'absolute', left: 1602, top: 157, width: 106, height: 106, borderRadius: 16, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, libraryShortcutGlyph: {fontSize: 44, color: '#fff'}, libraryShortcutImage: {width: 40, height: 32, resizeMode: 'contain'},
   experienceCaption: {position: 'absolute', top: SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', fontSize: 30, fontWeight: '600'}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', fontSize: 18}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
   backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},

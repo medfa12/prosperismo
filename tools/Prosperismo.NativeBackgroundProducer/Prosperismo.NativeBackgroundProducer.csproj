@@ -1,0 +1,23 @@
+<!--
+Copyright (C) 2026 Prosperismo Emulator Project
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SharpEmuSourceRoot Condition="'$(SharpEmuSourceRoot)' == '' and '$(SHARPEMU_SOURCE_ROOT)' != ''">$(SHARPEMU_SOURCE_ROOT)</SharpEmuSourceRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(SharpEmuSourceRoot)\src\SharpEmu.Libs\SharpEmu.Libs.csproj')">
+    <ProjectReference Include="$(SharpEmuSourceRoot)\src\SharpEmu.Libs\SharpEmu.Libs.csproj" />
+  </ItemGroup>
+
+  <Target Name="RequireSharpEmuRendererSource" BeforeTargets="PrepareForBuild"
+          Condition="!Exists('$(SharpEmuSourceRoot)\src\SharpEmu.Libs\SharpEmu.Libs.csproj')">
+    <Error Text="Set SharpEmuSourceRoot (or SHARPEMU_SOURCE_ROOT) to a checkout containing the preserved codex/ps5-shell-integration renderer." />
+  </Target>
+</Project>

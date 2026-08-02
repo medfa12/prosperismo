@@ -59,6 +59,55 @@ export const SHELL_FOCUSED_TILE_SCALE =
 export const SHELL_FOCUSED_TILE_RADIUS =
   SHELL_METRICS.strand.radius * SHELL_FOCUSED_TILE_SCALE;
 
+export type HomeFocusTarget = {
+  kind: 'card' | 'system';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius: number;
+};
+
+/** Exact recovered EaseOutBlast(r=10, i=0.5) parametric curve. */
+export function shellEaseOutBlast(value: number): number {
+  return 1 - Math.pow(1 - Math.min(value * 0.5, 1), 10);
+}
+
+/**
+ * Fixed-canvas focus geometry. The system group's 88px clock separation is
+ * represented by its 48px flex gap plus the clock's 40px left margin.
+ */
+export function shellHomeFocusTarget(region: 'strand' | 'system', systemIndex = 0): HomeFocusTarget {
+  if (region === 'strand') {
+    const exterior = SHELL_METRICS.focusLineWidth + SHELL_METRICS.focusLineOffset;
+    return {
+      kind: 'card',
+      x: SHELL_METRICS.strand.left - exterior,
+      y: SHELL_METRICS.strand.top - exterior,
+      width: SHELL_METRICS.strand.focusedSize + exterior * 2,
+      height: SHELL_METRICS.strand.focusedSize + exterior * 2,
+      radius: SHELL_FOCUSED_TILE_RADIUS + SHELL_METRICS.focusLineOffset,
+    };
+  }
+  const actionCount = 3;
+  const actionGap = SHELL_METRICS.systemIconPitch - SHELL_METRICS.systemIconSize;
+  const clockWidth = 120;
+  const clockExtraMargin = SHELL_METRICS.clockMarginLeft - actionGap;
+  const groupWidth = actionCount * SHELL_METRICS.systemIconSize
+    + actionCount * actionGap
+    + clockExtraMargin
+    + clockWidth;
+  const firstIconX = SHELL_METRICS.canvas.width - SHELL_METRICS.systemInset - groupWidth;
+  return {
+    kind: 'system',
+    x: firstIconX + Math.max(0, Math.min(systemIndex, actionCount - 1)) * SHELL_METRICS.systemIconPitch,
+    y: (SHELL_METRICS.systemBandHeight - SHELL_METRICS.systemIconSize) / 2,
+    width: SHELL_METRICS.systemIconSize,
+    height: SHELL_METRICS.systemIconSize,
+    radius: SHELL_METRICS.systemIconSize / 2,
+  };
+}
+
 /**
  * The base (unscaled) art position for a strand item. The selected card's
  * base position includes the 31px transform-origin offset, so its on-screen

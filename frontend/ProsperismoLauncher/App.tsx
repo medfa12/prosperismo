@@ -53,7 +53,6 @@ import {
 } from './src/core/process';
 import {parseTrophyPackage, type TrophySet} from './src/core/trophies';
 import {BigPictureShell, type FirmwareShellIconPaths} from './src/bigPicture/BigPictureShell';
-import {findNativeBackgroundSequence} from './src/bigPicture/nativeBackground';
 import {
   hasNativeProsperismoHost,
   getStartupRoute,
@@ -64,17 +63,7 @@ import {
 const brandArtwork = {
   desktopDark: require('../../assets/branding/ps-iOS-ClearDark-1024.png'),
   desktopLight: require('../../assets/branding/ps-iOS-ClearLight-1024.png'),
-  bigPicture: require('../../assets/branding/ps-iOS-Dark-1024.png'),
-  bigPictureDefault: require('../../assets/branding/ps-iOS-Default-1024.png'),
 };
-
-// These are user-local outputs from the recovered native particle renderer.
-// They are deliberately not copied into the repository or application package.
-const ORACLE_NATIVE_BACKGROUND_DIRECTORIES = [
-  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\rnw-native-bottom-shared-51-v2',
-  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-small-persistent',
-  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5',
-] as const;
 
 const ORACLE_SHELL_ICON_PATHS: Required<FirmwareShellIconPaths> = {
   settings: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_settings.png',
@@ -362,7 +351,6 @@ export default function App() {
   const [session, setSession] = useState<ProcessSession>(DEFAULT_PROCESS_SESSION);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [nativeBackground, setNativeBackground] = useState<{frames: string[]; frameMs: number}>({frames: [], frameMs: 100});
   const [firmwareShellIcons, setFirmwareShellIcons] = useState<FirmwareShellIconPaths>({});
   const refresh = useCallback(async (current: LauncherSettings) => {
     setBusy(true); setError(undefined);
@@ -393,17 +381,6 @@ export default function App() {
     };
   }, []);
   useEffect(() => subscribeToProcessLifecycle(prosperismoHost, event => setSession(current => applyProcessEvent(current, event))), []);
-  useEffect(() => {
-    let mounted = true;
-    findNativeBackgroundSequence(prosperismoHost, ORACLE_NATIVE_BACKGROUND_DIRECTORIES)
-      .then(sequence => {
-        if (mounted && sequence) {
-          setNativeBackground({frames: sequence.frames, frameMs: sequence.frameMs});
-        }
-      })
-      .catch(() => undefined);
-    return () => { mounted = false; };
-  }, []);
   useEffect(() => {
     let mounted = true;
     const entries = Object.entries(ORACLE_SHELL_ICON_PATHS) as [keyof FirmwareShellIconPaths, string][];
@@ -442,11 +419,8 @@ export default function App() {
   return route === 'desktop'
     ? <DesktopLauncher games={games} settings={settings} session={session} busy={busy} error={error} onChooseFolders={chooseFolders} onRefresh={() => refresh(settings)} onRefreshCompatibility={refreshCompatibility} onLaunch={run} onSaveSettings={persist} onSaveRoots={updateRoots} onBigPicture={() => switchRoute('big-picture')} onError={setError} onClearUntrackedSession={() => setSession(DEFAULT_PROCESS_SESSION)} />
     : <BigPictureShell
-         artwork={brandArtwork.bigPicture}
          firmwareShellIcons={firmwareShellIcons}
          games={games}
-         nativeBackgroundFrameMs={nativeBackground.frameMs}
-         nativeBackgroundFrames={nativeBackground.frames}
          settings={settings}
          onSaveSettings={next => { void persist(next); }}
          onDesktop={() => switchRoute('desktop')}

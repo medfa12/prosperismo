@@ -7,10 +7,12 @@ namespace Prosperismo::NativeBackground {
 
 inline constexpr wchar_t MappingName[] = L"Local\\ProsperismoShellBackground";
 inline constexpr wchar_t FrameEventName[] = L"Local\\ProsperismoShellBackgroundFrame";
+inline constexpr wchar_t ReadyEventName[] = L"Local\\ProsperismoShellBackgroundReady";
 inline constexpr wchar_t ConsumedEventName[] = L"Local\\ProsperismoShellBackgroundConsumed";
 inline constexpr char Magic[8] = {'P', 'S', '5', 'B', 'G', 'R', 'A', '\0'};
 inline constexpr uint32_t Version = 1;
 inline constexpr uint32_t FormatBgra8Premultiplied = 1;
+inline constexpr uint32_t LayerParticleOverlay = 2;
 inline constexpr uint32_t MaxDimension = 8192;
 
 // The producer writes the inactive slot, publishes activeSlot, then increments

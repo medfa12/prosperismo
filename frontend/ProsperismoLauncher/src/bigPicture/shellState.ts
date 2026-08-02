@@ -3,6 +3,7 @@ import type {GameInstall} from '../core/models';
 export type ShellSpace = 'games' | 'media';
 export type ShellSurface = 'home' | 'library' | 'settings';
 export type ShellFocusRegion = 'spaces' | 'strand' | 'system' | 'content';
+export type ShellDirection = 'left' | 'right' | 'up' | 'down';
 
 export interface ShellState {
   space: ShellSpace;
@@ -22,7 +23,8 @@ export type ShellAction =
   | {type: 'home'}
   | {type: 'set-space'; space: ShellSpace}
   | {type: 'select-setting'; index: number}
-  | {type: 'select-system'; index: number};
+  | {type: 'select-system'; index: number}
+  | {type: 'navigate-home'; direction: ShellDirection; gameCount: number; systemCount: number};
 
 export const INITIAL_SHELL_STATE: ShellState = {
   space: 'games',
@@ -37,6 +39,54 @@ function clamp(value: number, length: number): number {
   return Math.max(0, Math.min(value, Math.max(0, length - 1)));
 }
 
+/**
+ * Firmware HOME uses named region neighbours rather than a wrapping list:
+ * experience -> space switcher -> system actions. Each region remembers its
+ * last item, and unavailable directions clamp in place.
+ */
+export function navigateHomeFocus(
+  state: ShellState,
+  direction: ShellDirection,
+  gameCount: number,
+  systemCount: number,
+): ShellState {
+  if (state.surface !== 'home') {
+    return state;
+  }
+  if (state.focusRegion === 'strand') {
+    if (direction === 'left' || direction === 'right') {
+      const delta = direction === 'left' ? -1 : 1;
+      return {...state, selectedIndex: clamp(state.selectedIndex + delta, gameCount)};
+    }
+    return direction === 'up' ? {...state, focusRegion: 'spaces'} : state;
+  }
+  if (state.focusRegion === 'spaces') {
+    if (direction === 'left') {
+      return state.space === 'media' ? {...state, space: 'games'} : state;
+    }
+    if (direction === 'right') {
+      return state.space === 'games'
+        ? {...state, space: 'media'}
+        : systemCount > 0
+          ? {...state, focusRegion: 'system', systemIndex: clamp(state.systemIndex, systemCount)}
+          : state;
+    }
+    return direction === 'down' && gameCount > 0 ? {...state, focusRegion: 'strand'} : state;
+  }
+  if (state.focusRegion === 'system') {
+    if (direction === 'left') {
+      return state.systemIndex > 0
+        ? {...state, systemIndex: clamp(state.systemIndex - 1, systemCount)}
+        : {...state, focusRegion: 'spaces'};
+    }
+    if (direction === 'right') {
+      return {...state, systemIndex: clamp(state.systemIndex + 1, systemCount)};
+    }
+    return direction === 'down' && gameCount > 0 ? {...state, focusRegion: 'strand'} : state;
+  }
+  return state;
+}
+
 export function reduceShellState(state: ShellState, action: ShellAction): ShellState {
   switch (action.type) {
     case 'focus': return {...state, focusRegion: action.region};
@@ -48,6 +98,7 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
     case 'set-space': return {...state, space: action.space, focusRegion: 'spaces'};
     case 'select-setting': return {...state, settingsIndex: Math.max(0, action.index), focusRegion: 'content'};
     case 'select-system': return {...state, systemIndex: Math.max(0, action.index), focusRegion: 'system'};
+    case 'navigate-home': return navigateHomeFocus(state, action.direction, action.gameCount, action.systemCount);
   }
 }
 

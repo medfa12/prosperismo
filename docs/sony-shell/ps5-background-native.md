@@ -1058,6 +1058,58 @@ in our implementation, exactly as `docs/ps5-background.md` says.
 
 ## What is still unknown
 
+### 12.40 themed-light background correction (2026-08-02)
+
+A current-console reference supplied during the RNW migration shows a near-black
+room/light-field: a broad warm vertical shaft at the upper left, a soft pool at
+the lower left, and subdued animated grain/folds. This is **not** the opaque blue
+Bottom capture previously replayed by the RN shell.
+
+Newer firmware provides a concrete native route for this observation. The
+carved managed image from 12.40
+`Sce.Vsh.ShellUI.BGLayer.dll.sprx` adds
+`BGLayerNative.SetThemedLightColorNative(in Vector4)` and
+`SetColorThemeNative(int colorTheme, int themeAppliedUser)`. `BackgroundLayer`
+exposes the matching `SetThemedLightColor` and `SetColorTheme` entry points.
+The 12.40 ShellUI theme image also exposes `ThemeParam.BackgroundLightColor`,
+`ThemeConstants.DefaultThemeBGLightColor`, and the design-token keys
+`background.enabled`, `base-mat.overlay.enabled`, and `focus.stroke.enabled`.
+This is strong source evidence that the current dark light-field is rendered
+and theme-driven rather than a renamed static wallpaper.
+
+Do not conflate that pass with older recovered material:
+
+- 4.03 Home preset 4 still resolves exactly to blue Plane2 record 2.
+- `bg_NPXS40032.dds`, `bg_NPXS40110.dds`, and `bg_NPXS40144.dds` are static
+  per-title hub images (PS Now, disc player, and unsupported-title surfaces),
+  not the persistent Home/Settings base.
+- the warm portion of `initial_boot_movie.mp4` is disposed when boot playback
+  ends and is not evidence for steady shell ownership.
+
+The native implementation is now identified in the 12.40 NPXS40087 executable.
+The persistent pass is the full-screen `fw_background_p` FirstWave shader, not
+an image: it uses projected/normalized coordinates, `fract(time)`, sine/cosine,
+hash noise with seeds `23189` and `13181`, phase `0.04774648`, and an
+`exp(-14.42695045 * r^2)` light field. The complete procedural folded-room stack
+is `fw_flow_vl/h/dv -> fw_oit_p -> fw_comp_oit_p -> blur H/V -> fw_fxaa_p`.
+12.40 contains no `.fbxd` dependency for this stack.
+
+The shared FirstWave constant-buffer ABI is now recovered: projection at
+`0x40`; BackgroundColour0/1 at `0x110`/`0x120`; BackgroundLightColour at
+`0x130`; Reflection, Environment, and Edge at `0x140`, `0x150`, and `0x160`;
+opacity/time at `0x180`/`0x184`; and screen dim at `0x190`. Reset selects palette
+record 4. Its exact vectors, divided by 255 at upload, are BG0
+`(-20,-20,-10,255)`, BG1 `(81,160,245,255)`, light `(22,57,79,255)`,
+reflection `(90,60,230,255)`, environment `(15,15,15,255)`, and edge
+`(123,123,123,255)`.
+
+The remaining work is translation and validation of that shader stack plus the
+managed Settings-to-owner selection call. Until it is translated, the product
+must keep the proven `#020408` basemat as a visibly incomplete fallback and must
+not recolour the 4.03 blue Plane2 shader or repurpose title art under a 1:1
+claim. Home may add the separately recovered particle overlay; Settings must
+gate that overlay off while retaining the animated FirstWave base.
+
 ### Multi-firmware asset audit (2026-08-01)
 
 The missing-model result is not limited to the original 4.03 reconstruction.

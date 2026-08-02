@@ -39,6 +39,7 @@ bool HeaderIsValid(FrameHeader const &header, size_t mappedBytes) noexcept {
   if (std::memcmp(header.magic, Magic, sizeof(Magic)) != 0 ||
       header.version != Version ||
       header.format != FormatBgra8Premultiplied ||
+      header.reserved0 != LayerParticleOverlay ||
       header.width == 0 || header.height == 0 ||
       header.width > MaxDimension || header.height > MaxDimension ||
       header.activeSlot < 0 || header.activeSlot > 1) {
@@ -60,10 +61,12 @@ bool TryReadLatestFrame(void const *mapped, size_t mappedBytes, FrameSnapshot &s
     return false;
   }
 
-  auto sequenceBefore = InterlockedCompareExchange64(
-      const_cast<volatile long long *>(&header->sequence), 0, 0);
-  auto slotBefore = InterlockedCompareExchange(
-      const_cast<volatile long *>(&header->activeSlot), 0, 0);
+  // The mapping is intentionally opened read-only. Aligned 32/64-bit loads
+  // are atomic on the x64 target, while InterlockedCompareExchange would
+  // still issue a write cycle and fault on a FILE_MAP_READ view.
+  MemoryBarrier();
+  auto sequenceBefore = header->sequence;
+  auto slotBefore = header->activeSlot;
   if (sequenceBefore <= snapshot.sequence || slotBefore < 0 || slotBefore > 1) {
     return false;
   }
@@ -81,10 +84,9 @@ bool TryReadLatestFrame(void const *mapped, size_t mappedBytes, FrameSnapshot &s
       header->slotBytes);
   MemoryBarrier();
 
-  auto sequenceAfter = InterlockedCompareExchange64(
-      const_cast<volatile long long *>(&header->sequence), 0, 0);
-  auto slotAfter = InterlockedCompareExchange(
-      const_cast<volatile long *>(&header->activeSlot), 0, 0);
+  MemoryBarrier();
+  auto sequenceAfter = header->sequence;
+  auto slotAfter = header->activeSlot;
   if (sequenceBefore != sequenceAfter || slotBefore != slotAfter) {
     return false;
   }
@@ -104,6 +106,7 @@ struct NativeBackgroundViewState
   }
 
   void Initialize(winrt::Microsoft::ReactNative::ComponentView const &view) noexcept override {
+    m_readyEvent.attach(CreateEventW(nullptr, TRUE, FALSE, ReadyEventName));
     try {
       auto compositionView =
           view.as<winrt::Microsoft::ReactNative::Composition::ViewComponentView>();
@@ -113,7 +116,6 @@ struct NativeBackgroundViewState
       m_visual = m_context.CreateSpriteVisual();
       m_visual.RelativeSizeWithOffset({0.0f, 0.0f}, {1.0f, 1.0f});
       m_visual.IsVisible(false);
-      m_dispatcher = compositionView.ReactContext().UIDispatcher();
       m_stopEvent.attach(CreateEventW(nullptr, TRUE, FALSE, nullptr));
       m_consumedEvent.attach(CreateEventW(nullptr, FALSE, FALSE, ConsumedEventName));
       auto weak = get_weak();
@@ -123,8 +125,11 @@ struct NativeBackgroundViewState
         }
       });
       m_worker = std::thread([this] { Run(); });
+      if (m_readyEvent) {
+        SetEvent(m_readyEvent.get());
+      }
     } catch (...) {
-      // Keep the React tree alive and let the PNG sequence remain visible.
+      // Keep the React tree alive and leave the shell base visible.
       m_context = nullptr;
       m_visual = nullptr;
     }
@@ -180,11 +185,10 @@ struct NativeBackgroundViewState
       FrameSnapshot latest;
       while (!m_stopped.load()) {
         if (TryReadLatestFrame(mapped, mappedBytes, latest)) {
-          auto strong = get_strong();
-          auto frame = std::make_shared<FrameSnapshot>(latest);
-          m_dispatcher.Post([strong, frame]() noexcept {
-            strong->Draw(*frame);
-          });
+          // Composition drawing-surface interop is agile. Keeping BeginDraw /
+          // EndDraw on this worker avoids reposting it through React's JS/UI
+          // dispatcher, which is not the surface's drawing owner.
+          Draw(latest);
         }
         HANDLE waits[]{m_stopEvent.get(), frameEvent.get()};
         auto result = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
@@ -233,6 +237,7 @@ struct NativeBackgroundViewState
           &properties,
           bitmap.put()));
       target->Clear(D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 0.0f});
+      target->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
       D2D1_RECT_F destination{
           static_cast<float>(offset.x),
           static_cast<float>(offset.y),
@@ -248,8 +253,7 @@ struct NativeBackgroundViewState
         SetEvent(m_consumedEvent.get());
       }
     } catch (...) {
-      // Device loss or a malformed producer frame must leave the PNG fallback
-      // visible instead of terminating the launcher.
+      // Device loss or a malformed producer frame leaves the shell base visible.
       m_visual.IsVisible(false);
     }
   }
@@ -257,8 +261,8 @@ struct NativeBackgroundViewState
   CompositionContext m_context{nullptr};
   SpriteVisual m_visual{nullptr};
   DrawingSurface m_surface{nullptr};
-  winrt::Microsoft::ReactNative::IReactDispatcher m_dispatcher{nullptr};
   winrt::handle m_stopEvent;
+  winrt::handle m_readyEvent;
   winrt::handle m_consumedEvent;
   winrt::event_token m_destroying{};
   std::thread m_worker;
