@@ -16029,6 +16029,11 @@ ShaderTextureResource Ppsa01530MaxMipStorageTextureDescriptor() {
 	         0x00000000u, 0x00000000u}};
 }
 
+ShaderTextureResource AstroMipRangeStorageTextureDescriptor() {
+	return {{0x055ea000u, 0xc4700000u, 0x010dc1dfu, 0x91b66facu, 0x00000000u, 0x00700050u,
+	         0x00000000u, 0x00000000u}};
+}
+
 ShaderRecompiler::IR::ImageResource Ppsa01530MaxMipStorageTextureResource() {
 	auto resource = BasicBgraStorageTextureResource();
 	resource.kind = ShaderRecompiler::IR::ResourceKind::StorageImageUint;
@@ -16278,6 +16283,22 @@ void CheckBasicStorageTextureDescriptor() {
 	        mip_one.BaseLevel() == 1 && mip_one.LastLevel() == 1 && mip_one.MaxMip() == 5,
 	        "PPSA01530 mip-one storage descriptor fixture is malformed");
 	ValidateStorageTexture(Ppsa01530MaxMipStorageTextureResource(), mip_one, 0x20000);
+
+	const auto astro_mip = AstroMipRangeStorageTextureDescriptor();
+	NormalizedTextureMipView astro_view {};
+	Require("BasicStorageTexture", "Astro Sony mip-range precedence",
+	        astro_mip.Base40() == 0x55ea00000ull && astro_mip.Width5() + 1u == 1920 &&
+	            astro_mip.Height5() + 1u == 1080 && astro_mip.BaseLevel() == 6 &&
+	            astro_mip.LastLevel() == 6 && astro_mip.MaxMip() == 5 &&
+	            NormalizeTextureMipView(astro_mip.BaseLevel(), astro_mip.LastLevel(),
+	                                    astro_mip.MaxMip() + 1u, astro_view) &&
+	            astro_view.base_level == 5 && astro_view.level_count == 1,
+	        "Astro's SDK-valid mip view was not clipped to the Vulkan allocation");
+	ValidateStorageTexture(BasicBgraStorageTextureResource(), astro_mip, 0x870000);
+	NormalizedTextureMipView inverted_view {};
+	Require("BasicStorageTexture", "inverted mip-range guard",
+	        !NormalizeTextureMipView(6, 5, 6, inverted_view),
+	        "an inverted Sony mip range was normalized instead of rejected");
 
 	const auto r16_float = Ppsa02527R16FloatStorageTextureDescriptor();
 	Require("BasicStorageTexture", "PPSA02527 R16F descriptor",
@@ -17661,6 +17682,10 @@ int main(int argc, char** argv) {
 		VulkanHarness vulkan;
 		CheckSampledDepthResource();
 		CheckSampledDepthDescriptor(vulkan.RuntimeRenderer());
+		return 0;
+	}
+	if (argc == 2 && std::strcmp(argv[1], "--sony-mip-view-only") == 0) {
+		CheckBasicStorageTextureDescriptor();
 		return 0;
 	}
 	if (argc == 2 && std::strcmp(argv[1], "--storage-bgra-only") == 0) {

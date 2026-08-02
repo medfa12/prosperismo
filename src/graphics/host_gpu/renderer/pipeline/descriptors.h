@@ -29,6 +29,15 @@ struct TargetTextureViewInfo {
 	uint32_t          layer_count = 0;
 };
 
+struct NormalizedTextureMipView {
+	uint32_t base_level  = 0;
+	uint32_t level_count = 0;
+};
+
+[[nodiscard]] bool NormalizeTextureMipView(uint32_t base_level, uint32_t last_level,
+                                           uint32_t                  allocation_levels,
+                                           NormalizedTextureMipView& view) noexcept;
+
 [[nodiscard]] TargetTextureViewInfo
 ResolveTargetTextureView(const ShaderRecompiler::IR::ImageResource& resource,
                          Prospero::ImageType type, uint32_t base_layer, uint32_t image_layers);

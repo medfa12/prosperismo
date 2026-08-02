@@ -44,6 +44,23 @@
 
 namespace Libs::Graphics {
 
+bool NormalizeTextureMipView(uint32_t base_level, uint32_t last_level,
+                             uint32_t                  allocation_levels,
+                             NormalizedTextureMipView& view) noexcept {
+	if (allocation_levels == 0 || base_level > last_level) {
+		return false;
+	}
+	// Sony SDK 10 Core::Texture treats setNumMipLevels() and setMipLevelRange() as
+	// independent contracts: the range only has to be ordered and fit its 4-bit fields.
+	// Vulkan requires the view to fit the allocated image, so clip both endpoints to the
+	// allocation while preserving MAX_MIP + 1 as the backing level count.
+	const auto allocation_last = allocation_levels - 1u;
+	view.base_level             = std::min(base_level, allocation_last);
+	const auto normalized_last  = std::min(last_level, allocation_last);
+	view.level_count            = normalized_last - view.base_level + 1u;
+	return true;
+}
+
 static void BindNullStorageBuffer(RenderContext& context, BufferView& dst) {
 	auto owner = context.GetBufferCache().ObtainNullBuffer();
 	dst.buffer = owner->Handle();
@@ -412,8 +429,8 @@ static bool IsSupportedStorageTextureDescriptor(const ShaderRecompiler::IR::Imag
 	const bool supported_mip_view = descriptor.BaseLevel() == 0 || is_1d || is_2d;
 	return (is_1d || is_1d_array || is_2d || is_2d_array || is_3d) && supported_tile &&
 	       supported_mip_view && descriptor.BaseLevel() == descriptor.LastLevel() &&
-	       descriptor.LastLevel() <= descriptor.MaxMip() && descriptor.MinLod() == 0 &&
-	       supported_swizzle && descriptor.BCSwizzle() == 0 && !descriptor.MsaaDepth();
+	       descriptor.MinLod() == 0 && supported_swizzle && descriptor.BCSwizzle() == 0 &&
+	       !descriptor.MsaaDepth();
 }
 
 static bool IsSupportedStorageTextureEncoding(const ShaderTextureResource& descriptor) {
@@ -555,11 +572,12 @@ static void PopulateTextureMipLayout(ImageInfo& info) {
 
 static ImageViewInfo TextureViewInfo(const ShaderRecompiler::IR::ImageResource& resource,
                                      const ShaderTextureResource& descriptor, vk::Format format,
-                                     bool storage, uint32_t view_levels, uint32_t image_layers) {
+                                     bool storage, uint32_t view_base_level, uint32_t view_levels,
+                                     uint32_t image_layers) {
 	ImageViewInfo view {};
 	view.format      = format;
 	view.aspect      = vk::ImageAspectFlagBits::eColor;
-	view.base_level  = descriptor.BaseLevel();
+	view.base_level  = view_base_level;
 	view.level_count = view_levels;
 	view.usage = storage ? vk::ImageUsageFlagBits::eStorage : vk::ImageUsageFlagBits::eSampled;
 	view.mapping =
@@ -640,7 +658,8 @@ RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageResource&   reso
 	const bool msaa_tile =
 	    depth_tile || tile == Prospero::GpuEnumValue(Prospero::TileMode::kRenderTarget);
 	const bool msaa_array = type == Prospero::ImageType::kColor2DMsaaArray;
-	if ((!multisampled && (base_level > last_level || last_level >= levels)) ||
+	NormalizedTextureMipView mip_view {};
+	if ((!multisampled && !NormalizeTextureMipView(base_level, last_level, levels, mip_view)) ||
 	    (multisampled &&
 	     (base_level != 0 || last_level == 0 || last_level > 3 ||
 	      descriptor.MaxMip() != last_level || !msaa_tile || (descriptor.MsaaDepth() && !depth_tile) ||
@@ -655,8 +674,8 @@ RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageResource&   reso
 		     descriptor.fields[4], descriptor.fields[5], descriptor.fields[6], descriptor.fields[7]);
 	}
 	const auto samples = multisampled ? 1u << last_level : 1u;
-	const auto view_levels =
-	    multisampled ? 1u : static_cast<uint32_t>(last_level - base_level) + 1u;
+	const auto view_base_level = multisampled ? 0u : mip_view.base_level;
+	const auto view_levels     = multisampled ? 1u : mip_view.level_count;
 	const auto depth  = static_cast<uint32_t>(descriptor.Depth()) + 1u;
 	const auto format = descriptor.Format();
 	const bool sampled_numeric_class =
@@ -724,8 +743,8 @@ RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageResource&   reso
 	} else {
 		PopulateTextureMipLayout(desc.info);
 	}
-	desc.view_info = TextureViewInfo(resource, descriptor, view_format, storage, view_levels,
-	                                 desc.info.resources.layers);
+	desc.view_info = TextureViewInfo(resource, descriptor, view_format, storage, view_base_level,
+	                                 view_levels, desc.info.resources.layers);
 	desc.type = storage ? TextureCache::BindingType::Storage : TextureCache::BindingType::Texture;
 
 	auto       id                  = texture_cache.FindImage(desc);
