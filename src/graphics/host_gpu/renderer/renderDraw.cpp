@@ -16,6 +16,7 @@
 #include "graphics/host_gpu/renderer/colorRenderTarget.h"
 #include "graphics/host_gpu/renderer/debug.h"
 #include "graphics/host_gpu/renderer/depthRenderTarget.h"
+#include "graphics/host_gpu/renderer/nativePrimitiveReplay.h"
 #include "graphics/host_gpu/renderer/pipeline/descriptorCache.h"
 #include "graphics/host_gpu/renderer/pipeline/pipelineCache.h"
 #include "graphics/host_gpu/renderer/pipeline/shaderResourceBarrier.h"
@@ -37,9 +38,14 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -422,12 +428,76 @@ static bool PixelShaderHasDepthOrCoverageSideEffects(const HW::ShaderRegisters& 
 	       db.shader_execute_on_noop;
 }
 
+static void CaptureUnsupportedNativeGePrograms(
+	const HW::VertexShaderInfo& vertex_info, uint32_t stages, const HW::GeControl& ge_cntl,
+	const HW::ShaderRegisters& sh_regs, const ClassicGeometryReplayLaunch& launch) {
+	const auto* folder_value = std::getenv("PROSPERISMO_DUMP_NATIVE_GE_SHADERS");
+	if (folder_value == nullptr || folder_value[0] == '\0') {
+		return;
+	}
+
+	static std::mutex                              capture_mutex;
+	static std::set<std::pair<uint64_t, uint64_t>> captured;
+	std::lock_guard lock(capture_mutex);
+	const auto pair = std::pair {vertex_info.es_regs.data_addr, vertex_info.gs_regs.data_addr};
+	if (captured.contains(pair) || captured.size() >= 32) {
+		return;
+	}
+
+	std::span<const uint32_t> es_code;
+	std::span<const uint32_t> gs_code;
+	if (!ShaderGetGuestCode(pair.first, es_code) || !ShaderGetGuestCode(pair.second, gs_code)) {
+		LOGF("Native GE capture could not resolve code: es=0x%016" PRIx64
+		     " gs=0x%016" PRIx64 "\n",
+		     pair.first, pair.second);
+		return;
+	}
+
+	std::error_code error;
+	const auto      folder = std::filesystem::path(folder_value);
+	std::filesystem::create_directories(folder, error);
+	if (error) {
+		LOGF("Native GE capture could not create %s: %s\n", folder_value,
+		     error.message().c_str());
+		return;
+	}
+
+	const auto stem = fmt::format("native-ge-es-{:016x}-gs-{:016x}", pair.first, pair.second);
+	auto write_binary = [&](const char* stage, std::span<const uint32_t> words) {
+		std::ofstream output(folder / fmt::format("{}.{}.bin", stem, stage),
+		                     std::ios::binary | std::ios::trunc);
+		output.write(reinterpret_cast<const char*>(words.data()),
+		             static_cast<std::streamsize>(words.size_bytes()));
+		return output.good();
+	};
+	std::ofstream metadata(folder / fmt::format("{}.state.txt", stem), std::ios::trunc);
+	metadata << fmt::format(
+	    "stages=0x{:08x}\nprim_group={}\nvert_group={}\nngg=0x{:08x}\n"
+	    "max_out={}\ngs_max_vert={}\ngs_out_prim={}\ngs_instance={}\n"
+	    "esgs_ring_itemsize={}\nwave_lanes={}\noutput_vertices={}\noutput_primitives={}\n"
+	    "es_words={}\ngs_words={}\n",
+	    stages, ge_cntl.primitive_group_size, ge_cntl.vertex_group_size,
+	    sh_regs.m_geNggSubgrpCntl, sh_regs.m_geMaxOutputPerSubgroup,
+	    sh_regs.m_vgtGsMaxVertOut, sh_regs.m_vgtGsOutPrimType, sh_regs.m_vgtGsInstanceCnt,
+	    sh_regs.m_vgtEsgsRingItemsize, launch.wave_lane_count, launch.output_vertex_slots,
+	    launch.output_primitive_slots, es_code.size(), gs_code.size());
+	if (!write_binary("es", es_code) || !write_binary("gs", gs_code) || !metadata.good()) {
+		LOGF("Native GE capture failed while writing %s\n", stem.c_str());
+		return;
+	}
+
+	captured.insert(pair);
+	LOGF("Captured unsupported native GE programs: %s (%zu/%zu words)\n", stem.c_str(),
+	     es_code.size(), gs_code.size());
+}
+
 static bool ShouldSkipGeShader(const RenderCommandBuffer& buffer) {
 	const auto& ctx         = buffer.GetRegisters();
 	const auto& ucfg        = buffer.GetUserConfig();
 	const auto& sh_ctx      = buffer.GetShaders();
 	const auto& sh_regs     = ctx.GetShaderRegisters();
 	const auto& ge_cntl     = ucfg.GetGeControl();
+	const auto& ge_user     = ucfg.GetGeUserVgprEn();
 	const auto& vertex_info = sh_ctx.GetVs();
 	const auto  stages      = ctx.GetShaderStages();
 
@@ -458,6 +528,24 @@ static bool ShouldSkipGeShader(const RenderCommandBuffer& buffer) {
 	    sh_regs.m_vgtGsMaxVertOut != 0x00000000 ||
 	    !is_known_gs_out_prim_type(sh_regs.m_vgtGsOutPrimType) ||
 	    sh_regs.m_geMaxOutputPerSubgroup > 0x00000040;
+	ClassicGeometryReplayLaunch classic_launch {};
+	const bool classic_geometry_contract = TryCreateClassicGeometryReplayLaunch(
+	    {.shader_stages             = stages,
+	     .primitive_group_size      = ge_cntl.primitive_group_size,
+	     .vertex_group_size         = ge_cntl.vertex_group_size,
+	     .primitive_amplification   = sh_regs.m_geNggSubgrpCntl & 0x1ffu,
+	     .max_output_per_subgroup   = sh_regs.m_geMaxOutputPerSubgroup,
+	     .gs_max_vertices_per_input = sh_regs.m_vgtGsMaxVertOut,
+	     .gs_output_primitive       = sh_regs.m_vgtGsOutPrimType,
+	     .gs_instance_count         = sh_regs.m_vgtGsInstanceCnt,
+	     .esgs_ring_item_size       = sh_regs.m_vgtEsgsRingItemsize,
+	     .ge_user_vgpr_enable       = static_cast<uint32_t>(ge_user.vgpr1) |
+	                                  (static_cast<uint32_t>(ge_user.vgpr2) << 1u) |
+	                                  (static_cast<uint32_t>(ge_user.vgpr3) << 2u)},
+	    classic_launch);
+	if (classic_geometry_contract) {
+		CaptureUnsupportedNativeGePrograms(vertex_info, stages, ge_cntl, sh_regs, classic_launch);
+	}
 
 	if (unsupported_stage_mask || unsupported_gs_stage || ge_group_size || ge_shader_regs) {
 		const auto log_id = g_shader_stage_log_count.fetch_add(1);
@@ -465,11 +553,14 @@ static bool ShouldSkipGeShader(const RenderCommandBuffer& buffer) {
 			LOGF("Skipping unsupported GE shader draw: stages=0x%08" PRIx32
 			     " prim_group=0x%04" PRIx16 " vert_group=0x%04" PRIx16 " ngg=0x%08" PRIx32
 			     " max_out=0x%08" PRIx32 " gs_max_vert=0x%08" PRIx32 " gs_out_prim=0x%08" PRIx32
-			     " es=0x%016" PRIx64 " gs=0x%016" PRIx64 "\n",
+			     " es=0x%016" PRIx64 " gs=0x%016" PRIx64
+			     " classic_gs=%s output_vertices=%u output_primitives=%u\n",
 			     stages, ge_cntl.primitive_group_size, ge_cntl.vertex_group_size,
 			     sh_regs.m_geNggSubgrpCntl, sh_regs.m_geMaxOutputPerSubgroup,
 			     sh_regs.m_vgtGsMaxVertOut, sh_regs.m_vgtGsOutPrimType,
-			     vertex_info.es_regs.data_addr, vertex_info.gs_regs.data_addr);
+			     vertex_info.es_regs.data_addr, vertex_info.gs_regs.data_addr,
+			     classic_geometry_contract ? "true" : "false",
+			     classic_launch.output_vertex_slots, classic_launch.output_primitive_slots);
 		}
 		return true;
 	}

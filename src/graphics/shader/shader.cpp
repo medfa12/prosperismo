@@ -149,6 +149,17 @@ static bool ShaderGetMappedData(uint64_t addr, ShaderMappedData& data) {
 	return false;
 }
 
+bool ShaderGetGuestCode(uint64_t addr, std::span<const uint32_t>& code) {
+	code = {};
+	ShaderMappedData data;
+	if (!ShaderGetMappedData(addr, data) || data.code_size_bytes == 0 ||
+	    data.code_size_bytes % sizeof(uint32_t) != 0) {
+		return false;
+	}
+	code = {reinterpret_cast<const uint32_t*>(addr), data.code_size_bytes / sizeof(uint32_t)};
+	return true;
+}
+
 static bool SpirvDisassemble(const uint32_t* src_binary, size_t src_binary_size,
                              std::string* dst_disassembly) {
 	if (dst_disassembly != nullptr) {
