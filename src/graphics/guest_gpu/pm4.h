@@ -997,6 +997,8 @@ constexpr uint32_t GE_CNTL_PRIM_GRP_SIZE_SHIFT = 0;
 constexpr uint32_t GE_CNTL_PRIM_GRP_SIZE_MASK  = 0x1FF;
 constexpr uint32_t GE_CNTL_VERT_GRP_SIZE_SHIFT = 9;
 constexpr uint32_t GE_CNTL_VERT_GRP_SIZE_MASK  = 0x1FF;
+constexpr uint32_t GE_CNTL_MULTIPLE_INSTANCES_PER_WAVE_SHIFT = 18;
+constexpr uint32_t GE_CNTL_MULTIPLE_INSTANCES_PER_WAVE_MASK  = 0x1;
 
 constexpr uint32_t GE_USER_VGPR1  = 0x25C;
 constexpr uint32_t GE_USER_VGPR2  = 0x25D;

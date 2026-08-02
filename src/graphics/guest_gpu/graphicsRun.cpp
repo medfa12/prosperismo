@@ -23,11 +23,18 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstdio>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <memory>
+#include <mutex>
 #include <semaphore>
+#include <set>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace Libs::Graphics {
@@ -36,6 +43,88 @@ static thread_local CommandProcessor* g_current_processor = nullptr;
 static thread_local Pm4Execution*     g_current_execution = nullptr;
 static thread_local bool              g_gpu_mutex_owned   = false;
 static thread_local bool              g_gpu_thread        = false;
+
+static void CaptureNativeGeDrawPacket(const RenderCommandBuffer& buffer, bool auto_draw,
+                                      uint32_t index_type, uint32_t index_count, uint32_t flags,
+                                      uint32_t draw_type, uint32_t instance_count,
+                                      uint32_t persistent_instance_count,
+                                      uint32_t first_vertex, uint32_t first_instance,
+                                      uint64_t index_address) {
+	const auto* folder_value = std::getenv("PROSPERISMO_DUMP_NATIVE_GE_SHADERS");
+	if (folder_value == nullptr || folder_value[0] == '\0') {
+		return;
+	}
+
+	const auto& vertex_info = buffer.GetShaders().GetVs();
+	const auto  es_address  = vertex_info.es_regs.data_addr;
+	const auto  gs_address  = vertex_info.gs_regs.data_addr;
+	if (es_address == 0 || gs_address == 0) {
+		return;
+	}
+
+	const auto& ge_control     = buffer.GetUserConfig().GetGeControl();
+	const auto& shader_regs    = buffer.GetRegisters().GetShaderRegisters();
+	const auto  primitive_type = buffer.GetUserConfig().GetPrimType();
+	using CaptureKey =
+	    std::tuple<uint64_t, uint64_t, bool, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+	               uint32_t, uint32_t, uint64_t, uint32_t, uint32_t>;
+	const CaptureKey key {es_address, gs_address, auto_draw, primitive_type, index_type, index_count,
+	                      instance_count, persistent_instance_count, first_vertex, first_instance,
+	                      index_address,
+	                      ge_control.raw_value, shader_regs.m_vgtGsOnchipCntl};
+
+	static std::mutex           capture_mutex;
+	static std::set<CaptureKey> captured;
+	std::lock_guard             lock(capture_mutex);
+	if (captured.contains(key) || captured.size() >= 128) {
+		return;
+	}
+
+	std::error_code error;
+	const auto      folder = std::filesystem::path(folder_value);
+	std::filesystem::create_directories(folder, error);
+	if (error) {
+		LOGF("Native GE draw capture could not create %s: %s\n", folder_value,
+		     error.message().c_str());
+		return;
+	}
+
+	char filename[128] {};
+	std::snprintf(filename, sizeof(filename), "native-ge-es-%016" PRIx64 "-gs-%016" PRIx64
+	                                               ".draw.txt",
+	              es_address, gs_address);
+	std::ofstream output(folder / filename, std::ios::app);
+	output << "kind=" << (auto_draw ? "auto" : "indexed") << '\n' << std::hex
+	       << std::setfill('0') << "primitive_type=0x" << std::setw(8) << primitive_type << '\n'
+	       << "index_type=0x" << std::setw(8) << index_type << '\n'
+	       << "index_count=0x" << std::setw(8) << index_count << '\n'
+	       << "flags=0x" << std::setw(8) << flags << '\n'
+	       << "draw_type=0x" << std::setw(8) << draw_type << '\n'
+	       << "instance_count=0x" << std::setw(8) << instance_count << '\n'
+	       << "persistent_instance_count=0x" << std::setw(8) << persistent_instance_count << '\n'
+	       << "first_vertex=0x" << std::setw(8) << first_vertex << '\n'
+	       << "first_instance=0x" << std::setw(8) << first_instance << '\n'
+	       << "index_address=0x" << std::setw(16) << index_address << '\n'
+	       << "ge_cntl=0x" << std::setw(8) << ge_control.raw_value << '\n'
+	       << "multiple_instances_per_wave="
+	       << (ge_control.MultipleInstancesPerWave() ? "true" : "false") << '\n'
+	       << "vgt_gs_onchip_cntl=0x" << std::setw(8) << shader_regs.m_vgtGsOnchipCntl << '\n'
+	       << "es_verts_per_subgroup=0x" << std::setw(8) << shader_regs.GetEsVertsPerSubgrp()
+	       << '\n'
+	       << "gs_prims_per_subgroup=0x" << std::setw(8) << shader_regs.GetGsPrimsPerSubgrp()
+	       << '\n'
+	       << "gs_inst_prims_per_subgroup=0x" << std::setw(8)
+	       << shader_regs.GetGsInstPrimsInSubgrp() << '\n'
+	       << "gs_instance_count=0x" << std::setw(8) << shader_regs.m_vgtGsInstanceCnt << '\n'
+	       << "primitive_id_enable=0x" << std::setw(8) << shader_regs.m_vgtPrimitiveIdEn << '\n'
+	       << "reuse_off=0x" << std::setw(8) << shader_regs.m_vgtReuseOff << "\n\n";
+	if (!output.good()) {
+		LOGF("Native GE draw capture failed while writing %s\n", filename);
+		return;
+	}
+
+	captured.insert(key);
+}
 
 class GpuMutexLock final {
 public:
@@ -931,6 +1020,10 @@ void CommandProcessor::DrawIndex(uint32_t index_count, const void* index_addr, u
 		     "\n",
 		     vertex_offset_add, first_instance);
 	}
+	CaptureNativeGeDrawPacket(CurrentBuffer(), false, m_index_type_and_size, index_count, flags,
+	                          type, instance_count, m_num_instances,
+	                          static_cast<uint32_t>(vertex_offset_add),
+	                          first_instance, reinterpret_cast<uint64_t>(index_addr));
 	m_renderer.GetRenderExecutor().DrawIndex(
 	    m_submit_id, CurrentBuffer(), m_index_type_and_size, index_count, index_addr, flags, type,
 	    instance_count, render_target_slice_offset, vertex_offset_add, first_instance);
@@ -950,6 +1043,9 @@ void CommandProcessor::DrawIndexOffset(uint32_t index_offset, uint32_t index_cou
 
 	auto* index_addr = reinterpret_cast<const void*>(
 	    m_index_base_addr + static_cast<uint64_t>(index_offset) * index_size);
+	CaptureNativeGeDrawPacket(CurrentBuffer(), false, m_index_type_and_size, index_count, flags, 1,
+	                          m_num_instances, m_num_instances, index_offset, 0,
+	                          reinterpret_cast<uint64_t>(index_addr));
 
 	m_renderer.GetRenderExecutor().DrawIndex(m_submit_id, CurrentBuffer(), m_index_type_and_size,
 	                                         index_count, index_addr, flags, 1, m_num_instances);
@@ -1224,6 +1320,11 @@ void CommandProcessor::DrawIndexAuto(uint32_t index_count, uint32_t flags,
                                      uint32_t render_target_slice_offset, uint32_t instance_count,
                                      uint32_t first_vertex, uint32_t first_instance) {
 	CheckBuffer();
+	if (instance_count == 0) {
+		instance_count = m_num_instances;
+	}
+	CaptureNativeGeDrawPacket(CurrentBuffer(), true, 0, index_count, flags, 0, instance_count,
+	                          m_num_instances, first_vertex, first_instance, 0);
 
 	m_renderer.GetRenderExecutor().DrawAuto(m_submit_id, CurrentBuffer(), index_count, flags,
 	                                        render_target_slice_offset, instance_count,

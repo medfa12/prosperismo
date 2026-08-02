@@ -662,6 +662,9 @@ struct ComputeShaderInfo {
 struct GeControl {
 	uint16_t primitive_group_size = 0;
 	uint16_t vertex_group_size    = 0;
+	uint32_t raw_value            = 0;
+
+	[[nodiscard]] bool MultipleInstancesPerWave() const { return (raw_value & 0x00040000u) == 0; }
 };
 
 struct GeUserVgprEn {

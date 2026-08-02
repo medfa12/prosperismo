@@ -534,6 +534,8 @@ if(BUILD_TESTING)
 		shader_stage_runtime_tests
 		resource_tracking_tests
 		resource_mutex_tests
+		native_primitive_replay_tests
+		color_metadata_state_tests
 		event_queue_lifetime_tests
 		hle_contract_tests
 		audio_out2_port_tests

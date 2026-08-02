@@ -8,8 +8,13 @@
 
 using Libs::Graphics::ClassicGeometryReplayLaunch;
 using Libs::Graphics::NativePrimitiveLaunchState;
+using Libs::Graphics::NativePrimitiveIndices;
 using Libs::Graphics::NativePrimitiveOutput;
+using Libs::Graphics::OwnsGsAllocation;
+using Libs::Graphics::TryPackGsWaveLaunch;
+using Libs::Graphics::TryPackPrimitiveConnectivity;
 using Libs::Graphics::TryCreateClassicGeometryReplayLaunch;
+using Libs::Graphics::UnpackPrimitiveConnectivity;
 
 namespace {
 
@@ -42,11 +47,43 @@ int main() {
 	auto state = CapturedClassicGsState();
 	Check(TryCreateClassicGeometryReplayLaunch(state, launch),
 	      "captured classic-GS launch was rejected");
-	Check(launch.wave_lane_count == 64 && launch.input_primitives_per_subgroup == 3 &&
-	          launch.input_vertices_per_subgroup == 24 && launch.output_vertex_slots == 216 &&
+	Check(launch.wave_lane_count == 64 && launch.primitive_group_limit == 3 &&
+	          launch.vertex_group_limit == 24 && launch.output_vertex_slots == 216 &&
 	          launch.output_primitive_slots == 210 &&
 	          launch.output_primitive == NativePrimitiveOutput::Triangles,
 	      "captured launch was decoded incorrectly");
+	Check(launch.vertex_group_limit == 24,
+	      "GE_CNTL's gfx10.1 minimum vertex clamp was not retained as a limit");
+
+	uint32_t packed_s3 = 0;
+	Check(TryPackGsWaveLaunch(19, 19, 0, 4, packed_s3) && packed_s3 == 0x40001313u,
+	      "wave-zero GS launch was packed incorrectly");
+	Check(TryPackGsWaveLaunch(19, 19, 2, 4, packed_s3) && packed_s3 == 0x42001313u,
+	      "nonzero-wave GS launch was packed incorrectly");
+	Check(!TryPackGsWaveLaunch(256, 1, 0, 4, packed_s3) &&
+	          !TryPackGsWaveLaunch(1, 256, 0, 4, packed_s3) &&
+	          !TryPackGsWaveLaunch(1, 1, 4, 4, packed_s3) &&
+	          !TryPackGsWaveLaunch(1, 1, 0, 0, packed_s3),
+	      "out-of-range GS launch fields were admitted");
+	Check(OwnsGsAllocation(0) && !OwnsGsAllocation(1) && !OwnsGsAllocation(3),
+	      "GS allocation ownership was not restricted to wave zero");
+
+	uint32_t packed_primitive = 0;
+	Check(TryPackPrimitiveConnectivity({.vertex0 = 0, .vertex1 = 2, .vertex2 = 1}, 3,
+	                                   packed_primitive) &&
+	          packed_primitive == 0x00100800u,
+	      "target-20 triangle connectivity was packed incorrectly");
+	const auto unpacked = UnpackPrimitiveConnectivity(packed_primitive);
+	Check(unpacked.vertex0 == 0 && unpacked.vertex1 == 2 && unpacked.vertex2 == 1,
+	      "target-20 triangle connectivity did not round-trip");
+	Check(TryPackPrimitiveConnectivity(
+	          {.vertex0 = 1023, .vertex1 = 1022, .vertex2 = 1021}, 1024, packed_primitive),
+	      "valid ten-bit target-20 boundary was rejected");
+	Check(!TryPackPrimitiveConnectivity({.vertex0 = 3, .vertex1 = 0, .vertex2 = 1}, 3,
+	                                    packed_primitive) &&
+	          !TryPackPrimitiveConnectivity({.vertex0 = 1024, .vertex1 = 0, .vertex2 = 1}, 2048,
+	                                        packed_primitive),
+	      "invalid target-20 connectivity was admitted");
 
 	auto reject = [&](const NativePrimitiveLaunchState& candidate, const char* message) {
 		ClassicGeometryReplayLaunch rejected {};

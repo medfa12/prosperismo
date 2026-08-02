@@ -4412,6 +4412,7 @@ void GraphicsInitJmpTablesUcIndirect() {
 		HW::GeControl r;
 		r.primitive_group_size = KYTY_PM4_GET(value, GE_CNTL, PRIM_GRP_SIZE);
 		r.vertex_group_size    = KYTY_PM4_GET(value, GE_CNTL, VERT_GRP_SIZE);
+		r.raw_value            = value;
 		cp.GetUcfg().SetGeControl(r);
 	};
 
