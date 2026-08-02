@@ -221,6 +221,9 @@ private:
 	                                               uint32_t color_count, RenderDepthInfo& depth);
 	[[nodiscard]] bool        ResolveColorTargets(uint64_t submit_id, RenderCommandBuffer& buffer,
 	                                              uint32_t render_target_slice_offset);
+	[[nodiscard]] bool ExecuteColorMetadataOperation(uint64_t submit_id,
+	                                                 RenderCommandBuffer& buffer,
+	                                                 uint32_t render_target_slice_offset);
 	void                      BindImage(ImageId id, bool storage);
 	void                      BindRenderTarget(ImageId id);
 	void                      TrackImageBinding(ImageId id);

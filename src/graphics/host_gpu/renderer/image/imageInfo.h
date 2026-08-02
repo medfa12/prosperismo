@@ -5,6 +5,7 @@
 #include "graphics/guest_gpu/gpu_defs.h"
 #include "graphics/guest_gpu/gpu_format.h"
 #include "graphics/host_gpu/regionDefinitions.h"
+#include "graphics/host_gpu/renderer/image/colorMetadataState.h"
 #include "graphics/host_gpu/vulkanCommon.h"
 
 #include <algorithm>
@@ -73,6 +74,7 @@ struct ImageInfo {
 	GuestRange                   data;
 	GuestRange                   stencil;
 	ImageMetadataInfo            metadata;
+	ColorMetadataBinding         color_metadata;
 	uint32_t                     htile_clear_mask = UINT32_MAX;
 	vk::Format                   pixel_format     = vk::Format::eUndefined;
 	uint32_t                     guest_format     = 0;

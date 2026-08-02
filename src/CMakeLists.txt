@@ -350,6 +350,11 @@ add_executable(bit_array_tests EXCLUDE_FROM_ALL
 )
 target_include_directories(bit_array_tests PRIVATE ${inc_headers})
 
+add_executable(color_metadata_state_tests EXCLUDE_FROM_ALL
+	../tests/ColorMetadataStateTests.cpp
+)
+target_include_directories(color_metadata_state_tests PRIVATE ${inc_headers})
+
 add_executable(memory_tracker_tests EXCLUDE_FROM_ALL
 	../tests/MemoryTrackerTests.cpp
 	graphics/host_gpu/pageManager.cpp
@@ -481,6 +486,7 @@ if(BUILD_TESTING)
 	add_test(NAME resource_tracking COMMAND $<TARGET_FILE:resource_tracking_tests>)
 	add_test(NAME resource_mutex COMMAND $<TARGET_FILE:resource_mutex_tests>)
 	add_test(NAME native_primitive_replay COMMAND $<TARGET_FILE:native_primitive_replay_tests>)
+	add_test(NAME color_metadata_state COMMAND $<TARGET_FILE:color_metadata_state_tests>)
 	add_test(NAME event_queue_lifetime COMMAND $<TARGET_FILE:event_queue_lifetime_tests>)
 	add_test(NAME hle_contract COMMAND $<TARGET_FILE:hle_contract_tests>)
 	add_test(NAME audio_out2_port COMMAND $<TARGET_FILE:audio_out2_port_tests>)

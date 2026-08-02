@@ -763,7 +763,12 @@ TextureCache::OverlapResult TextureCache::ResolveOverlap(const ImageInfo& reques
 			}
 			return {merged_id};
 		}
-		if (!ImageMetadataIdentityMatches(cached.info.metadata, requested.metadata)) {
+		const bool expanded_color_alias = CanUseExpandedColorAlias(
+		    binding == BindingType::Texture || binding == BindingType::Storage,
+		    requested.metadata.kind == ImageMetadataKind::None,
+		    cached.info.metadata.kind == ImageMetadataKind::Dcc, cached.color_metadata);
+		if (!ImageMetadataIdentityMatches(cached.info.metadata, requested.metadata) &&
+		    !expanded_color_alias) {
 			// The same pixel address can be reused with a different DCC/HTILE allocation.
 			// Keep those host variants separate; treating either as the other can select stale
 			// expanded pixels instead of the current Sony metadata lifetime.
@@ -1311,6 +1316,9 @@ vk::ImageView TextureCache::FindRenderTarget(ImageId id, const ImageDesc& desc) 
 	}
 	TouchImage(image);
 	RefreshImage(id, desc);
+	// A normal CB write starts a new compressed lifetime. Metadata operations
+	// deliberately bypass FindRenderTarget and therefore do not reset this state.
+	image.color_metadata.Reset(desc.info.color_metadata);
 	CommitGpuWrite(image);
 	image.usage.render_target = true;
 	TrackImageDownloadLocked(id, image);
@@ -1355,6 +1363,28 @@ void TextureCache::MarkGpuWritten(ImageId id) {
 	}
 	TrackImage(id);
 	CommitGpuWrite(image);
+}
+
+bool TextureCache::ApplyColorMetadataOperation(ImageId id, uint8_t mode,
+                                               const ImageSubresourceRange& range) {
+	std::lock_guard transaction(m_resource_mutex);
+	CacheLock       lock(*this, m_lock);
+	auto&           image = ResolveImage(id);
+	// A native render target already contains expanded semantic pixels. Guest
+	// memory containing DCC/CMASK/FMASK bytes does not; decoding that metadata is
+	// still unsupported and must remain fail-closed.
+	if (!image.registered || image.depth_id || image.info.IsDepth() || !image.IsGpuModified()) {
+		return false;
+	}
+	// State is currently tracked per image. A partial Sony mip/slice operation
+	// must not publish untouched subresources through an uncompressed alias.
+	// Single-mip/single-layer postprocess targets take the exact path; partial
+	// operations remain conservatively unavailable until per-subresource state exists.
+	if (range.base_level != 0 || range.level_count != image.info.resources.levels ||
+	    range.base_layer != 0 || range.layer_count != image.info.resources.layers) {
+		return false;
+	}
+	return image.color_metadata.Apply(mode);
 }
 
 void TextureCache::CommitGpuWrite(Image& image) {

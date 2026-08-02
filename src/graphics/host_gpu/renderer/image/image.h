@@ -155,6 +155,7 @@ public:
 	[[nodiscard]] uint64_t HashGuestEdges() const;
 
 	ImageInfo      info;
+	ColorMetadataState color_metadata;
 	VulkanImage    backing;
 	ImageViewCache views;
 	ImageUsage     usage;

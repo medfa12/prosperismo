@@ -719,25 +719,33 @@ static bool DrawHasActivePixelShader(const RenderCommandBuffer& buffer,
 	       PixelShaderHasDepthOrCoverageSideEffects(sh_regs);
 }
 
-enum class CbColorMode : uint8_t {
-	Disable            = 0,
-	Normal             = 1,
-	EliminateFastClear = 2,
-	Resolve            = 3,
-	FmaskDecompress    = 5,
-	DccDecompress      = 6,
-};
+bool RenderExecutor::ExecuteColorMetadataOperation(uint64_t submit_id,
+                                                   RenderCommandBuffer& buffer,
+                                                   uint32_t render_target_slice_offset) {
+	const auto mode      = buffer.GetRegisters().GetColorControl().mode;
+	const auto operation = DecodeColorMetadataOperation(mode);
+	if (!operation.recognized) {
+		return false;
+	}
 
-static bool ConsumeMetadataColorOperation(const RenderCommandBuffer& buffer) {
-	const auto& ctx  = buffer.GetRegisters();
-	const auto  mode = ctx.GetColorControl().mode;
-	// These AGC CB modes run color-buffer metadata/decompression operations. The shader is a
-	// dummy vehicle for the CB, and its exported color must not be applied as a normal draw.
-	// Kyty currently stores host images as expanded Vulkan images and does not track CMASK/DCC
-	// metadata state, so the matching host operation is a no-op.
-	return mode == static_cast<uint8_t>(CbColorMode::EliminateFastClear) ||
-	       mode == static_cast<uint8_t>(CbColorMode::FmaskDecompress) ||
-	       mode == static_cast<uint8_t>(CbColorMode::DccDecompress);
+	// Sony metadata operations target every bound CB, independently of
+	// CB_TARGET_MASK. The shader is only a vehicle for the color block.
+	auto& cache = m_context.GetTextureCache();
+	for (uint32_t slot = 0; slot < RENDER_COLOR_ATTACHMENTS_MAX; slot++) {
+		if (buffer.GetRegisters().GetRenderTarget(slot).base.addr == 0) {
+			continue;
+		}
+		RenderColorInfo target {};
+		ResolveRenderColorTarget(submit_id, buffer, target, render_target_slice_offset, slot, true,
+		                         true);
+		if (target.image_id) {
+			(void)cache.ApplyColorMetadataOperation(
+			    target.image_id, mode,
+			    {target.desc.view_info.base_level, target.desc.view_info.level_count,
+			     target.desc.view_info.base_layer, target.desc.view_info.layer_count});
+		}
+	}
+	return true;
 }
 
 struct DrawEmitInfo {
@@ -1254,7 +1262,7 @@ void RenderExecutor::DrawIndex(uint64_t submit_id, RenderCommandBuffer& buffer,
 		return;
 	}
 
-	if (ConsumeMetadataColorOperation(buffer)) {
+	if (ExecuteColorMetadataOperation(submit_id, buffer, render_target_slice_offset)) {
 		ResetBindings();
 		return;
 	}
@@ -1387,7 +1395,7 @@ void RenderExecutor::DrawAuto(uint64_t submit_id, RenderCommandBuffer& buffer, u
 		return;
 	}
 
-	if (ConsumeMetadataColorOperation(buffer)) {
+	if (ExecuteColorMetadataOperation(submit_id, buffer, render_target_slice_offset)) {
 		ResetBindings();
 		return;
 	}

@@ -287,6 +287,19 @@ void RenderExecutor::ResolveRenderColorTarget(uint64_t submit_id, RenderCommandB
 	desc.info.bytes_per_block = bytes_per_element;
 	desc.info.samples         = samples;
 	desc.info.tile_mode       = rt.attrib3.tile_mode;
+	desc.info.color_metadata  = {
+	    .cmask_address    = rt.cmask.addr,
+	    .fmask_address    = rt.fmask.addr,
+	    .dcc_address      = rt.dcc_addr.addr,
+	    .fast_clear       = rt.info.cmask_fast_clear_enable,
+	    .fmask_compressed = rt.info.fmask_compression_enable &&
+	                        !rt.info.fmask_data_compression_disable &&
+	                        !rt.info.fmask_one_frag_mode,
+	    .dcc_compressed = rt.info.dcc_compression_enable,
+	    .invalid_fmask_configuration =
+	        rt.info.fmask_compression_enable && rt.info.fmask_data_compression_disable &&
+	        rt.info.fmask_one_frag_mode,
+	};
 	if (rt.info.dcc_compression_enable && rt.dcc_addr.addr != 0) {
 		// Sony's DCC allocation identifies this color-surface lifetime. The host image is kept
 		// expanded, but sampled/storage aliases must still name the same metadata allocation.

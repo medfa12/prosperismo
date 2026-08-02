@@ -660,7 +660,8 @@ uint32_t RenderTargetTransferFormat(uint32_t bytes_per_element) {
 } // namespace ImageOps
 
 Image::Image(GraphicContext& graphics, CommandScheduler& scheduler, const ImageInfo& image_info)
-    : info(image_info), m_graphics(&graphics), m_scheduler(&scheduler) {
+    : info(image_info), color_metadata(image_info.color_metadata), m_graphics(&graphics),
+      m_scheduler(&scheduler) {
 	KYTY_PROFILER_FUNCTION();
 	ImageOps::Validate(info);
 	m_cpu_dirty = !info.data.Empty();
