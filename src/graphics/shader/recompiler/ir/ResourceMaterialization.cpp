@@ -81,7 +81,10 @@ bool DecodeBufferDescriptor(const DescriptorValue& descriptor, ShaderBufferResou
 
 uint64_t AddressSpecialization(const AddressResource&           resource,
                                const ResourceSnapshot::Address& snapshot) {
-	return resource.runtime_address || resource.kind == ResourceKind::Flat ||
+	if (resource.runtime_address) {
+		return 0;
+	}
+	return resource.kind == ResourceKind::Flat ||
 	               resource.source == ScalarProvenance::Unknown
 	           ? snapshot.binding_base
 	           : snapshot.guest_base - snapshot.binding_base;

@@ -882,6 +882,10 @@ void RenderExecutor::RebindBuffers(CommandBuffer&                     buffer,
 	resources.addresses.clear();
 	resources.addresses.reserve(program.info.addresses.size());
 	for (uint32_t i = 0; i < program.info.addresses.size(); i++) {
+		const auto base  = snapshot.addresses[i].binding_base;
+		const auto dword = layout.address_base_dword + i * 2u;
+		prepared.user_data[dword]     = static_cast<uint32_t>(base);
+		prepared.user_data[dword + 1] = static_cast<uint32_t>(base >> 32u);
 		resources.addresses.push_back(NativeAddressBuffer(
 		    m_context, buffer, program.info.addresses[i], snapshot.addresses[i]));
 	}

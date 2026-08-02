@@ -1211,18 +1211,18 @@ uint32_t EmitRuntimeScalarAddressFromBase(EmitterState& state, const IR::Instruc
 		    EmitSelectU32Value(state, carry_bool, ConstantU32(state, 1), ConstantU32(state, 0)));
 	}
 
-	const auto base = state.program.info.addresses[inst.memory.resource].specialized_base;
-	const auto relative_low = EmitBinaryU32(
-	    state, OpISub, low, ConstantU32(state, static_cast<uint32_t>(base)));
+	const auto base_dword =
+	    state.program.bindings.address_base_dword + inst.memory.resource * 2u;
+	const auto base_low     = EmitShaderDataDwordLoad(state, base_dword);
+	const auto base_high    = EmitShaderDataDwordLoad(state, base_dword + 1u);
+	const auto relative_low = EmitBinaryU32(state, OpISub, low, base_low);
 	const auto borrow_bool = state.builder.AllocateId();
-	state.builder.AddFunction({OpULessThan, state.bool_type, borrow_bool, low,
-	                           ConstantU32(state, static_cast<uint32_t>(base))});
+	state.builder.AddFunction({OpULessThan, state.bool_type, borrow_bool, low, base_low});
 	const auto borrow = EmitSelectU32Value(
 	    state, borrow_bool, ConstantU32(state, 1), ConstantU32(state, 0));
 	const auto relative_high = EmitBinaryU32(
 	    state, OpISub,
-	    EmitBinaryU32(state, OpISub, high,
-	                  ConstantU32(state, static_cast<uint32_t>(base >> 32u))),
+	    EmitBinaryU32(state, OpISub, high, base_high),
 	    borrow);
 	const auto valid = state.builder.AllocateId();
 	state.builder.AddFunction(
