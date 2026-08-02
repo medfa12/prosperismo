@@ -64,14 +64,17 @@ static void CaptureNativeGeDrawPacket(const RenderCommandBuffer& buffer, bool au
 
 	const auto& ge_control     = buffer.GetUserConfig().GetGeControl();
 	const auto& shader_regs    = buffer.GetRegisters().GetShaderRegisters();
+	const auto& render_target  = buffer.GetRegisters().GetRenderTarget(0);
 	const auto  primitive_type = buffer.GetUserConfig().GetPrimType();
+	const auto  pixel_address  = buffer.GetShaders().GetPs().ps_regs.data_addr;
 	using CaptureKey =
 	    std::tuple<uint64_t, uint64_t, bool, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
-	               uint32_t, uint32_t, uint64_t, uint32_t, uint32_t>;
+	               uint32_t, uint32_t, uint64_t, uint32_t, uint32_t, uint64_t, uint64_t>;
 	const CaptureKey key {es_address, gs_address, auto_draw, primitive_type, index_type, index_count,
 	                      instance_count, persistent_instance_count, first_vertex, first_instance,
 	                      index_address,
-	                      ge_control.raw_value, shader_regs.m_vgtGsOnchipCntl};
+	                      ge_control.raw_value, shader_regs.m_vgtGsOnchipCntl, pixel_address,
+	                      render_target.base.addr};
 
 	static std::mutex           capture_mutex;
 	static std::set<CaptureKey> captured;
@@ -105,6 +108,17 @@ static void CaptureNativeGeDrawPacket(const RenderCommandBuffer& buffer, bool au
 	       << "first_vertex=0x" << std::setw(8) << first_vertex << '\n'
 	       << "first_instance=0x" << std::setw(8) << first_instance << '\n'
 	       << "index_address=0x" << std::setw(16) << index_address << '\n'
+	       << "pixel_shader=0x" << std::setw(16) << pixel_address << '\n'
+	       << "render_target_mask=0x" << std::setw(8)
+	       << buffer.GetRegisters().GetRenderTargetMask() << '\n'
+	       << "rt0_base=0x" << std::setw(16) << render_target.base.addr << '\n'
+	       << "rt0_width=0x" << std::setw(8) << render_target.size.width << '\n'
+	       << "rt0_height=0x" << std::setw(8) << render_target.size.height << '\n'
+	       << "rt0_format=0x" << std::setw(8) << render_target.info.format << '\n'
+	       << "rt0_channel_type=0x" << std::setw(8) << render_target.info.channel_type << '\n'
+	       << "rt0_channel_order=0x" << std::setw(8) << render_target.info.channel_order << '\n'
+	       << "rt0_dcc_compression="
+	       << (render_target.info.dcc_compression_enable ? "true" : "false") << '\n'
 	       << "ge_cntl=0x" << std::setw(8) << ge_control.raw_value << '\n'
 	       << "multiple_instances_per_wave="
 	       << (ge_control.MultipleInstancesPerWave() ? "true" : "false") << '\n'
