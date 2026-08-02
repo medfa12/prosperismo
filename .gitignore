@@ -13,7 +13,6 @@ _Build/
 # Local Sony SDK, firmware, symbols, dumps and research inputs. The tracked
 # README records the contract; every oracle payload remains outside Git.
 /ps5oracle/**
-!/ps5oracle/README.md
 
 # Emulator-local output.
 /run-logs/

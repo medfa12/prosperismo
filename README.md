@@ -13,6 +13,16 @@ with experimental macOS support. It is based on a heavily modified version of
 [Kyty](https://github.com/InoriRus/Kyty). The project is in an early stage of development, so
 compatibility is limited and behavior may change significantly between builds.
 
+## Project Details
+
+- **Repository:** [github.com/medfa12/prosperismo](https://github.com/medfa12/prosperismo)
+- **Contributor ID:** `medfa`
+- **Primary language:** C++
+- **Primary platform:** Windows x64, with Linux x64 and experimental macOS support
+- **Graphics API:** Vulkan 1.3
+- **License:** GPL-2.0-only
+- **Project base:** heavily modified [Kyty](https://github.com/InoriRus/Kyty)
+
 > [!IMPORTANT]
 > Prosperismo is not affiliated with Sony Interactive Entertainment or PlayStation. The project does
 > not distribute games or copyrighted system software. Use only game files that you have obtained
