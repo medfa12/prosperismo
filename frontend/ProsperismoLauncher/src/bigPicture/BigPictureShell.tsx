@@ -41,6 +41,7 @@ export interface FirmwareShellIconPaths {
   desktop?: string;
   search?: string;
   genericGame?: string;
+  focusNoise?: string;
 }
 
 function formatClock(now: Date): string {

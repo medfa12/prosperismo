@@ -96,7 +96,7 @@
       </AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>dwrite.lib;ole32.lib;shell32.lib;user32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dwrite.lib;ole32.lib;shell32.lib;shlwapi.lib;user32.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
@@ -119,7 +119,11 @@
     <ClInclude Include="NativeBackgroundFrameProtocol.h" />
     <ClInclude Include="FirstWaveBackground.h" />
     <ClInclude Include="NativeWavePlate.h" />
+    <ClInclude Include="ProsperismoFocusRing.h" />
+    <ClInclude Include="ProsperismoLocalImage.h" />
+    <ClInclude Include="ProsperismoLocalImageProvider.h" />
     <ClInclude Include="ProsperismoNativeBackground.h" />
+    <ClInclude Include="ShellFocusKit.h" />
     <ClInclude Include="ShellTypography.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="AutolinkedNativeModules.g.h" />
@@ -136,7 +140,11 @@
     <ClCompile Include="NativeWavePlate.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ProsperismoFocusRing.cpp" />
+    <ClCompile Include="ProsperismoLocalImage.cpp" />
+    <ClCompile Include="ProsperismoLocalImageProvider.cpp" />
     <ClCompile Include="ProsperismoNativeBackground.cpp" />
+    <ClCompile Include="ShellFocusKit.cpp" />
     <ClCompile Include="ShellTypography.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
     <ClCompile Include="pch.cpp">

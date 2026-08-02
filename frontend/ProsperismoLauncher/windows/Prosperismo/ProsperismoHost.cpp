@@ -187,6 +187,7 @@ void ProsperismoHost::ResolveShellAssets(
         paths.desktopIcon,
         paths.searchIcon,
         paths.genericGameIcon,
+        paths.focusNoise,
         paths.nativeDrawCache,
     });
   } catch (...) {

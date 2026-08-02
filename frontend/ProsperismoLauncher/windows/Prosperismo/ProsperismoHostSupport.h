@@ -33,6 +33,7 @@ struct ShellAssetPaths {
   std::string desktopIcon;
   std::string searchIcon;
   std::string genericGameIcon;
+  std::string focusNoise;
   std::string nativeDrawCache;
 };
 

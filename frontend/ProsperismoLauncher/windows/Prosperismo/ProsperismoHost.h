@@ -54,6 +54,8 @@ struct ProsperismoShellAssetPaths {
   std::string searchIcon;
   REACT_FIELD(genericGameIcon)
   std::string genericGameIcon;
+  REACT_FIELD(focusNoise)
+  std::string focusNoise;
   REACT_FIELD(nativeDrawCache)
   std::string nativeDrawCache;
 };

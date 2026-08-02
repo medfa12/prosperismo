@@ -406,6 +406,12 @@ ShellAssetPaths ResolveShellAssets() {
     result.searchIcon = ExistingFile(runtimeIcons / L"iconid_search.svg");
     result.genericGameIcon = ExistingFile(runtimeIcons / L"emoji_game.png");
 
+    // Sony's image_focus_noise, extracted in place from PUI_UI3.rco by the
+    // oracle's focus-noise evidence pass. Both focus passes sample it.
+    result.focusNoise = ExistingFile(
+        *oracleRoot / L"evidence" / L"shell-rendering" / L"focus-noise" /
+        L"Sce.PlayStation.PUI_UI3" / L"image_focus_noise.png");
+
     std::filesystem::path drawCache;
     if (auto configured = EnvironmentPath(L"PROSPERISMO_PS5_NATIVE_DRAW_CACHE")) {
       drawCache = *configured;

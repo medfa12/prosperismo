@@ -53,6 +53,7 @@ import {
 } from './src/core/process';
 import {parseTrophyPackage, type TrophySet} from './src/core/trophies';
 import {BigPictureShell, type FirmwareShellIconPaths} from './src/bigPicture/BigPictureShell';
+import {ShellFocusNoiseProvider} from './src/bigPicture/ShellFocusNoise';
 import {
   hasNativeProsperismoHost,
   getStartupRoute,
@@ -381,12 +382,19 @@ export default function App() {
     resolveShellAssets()
       .then(paths => {
         if (mounted && paths) {
+          // Matches SharpEmu's ShellIcons policy: only bitmap art is usable.
+          // The shell keeps most of its pictogram set (search included) as
+          // SVG, which Image cannot decode, so vector-only entries resolve to
+          // undefined and the caller keeps its own glyph.
+          const bitmapOnly = (path: string): string | undefined =>
+            path && path.toLowerCase().endsWith('.png') ? path : undefined;
           setFirmwareShellIcons({
-            settings: paths.settingsIcon || undefined,
-            library: paths.libraryIcon || undefined,
-            desktop: paths.desktopIcon || undefined,
-            search: paths.searchIcon || undefined,
-            genericGame: paths.genericGameIcon || undefined,
+            settings: bitmapOnly(paths.settingsIcon),
+            library: bitmapOnly(paths.libraryIcon),
+            desktop: bitmapOnly(paths.desktopIcon),
+            search: bitmapOnly(paths.searchIcon),
+            genericGame: bitmapOnly(paths.genericGameIcon),
+            focusNoise: bitmapOnly(paths.focusNoise),
           });
         }
       })
@@ -418,21 +426,23 @@ export default function App() {
   }, []);
   return route === 'desktop'
     ? <DesktopLauncher games={games} settings={settings} session={session} busy={busy} error={error} onChooseFolders={chooseFolders} onRefresh={() => refresh(settings)} onRefreshCompatibility={refreshCompatibility} onLaunch={run} onSaveSettings={persist} onSaveRoots={updateRoots} onBigPicture={() => switchRoute('big-picture')} onError={setError} onClearUntrackedSession={() => setSession(DEFAULT_PROCESS_SESSION)} />
-    : <BigPictureShell
-         firmwareShellIcons={firmwareShellIcons}
-         games={games}
-         settings={settings}
-         onAddFolders={() => { void chooseFolders(); }}
-         onSaveSettings={next => { void persist(next); }}
-         onDesktop={() => switchRoute('desktop')}
-         errorMessage={error}
-         onDismissError={() => setError(undefined)}
-        onLaunch={game => {
-          if (session.phase !== 'launching' && session.phase !== 'running') {
-            void run(game);
-          }
-        }}
-      />;
+    : <ShellFocusNoiseProvider path={firmwareShellIcons.focusNoise}>
+        <BigPictureShell
+          firmwareShellIcons={firmwareShellIcons}
+          games={games}
+          settings={settings}
+          onAddFolders={() => { void chooseFolders(); }}
+          onSaveSettings={next => { void persist(next); }}
+          onDesktop={() => switchRoute('desktop')}
+          errorMessage={error}
+          onDismissError={() => setError(undefined)}
+          onLaunch={game => {
+            if (session.phase !== 'launching' && session.phase !== 'running') {
+              void run(game);
+            }
+          }}
+        />
+      </ShellFocusNoiseProvider>;
 }
 
 const styles = StyleSheet.create({

@@ -41,6 +41,7 @@ export interface ShellAssetPaths {
   desktopIcon: string;
   searchIcon: string;
   genericGameIcon: string;
+  focusNoise: string;
   nativeDrawCache: string;
 }
 

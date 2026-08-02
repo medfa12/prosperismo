@@ -7,6 +7,9 @@
 #include "AutolinkedNativeModules.g.h"
 
 #include "NativeModules.h"
+#include "ProsperismoFocusRing.h"
+#include "ProsperismoLocalImage.h"
+#include "ProsperismoLocalImageProvider.h"
 #include "ProsperismoNativeBackground.h"
 
 #include <strsafe.h>
@@ -17,7 +20,10 @@ struct CompReactPackageProvider
  public:
   void CreatePackage(winrt::Microsoft::ReactNative::IReactPackageBuilder const &packageBuilder) noexcept {
     AddAttributedModules(packageBuilder, true);
+    RegisterProsperismoLocalImageProvider(packageBuilder);
     RegisterProsperismoNativeBackground(packageBuilder);
+    RegisterProsperismoFocusRing(packageBuilder);
+    RegisterProsperismoLocalImage(packageBuilder);
   }
 };
 

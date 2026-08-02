@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  Image,
+  Animated,
   type ImageSourcePropType,
   Pressable,
   StyleSheet,
@@ -10,8 +10,6 @@ import {
 } from 'react-native';
 import type {GameInstall} from '../core/models';
 import {
-  focusAreaOpacityScale,
-  focusLineBody,
   HomeGlanceState,
   HOME_GEOMETRY,
   HOME_SPRINGS,
@@ -19,14 +17,14 @@ import {
   homeTileLeft,
   homeTileMatOpacity,
   homeTileRadius,
-  ShellFocusTimeline,
   ShellSpring,
   systemIconFocusBackgroundOpacity,
   systemIconFocusedChannel,
-  type ShellFocusSnapshot,
   type ShellRect,
 } from './shellHomeMotion';
-import {focusColorAt} from './shellFocusShader';
+import ProsperismoFocusRing from './FocusRingNativeComponent';
+import ProsperismoLocalImage from './LocalImageNativeComponent';
+import {useShellFocusNoisePath} from './ShellFocusNoise';
 import type {ShellFocusRegion, ShellSpace} from './shellState';
 
 const DESIGN_WIDTH = HOME_GEOMETRY.designWidth;
@@ -95,8 +93,19 @@ export interface RecoveredHomeShellProps {
   systemRefs: React.MutableRefObject<any[]>;
 }
 
+const localImageSources = new Map<string, ImageSourcePropType>();
+
 function fileSource(path: string | undefined): ImageSourcePropType | undefined {
-  return path ? {uri: `file:///${path.replace(/\\/g, '/')}`} : undefined;
+  if (!path) {
+    return undefined;
+  }
+  const cached = localImageSources.get(path);
+  if (cached) {
+    return cached;
+  }
+  const source = {uri: `file:///${path.replace(/\\/g, '/')}`};
+  localImageSources.set(path, source);
+  return source;
 }
 
 function SearchGlyph({color}: {color: string}) {
@@ -119,22 +128,35 @@ function ProfileGlyph({color}: {color: string}) {
   </View>;
 }
 
-function SystemGlyph({action, tint, settingsIconPath, searchIconPath}: {
+function SystemGlyph({action, tint, tintChannel, settingsIconPath, searchIconPath}: {
   action: SystemAction;
   tint: string;
+  tintChannel: number;
   settingsIconPath?: string;
   searchIconPath?: string;
 }) {
   if (action === 'settings' && settingsIconPath) {
-    return <Image
-      source={fileSource(settingsIconPath)}
-      style={[glyphStyles.firmwareIcon, {tintColor: tint}]}
+    return <ProsperismoLocalImage
+      contain
+      displayHeight={48}
+      displayWidth={48}
+      path={settingsIconPath}
+      style={glyphStyles.firmwareIcon}
+      tintBlue={tintChannel}
+      tintGreen={tintChannel}
+      tintRed={tintChannel}
     />;
   }
   if (action === 'search' && searchIconPath) {
-    return <Image
-      source={fileSource(searchIconPath)}
-      style={[glyphStyles.firmwareIcon, {tintColor: tint}]}
+    return <ProsperismoLocalImage
+      contain
+      displayHeight={48}
+      displayWidth={48}
+      path={searchIconPath}
+      style={glyphStyles.firmwareIcon}
+      tintBlue={tintChannel}
+      tintGreen={tintChannel}
+      tintRed={tintChannel}
     />;
   }
   if (action === 'search') {
@@ -186,12 +208,6 @@ function homeFocusTarget(
     };
   }
   return undefined;
-}
-
-function focusRgba(snapshot: ShellFocusSnapshot): string {
-  const shimmer = Math.max(0, Math.min((snapshot.shimmer[0] + snapshot.shimmer[1] + 2) / 4, 1));
-  const color = focusColorAt(0.25 + shimmer * 0.5);
-  return `rgba(${Math.round(color.r * 255)},${Math.round(color.g * 255)},${Math.round(color.b * 255)},${snapshot.lineOpacity})`;
 }
 
 function tileFrameStyle(
@@ -264,12 +280,13 @@ export function RecoveredHomeShell({
   const visibleGames = games.slice(0, HOME_GEOMETRY.maxTiles);
   const clampedIndex = Math.max(0, Math.min(selectedIndex, Math.max(0, visibleGames.length - 1)));
   const selectedGame = visibleGames[clampedIndex];
-  const focusTimeline = useRef(new ShellFocusTimeline());
   const startup = useRef(new HomeStartupChoreography());
   const tileMotion = useRef<TileMotion[]>([]);
   const systemGlance = useRef(Array.from({length: SYSTEM_ICON_COUNT}, () => new HomeGlanceState()));
   const revealElapsedMs = useRef(0);
   const [, setMotionFrame] = useState(0);
+  const [focusPressToken, setFocusPressToken] = useState(0);
+  const focusNoisePath = useShellFocusNoisePath();
 
   if (tileMotion.current.length !== visibleGames.length) {
     tileMotion.current = visibleGames.map((_, index) => {
@@ -293,18 +310,10 @@ export function RecoveredHomeShell({
   }, [clampedIndex, visibleGames.length]);
 
   useEffect(() => {
-    const target = homeFocusTarget(focusRegion, focusedSpace, selectedSystemIndex, visibleGames.length > 0);
-    if (target) {
-      if (focusTimeline.current.snapshot().state === 'hidden') {
-        focusTimeline.current.showAt(target.rect, target.radius);
-      } else {
-        focusTimeline.current.retarget(target.rect, target.radius);
-      }
-    } else {
-      focusTimeline.current.hide();
-    }
-    systemGlance.current.forEach((glance, index) => glance.setGlanced(focusRegion === 'system' && selectedSystemIndex === index));
-  }, [focusRegion, focusedSpace, selectedSystemIndex, visibleGames.length]);
+    systemGlance.current.forEach((glance, index) =>
+      glance.setGlanced(focusRegion === 'system' && selectedSystemIndex === index),
+    );
+  }, [focusRegion, selectedSystemIndex]);
 
   useEffect(() => {
     let active = true;
@@ -327,7 +336,6 @@ export function RecoveredHomeShell({
         motion.left.advance(deltaMs / 1000);
         motion.side.advance(deltaMs / 1000);
       });
-      focusTimeline.current.advance(deltaMs / 1000);
       systemGlance.current.forEach(glance => glance.advance(deltaMs / 1000));
       setMotionFrame(value => value + 1);
       frameHandle = requestAnimationFrame(tick);
@@ -356,35 +364,37 @@ export function RecoveredHomeShell({
     systemGlyphHost: {width: s(56), height: s(56), alignItems: 'center', justifyContent: 'center'},
     systemLabel: {position: 'absolute', left: s(-156), top: s(60), width: s(368), color: '#FFFFFF', fontFamily: 'Fira Sans Light', fontSize: s(15), fontWeight: '300', textAlign: 'center'},
     clock: {position: 'absolute', left: s(SYSTEM_GROUP_LEFT + SYSTEM_ICON_COUNT * SYSTEM_ICON_PITCH - (SYSTEM_ICON_PITCH - SYSTEM_ICON_SIZE) + CLOCK_MARGIN_LEFT), top: s(43), width: s(CLOCK_WIDTH), color: '#FFFFFF', fontFamily: 'Fira Sans', fontSize: s(28), textAlign: 'right'},
-    tile: {position: 'absolute', overflow: 'hidden', backgroundColor: '#292929'},
-    tileImage: {width: '100%', height: '100%', resizeMode: 'cover'},
+    tile: {position: 'absolute', backgroundColor: '#292929'},
+    tileArtworkPlane: {position: 'absolute'},
     tileFallback: {width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#353535'},
     selectedMonogram: {fontFamily: 'Fira Sans', fontSize: s(58), fontWeight: '700', color: '#FFFFFF'},
     idleMonogram: {fontFamily: 'Fira Sans', fontSize: s(40), fontWeight: '700', color: '#FFFFFF'},
-    focusLine: {position: 'absolute', borderStyle: 'solid'},
-    focusWash: {position: 'absolute', overflow: 'hidden'},
-    focusShimmer: {position: 'absolute', left: '-18%', top: '-18%', width: '136%', height: '136%', backgroundColor: '#FFFFFF', transform: [{rotate: '-18deg'}]},
+    focusNative: {position: 'absolute', left: 0, top: 0, width: stageWidth, height: stageHeight, zIndex: 2000},
     tileMat: {position: 'absolute', left: 0, top: 0, right: 0, bottom: 0},
     titleBlock: {position: 'absolute', left: s(TITLE_LEFT), top: s(TITLE_TOP), width: s(1132), height: s(62), justifyContent: 'center'},
     title: {fontFamily: 'Fira Sans Light', color: '#FFFFFF', fontSize: s(26), fontWeight: '300'},
     library: {position: 'absolute', left: s(1602), top: s(IDLE_TILE_TOP), width: s(IDLE_TILE_SIZE), height: s(IDLE_TILE_SIZE), borderRadius: s(16), alignItems: 'center', justifyContent: 'center', backgroundColor: '#353535'},
-    libraryIcon: {width: s(40), height: s(32), resizeMode: 'contain', tintColor: '#FFFFFF'},
+    libraryIcon: {width: s(40), height: s(32)},
     libraryFallback: {fontFamily: 'Fira Sans', color: '#FFFFFF', fontSize: s(34)},
     emptyTitle: {position: 'absolute', left: s(172), top: s(168), color: '#FFFFFF', fontFamily: 'Fira Sans', fontSize: s(26), fontWeight: '600'},
     emptyHint: {position: 'absolute', left: s(172), top: s(208), color: 'rgba(255,255,255,0.7)', fontFamily: 'Fira Sans', fontSize: s(18)},
   });
 
   const background = fileSource(backgroundPath);
-  const libraryIcon = fileSource(libraryIconPath);
-  const genericGameIcon = fileSource(genericGameIconPath);
   const entrance = startup.current;
-  const focus = focusTimeline.current.snapshot();
-  const focusBody = focusLineBody(focus.rect, focus.radius, focus.inOutScale);
-  const washScale = focusAreaOpacityScale(focus.rect, {width: DESIGN_WIDTH, height: DESIGN_HEIGHT});
-  const shimmerOpacity = Math.max(0, Math.min(0.08 + ((focus.shimmer[0] + 1) * 0.045), 0.17));
+  const focusTarget = homeFocusTarget(
+    focusRegion,
+    focusedSpace,
+    selectedSystemIndex,
+    visibleGames.length > 0,
+  );
+  const focusOffset =
+    focusRegion === 'strand' || focusRegion === 'library-shortcut'
+      ? {x: entrance.switcherTranslateX, y: entrance.switcherTranslateY}
+      : {x: 0, y: 0};
 
   return <View style={stageStyles.stage}>
-    {background && <Image source={background} style={stageStyles.background} />}
+    {background && <Animated.Image source={background} style={stageStyles.background} />}
 
     <View style={[stageStyles.topBand, {top: s(entrance.systemTranslateY), opacity: entrance.systemAlpha}]}>
       <View style={stageStyles.spaces}>{(['games', 'media'] as const).map((space, index) => {
@@ -395,6 +405,7 @@ export function RecoveredHomeShell({
           accessibilityRole="button"
           key={space}
           onFocus={() => onFocusSpace(space)}
+          onPressIn={() => setFocusPressToken(value => value + 1)}
           onPress={() => onActivateSpace(space)}
           ref={node => { spaceRefs.current[index] = node; }}
           style={stageStyles.spaceButton}>
@@ -414,6 +425,7 @@ export function RecoveredHomeShell({
           accessibilityRole="button"
           key={item.action}
           onFocus={() => onSelectSystem(index)}
+          onPressIn={() => setFocusPressToken(value => value + 1)}
           onPress={() => onActivateSystem(item.action)}
           ref={node => { systemRefs.current[index] = node; }}
           style={[
@@ -422,7 +434,13 @@ export function RecoveredHomeShell({
             {backgroundColor: `rgba(255,255,255,${backgroundOpacity})`},
           ]}>
           <View style={[stageStyles.systemGlyphHost, systemGlanceStyle(glance.iconScale)]}>
-            <SystemGlyph action={item.action} tint={tint} settingsIconPath={settingsIconPath} searchIconPath={searchIconPath} />
+            <SystemGlyph
+              action={item.action}
+              tint={tint}
+              tintChannel={tintChannel}
+              settingsIconPath={settingsIconPath}
+              searchIconPath={searchIconPath}
+            />
           </View>
           <Text numberOfLines={1} style={[stageStyles.systemLabel, systemLabelStyle(glance.labelOpacity)]}>{item.label}</Text>
         </Pressable>;
@@ -438,28 +456,56 @@ export function RecoveredHomeShell({
         const left = (motion?.left.value ?? homeTileLeft(index, clampedIndex)) + entrance.switcherTranslateX;
         const top = SYSTEM_HEIGHT + (SELECTED_TILE_SIZE - side) / 2 + entrance.switcherTranslateY;
         const matOpacity = homeTileMatOpacity(index, clampedIndex);
-        return <Pressable
-          accessibilityLabel={`${game.titleName}, ${index + 1} of ${visibleGames.length}`}
-          accessibilityRole="button"
-          key={game.gamePath}
-          onFocus={() => onSelectGame(index)}
-          onLongPress={() => onOptions(game)}
-          onPress={() => onLaunch(game)}
-          ref={node => { strandRefs.current[index] = node; }}
-          style={[
-            stageStyles.tile,
-            tileFrameStyle(scale, left, top, side, isSelected, Math.abs(index - clampedIndex)),
-          ]}>
-          {game.artworkPath
-            ? <Image source={fileSource(game.artworkPath)} style={stageStyles.tileImage} />
-            : genericGameIcon
-              ? <Image source={genericGameIcon} style={stageStyles.tileImage} />
-              : <View style={stageStyles.tileFallback}><Text style={isSelected ? stageStyles.selectedMonogram : stageStyles.idleMonogram}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}
-          {matOpacity > 0 && <View
-            pointerEvents="none"
-            style={[stageStyles.tileMat, tileMatStyle(matOpacity)]}
+        const distance = Math.abs(index - clampedIndex);
+        const frame = tileFrameStyle(scale, left, top, side, isSelected, distance);
+        const tileSource = game.artworkPath ?? genericGameIconPath;
+        const artworkFrame = {
+          left: left * scale,
+          top: top * scale,
+          width: side * scale,
+          height: side * scale,
+          borderRadius: homeTileRadius(side) * scale,
+          opacity: side > 0.5 ? 1 : 0,
+          zIndex: isSelected ? 999 : 499 - distance,
+        };
+        return <React.Fragment key={game.gamePath}>
+          {tileSource && <ProsperismoLocalImage
+            contain={false}
+            displayHeight={side * scale}
+            displayWidth={side * scale}
+            path={tileSource}
+            style={[
+              stageStyles.tileArtworkPlane,
+              artworkFrame,
+            ]}
+            tintBlue={255}
+            tintGreen={255}
+            tintRed={255}
           />}
-        </Pressable>;
+          <Pressable
+            accessibilityLabel={`${game.titleName}, ${index + 1} of ${visibleGames.length}`}
+            accessibilityRole="button"
+            onFocus={() => onSelectGame(index)}
+            onLongPress={() => onOptions(game)}
+            onPressIn={() => setFocusPressToken(value => value + 1)}
+            onPress={() => onLaunch(game)}
+            ref={node => { strandRefs.current[index] = node; }}
+            style={[
+              stageStyles.tile,
+              frame,
+              tileSource ? {backgroundColor: 'transparent'} : undefined,
+            ]}>
+            {!tileSource && <View style={stageStyles.tileFallback}>
+              <Text style={isSelected ? stageStyles.selectedMonogram : stageStyles.idleMonogram}>
+                {game.titleName.slice(0, 1).toUpperCase()}
+              </Text>
+            </View>}
+            {matOpacity > 0 && <View
+              pointerEvents="none"
+              style={[stageStyles.tileMat, tileMatStyle(matOpacity)]}
+            />}
+          </Pressable>
+        </React.Fragment>;
       })}
       <View style={[
         stageStyles.titleBlock,
@@ -480,6 +526,7 @@ export function RecoveredHomeShell({
       accessibilityLabel="Game Library"
       accessibilityRole="button"
       onFocus={onFocusLibrary}
+      onPressIn={() => setFocusPressToken(value => value + 1)}
       onPress={onOpenLibrary}
       ref={node => { libraryRef.current = node; }}
       style={[
@@ -489,49 +536,44 @@ export function RecoveredHomeShell({
           top: s(IDLE_TILE_TOP + entrance.switcherTranslateY),
         },
       ]}>
-      {libraryIcon
-        ? <Image source={libraryIcon} style={stageStyles.libraryIcon} />
+      {libraryIconPath
+        ? <ProsperismoLocalImage
+            contain
+            displayHeight={s(32)}
+            displayWidth={s(40)}
+            path={libraryIconPath}
+            style={stageStyles.libraryIcon}
+            tintBlue={255}
+            tintGreen={255}
+            tintRed={255}
+          />
         : <Text style={stageStyles.libraryFallback}>▦</Text>}
     </Pressable>
 
-    {focus.state !== 'hidden' && <>
-      {(focusRegion === 'strand' || focusRegion === 'library-shortcut') && focus.areaOpacity > 0 && <View
-        pointerEvents="none"
-        style={[
-          stageStyles.focusWash,
-          {
-            left: s(focus.rect.x + entrance.switcherTranslateX),
-            top: s(focus.rect.y + entrance.switcherTranslateY),
-            width: s(focus.rect.width),
-            height: s(focus.rect.height),
-            borderRadius: s(focus.radius),
-            opacity: focus.areaOpacity * washScale,
-          },
-        ]}>
-        <View style={[stageStyles.focusShimmer, {opacity: shimmerOpacity}]} />
-      </View>}
-      <View
-        pointerEvents="none"
-        style={[
-          stageStyles.focusLine,
-          {
-            left: s(focusBody.rect.x + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateX : 0)),
-            top: s(focusBody.rect.y + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateY : 0)),
-            width: s(focusBody.rect.width),
-            height: s(focusBody.rect.height),
-            borderRadius: s(focusBody.radius),
-            borderWidth: Math.max(1, s(focus.bandWidth)),
-            borderColor: focusRgba(focus),
-            opacity: focus.lineOpacity,
-          },
-        ]}
-      />
-    </>}
+    <ProsperismoFocusRing
+      active={Boolean(focusTarget)}
+      keyRepeating={false}
+      noisePath={focusNoisePath}
+      offsetX={focusOffset.x}
+      offsetY={focusOffset.y}
+      pointerEvents="none"
+      pressedToken={focusPressToken}
+      radius={focusTarget?.radius ?? 0}
+      screenHeight={DESIGN_HEIGHT}
+      screenWidth={DESIGN_WIDTH}
+      style={stageStyles.focusNative}
+      surfaceHeight={DESIGN_HEIGHT}
+      surfaceWidth={DESIGN_WIDTH}
+      targetHeight={focusTarget?.rect.height ?? 0}
+      targetWidth={focusTarget?.rect.width ?? 0}
+      targetX={focusTarget?.rect.x ?? 0}
+      targetY={focusTarget?.rect.y ?? 0}
+    />
   </View>;
 }
 
 const glyphStyles = StyleSheet.create({
-  firmwareIcon: {width: 48, height: 48, resizeMode: 'contain'},
+  firmwareIcon: {width: 48, height: 48},
   search: {width: 34, height: 34},
   searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 4, borderRadius: 10},
   searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 4, borderRadius: 2, transform: [{rotate: '47deg'}]},
