@@ -66,6 +66,14 @@ const brandArtwork = {
   bigPictureDefault: require('../../assets/branding/ps-iOS-Default-1024.png'),
 };
 
+// These are user-local outputs from the recovered native particle renderer.
+// They are deliberately not copied into the repository or application package.
+const ORACLE_NATIVE_BACKGROUND_FRAMES = [
+  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_0000ms.png',
+  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_0500ms.png',
+  'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_1000ms.png',
+] as const;
+
 type Route = 'desktop' | 'big-picture';
 type Inspector = 'game' | 'settings' | 'patches' | 'trophies';
 
@@ -346,6 +354,7 @@ export default function App() {
   const [session, setSession] = useState<ProcessSession>(DEFAULT_PROCESS_SESSION);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [nativeBackgroundFrames, setNativeBackgroundFrames] = useState<string[]>([]);
   const refresh = useCallback(async (current: LauncherSettings) => {
     setBusy(true); setError(undefined);
     try { setGames(await scanGameDirectories(prosperismoHost, current.gameDirectories, current.global, current.perGame)); }
@@ -354,6 +363,13 @@ export default function App() {
   }, []);
   useEffect(() => { loadSettings(prosperismoHost).then(value => { setSettings(value); return refresh(value); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); }, [refresh]);
   useEffect(() => subscribeToProcessLifecycle(prosperismoHost, event => setSession(current => applyProcessEvent(current, event))), []);
+  useEffect(() => {
+    let mounted = true;
+    Promise.all(ORACLE_NATIVE_BACKGROUND_FRAMES.map(path => prosperismoHost.fileExists(path)))
+      .then(found => { if (mounted && found.every(Boolean)) { setNativeBackgroundFrames([...ORACLE_NATIVE_BACKGROUND_FRAMES]); } })
+      .catch(() => undefined);
+    return () => { mounted = false; };
+  }, []);
   const persist = useCallback(async (next: LauncherSettings) => { setSettings(next); await saveSettings(prosperismoHost, next); await refresh(next); }, [refresh]);
   const updateRoots = useCallback(async (roots: string[]) => persist({...settings, gameDirectories: [...new Set(roots)]}), [persist, settings]);
   const chooseFolders = useCallback(async () => { try { const roots = await prosperismoHost.chooseGameDirectories(); if (roots.length) { await updateRoots([...settings.gameDirectories, ...roots]); } } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } }, [settings.gameDirectories, updateRoots]);
@@ -375,9 +391,10 @@ export default function App() {
   return route === 'desktop'
     ? <DesktopLauncher games={games} settings={settings} session={session} busy={busy} error={error} onChooseFolders={chooseFolders} onRefresh={() => refresh(settings)} onRefreshCompatibility={refreshCompatibility} onLaunch={run} onSaveSettings={persist} onSaveRoots={updateRoots} onBigPicture={() => setRoute('big-picture')} onError={setError} onClearUntrackedSession={() => setSession(DEFAULT_PROCESS_SESSION)} />
     : <BigPictureShell
-        artwork={brandArtwork.bigPicture}
-        games={games}
-        onDesktop={() => setRoute('desktop')}
+         artwork={brandArtwork.bigPicture}
+         games={games}
+         nativeBackgroundFrames={nativeBackgroundFrames}
+         onDesktop={() => setRoute('desktop')}
         onLaunch={game => {
           if (session.phase !== 'launching' && session.phase !== 'running') {
             void run(game);

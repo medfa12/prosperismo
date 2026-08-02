@@ -81,6 +81,17 @@ function CardFocusPass({phase}: {phase: Animated.Value}) {
   );
 }
 
+/**
+ * The native renderer owns a narrow line pass for list/menu rows. Keep the
+ * row dark: this is not a white selected-row fill.
+ */
+function FocusLine({active, radius = 16}: {active: boolean; radius?: number}) {
+  const phase = useFocusPhase(active);
+  return <Animated.View pointerEvents="none" style={[shellStyles.genericFocusFrame, {borderRadius: radius + SHELL_METRICS.focusLineOffset, opacity: phase}]}>
+    <View style={[shellStyles.genericFocusLine, {borderRadius: radius + SHELL_METRICS.focusLineOffset}]} />
+  </Animated.View>;
+}
+
 function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress, onOptions, onRef}: {
   game: GameInstall;
   index: number;
@@ -167,6 +178,37 @@ function fileImageSource(path: string | undefined): ImageSourcePropType | undefi
 }
 
 /**
+ * Development bridge for frames emitted by the recovered native background
+ * renderer. Frames live in the user's oracle, never inside the application
+ * package. A real native-frame host can replace this adapter without changing
+ * the shell layering contract.
+ */
+function NativeFrameBackground({framePaths, visible}: {
+  framePaths: readonly string[];
+  visible: boolean;
+}) {
+  const [frameIndex, setFrameIndex] = useState(0);
+  const frames = useMemo(() => framePaths.map(fileImageSource).filter((source): source is ImageSourcePropType => Boolean(source)), [framePaths]);
+  useEffect(() => {
+    setFrameIndex(0);
+    if (!visible || frames.length < 2) {
+      return;
+    }
+    const sequence = [...Array(frames.length).keys(), ...Array(Math.max(0, frames.length - 2)).fill(0).map((_, index) => frames.length - index - 2)];
+    let sequenceIndex = 0;
+    const timer = setInterval(() => {
+      sequenceIndex = (sequenceIndex + 1) % sequence.length;
+      setFrameIndex(sequence[sequenceIndex]);
+    }, 500);
+    return () => clearInterval(timer);
+  }, [frames.length, visible]);
+  if (!visible || frames.length === 0) {
+    return null;
+  }
+  return <Image source={frames[Math.min(frameIndex, frames.length - 1)]} style={shellStyles.nativeFrameBackground} />;
+}
+
+/**
  * The HOME image transition has an exact 1000ms default cross-fade. Native
  * ripple/blur paths remain out of scope until the renderer exposes them.
  */
@@ -225,14 +267,26 @@ function LibrarySurface({games, onLaunch}: {games: readonly GameInstall[]; onLau
   return <View style={shellStyles.contentSurface}><Text style={shellStyles.surfaceTitle}>Game Library</Text><ScrollView contentContainerStyle={shellStyles.libraryGrid}>{games.map(game => <Pressable accessibilityRole="button" key={game.gamePath} onPress={() => onLaunch(game)} style={shellStyles.libraryTile}>{game.artworkPath ? <Image source={{uri: `file:///${game.artworkPath.replace(/\\/g, '/')}`}} style={shellStyles.libraryArt} /> : <View style={shellStyles.libraryArt}><Text style={shellStyles.libraryMonogram}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}<Text numberOfLines={1} style={shellStyles.libraryTitle}>{game.titleName}</Text></Pressable>)}</ScrollView></View>;
 }
 
-function SettingsSurface({selectedIndex, onSelect}: {selectedIndex: number; onSelect(index: number): void}) {
-  return <View style={[shellStyles.contentSurface, shellStyles.settingsSurface]}><Text style={shellStyles.surfaceTitle}>Prosperismo Settings</Text><ScrollView contentContainerStyle={shellStyles.settingsList}>{SETTINGS_CATEGORIES.map(([category, detail], index) => { const selected = index === selectedIndex; return <Pressable accessibilityRole="button" key={category} onFocus={() => onSelect(index)} onPress={() => onSelect(index)} style={shellStyles.settingsRow}>{selected && <View pointerEvents="none" style={shellStyles.settingsFocus} />}<View style={shellStyles.settingsGlyph} /><View style={shellStyles.settingsCopy}><Text style={[shellStyles.settingsText, selected && shellStyles.settingsTextFocused]}>{category}</Text><Text style={[shellStyles.settingsDetail, selected && shellStyles.settingsDetailFocused]}>{detail}</Text></View><Text style={[shellStyles.settingsChevron, selected && shellStyles.settingsTextFocused]}>›</Text></Pressable>; })}</ScrollView></View>;
+function SettingsSurface({selectedIndex, onSelect, onActivate, onRef}: {
+  selectedIndex: number;
+  onSelect(index: number): void;
+  onActivate(index: number): void;
+  onRef(index: number, node: any): void;
+}) {
+  return <View style={[shellStyles.contentSurface, shellStyles.settingsSurface]}><Text style={shellStyles.surfaceTitle}>Prosperismo Settings</Text><ScrollView contentContainerStyle={shellStyles.settingsList}>{SETTINGS_CATEGORIES.map(([category, detail], index) => { const selected = index === selectedIndex; return <Pressable ref={node => onRef(index, node)} accessibilityRole="button" key={category} onFocus={() => onSelect(index)} onPress={() => onActivate(index)} style={shellStyles.settingsRow}><FocusLine active={selected} /><View style={shellStyles.settingsGlyph} /><View style={shellStyles.settingsCopy}><Text style={shellStyles.settingsText}>{category}</Text><Text style={shellStyles.settingsDetail}>{detail}</Text></View><Text style={shellStyles.settingsChevron}>›</Text></Pressable>; })}</ScrollView></View>;
 }
 
-function OptionsModal({game, onClose, onPlay}: {game: GameInstall; onClose(): void; onPlay(): void}) {
+function OptionsModal({game, selectedIndex, onClose, onPlay, onSelect, onRef}: {
+  game: GameInstall;
+  selectedIndex: number;
+  onClose(): void;
+  onPlay(): void;
+  onSelect(index: number): void;
+  onRef(index: number, node: any): void;
+}) {
   const phase = useRef(new Animated.Value(0)).current;
   useEffect(() => { const animation = Animated.sequence([Animated.delay(50), Animated.timing(phase, {toValue: 1, duration: 250, easing: easeOutBreeze, useNativeDriver: true})]); animation.start(); return () => animation.stop(); }, [phase]);
-  return <View style={shellStyles.modalLayer}><Pressable accessibilityLabel="Close options" onPress={onClose} style={shellStyles.optionsDismissArea} /><Animated.View style={[shellStyles.optionsPanel, {opacity: phase}]}><Text style={shellStyles.optionsTitle}>{game.titleName}</Text><Pressable onPress={onPlay} style={shellStyles.optionRow}><Text style={shellStyles.optionText}>Play</Text></Pressable><Pressable onPress={onClose} style={shellStyles.optionRow}><Text style={shellStyles.optionText}>Cancel</Text></Pressable></Animated.View></View>;
+  return <View style={shellStyles.modalLayer}><Pressable accessibilityLabel="Close options" onPress={onClose} style={shellStyles.optionsDismissArea} /><Animated.View style={[shellStyles.optionsPanel, {opacity: phase}]}><Text style={shellStyles.optionsTitle}>{game.titleName}</Text><Pressable ref={node => onRef(0, node)} onFocus={() => onSelect(0)} onPress={onPlay} style={shellStyles.optionRow}><FocusLine active={selectedIndex === 0} /><Text style={shellStyles.optionText}>Play</Text></Pressable><Pressable ref={node => onRef(1, node)} onFocus={() => onSelect(1)} onPress={onClose} style={shellStyles.optionRow}><FocusLine active={selectedIndex === 1} /><Text style={shellStyles.optionText}>Cancel</Text></Pressable></Animated.View></View>;
 }
 
 function ShellToast({message, onClose}: {message: string; onClose(): void}) {
@@ -252,19 +306,24 @@ function ShellToast({message, onClose}: {message: string; onClose(): void}) {
 export interface BigPictureShellProps {
   games: readonly GameInstall[];
   artwork: ImageSourcePropType;
+  /** Local, user-owned oracle outputs; not bundled application assets. */
+  nativeBackgroundFrames?: readonly string[];
   onDesktop(): void;
   onLaunch(game: GameInstall): void;
 }
 
-export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictureShellProps) {
+export function BigPictureShell({games, artwork, nativeBackgroundFrames = [], onDesktop, onLaunch}: BigPictureShellProps) {
   const [state, dispatch] = useReducer(reduceShellState, INITIAL_SHELL_STATE);
   const [now, setNow] = useState(() => new Date());
   const [optionsGame, setOptionsGame] = useState<GameInstall>();
+  const [optionIndex, setOptionIndex] = useState(0);
   const [toast, setToast] = useState<string>();
   const dismissToast = useCallback(() => setToast(undefined), []);
   const spaceRefs = useRef<any[]>([]);
   const strandRefs = useRef<any[]>([]);
   const systemRefs = useRef<any[]>([]);
+  const settingsRefs = useRef<any[]>([]);
+  const optionRefs = useRef<any[]>([]);
   const {width, height} = useWindowDimensions();
   const scale = Math.min(width / SHELL_METRICS.canvas.width, height / SHELL_METRICS.canvas.height);
   const selected = selectedShellGame(games, state);
@@ -277,10 +336,21 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
     }
   };
   const launch = (game: GameInstall) => { setOptionsGame(undefined); setToast(`Launching ${game.titleName}`); onLaunch(game); };
+  const openOptions = (game: GameInstall) => { setOptionIndex(0); setOptionsGame(game); };
+  useEffect(() => {
+    if (optionsGame) {
+      focusNative(optionRefs.current[0]);
+    }
+  }, [optionsGame]);
   const handleKeyDown = (event: any) => {
     const key = event?.nativeEvent?.key;
-    if (key === 'ArrowUp') { if (state.focusRegion === 'strand') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'system') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'content') { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
-    if (key === 'ArrowDown' && (state.focusRegion === 'spaces' || state.focusRegion === 'system')) { focusNative(strandRefs.current[state.selectedIndex]); event.stopPropagation?.(); return; }
+    if (optionsGame && (key === 'ArrowUp' || key === 'GamepadDPadUp' || key === 'ArrowDown' || key === 'GamepadDPadDown')) {
+      focusNative(optionRefs.current[Math.max(0, Math.min(1, optionIndex + ((key === 'ArrowUp' || key === 'GamepadDPadUp') ? -1 : 1)))]);
+      event.stopPropagation?.();
+      return;
+    }
+    if (key === 'ArrowUp' || key === 'GamepadDPadUp') { if (state.focusRegion === 'strand') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'system') { focusNative(spaceRefs.current[state.space === 'games' ? 0 : 1]); } else if (state.focusRegion === 'content' && state.surface === 'settings') { if (state.settingsIndex > 0) { focusNative(settingsRefs.current[state.settingsIndex - 1]); } else { focusNative(systemRefs.current[1]); } } else if (state.focusRegion === 'content') { dispatch({type: 'home'}); focusNative(strandRefs.current[state.selectedIndex]); } event.stopPropagation?.(); return; }
+    if (key === 'ArrowDown' || key === 'GamepadDPadDown') { if (state.focusRegion === 'spaces' || state.focusRegion === 'system') { focusNative(strandRefs.current[state.selectedIndex]); event.stopPropagation?.(); return; } if (state.focusRegion === 'content' && state.surface === 'settings' && state.settingsIndex < SETTINGS_CATEGORIES.length - 1) { focusNative(settingsRefs.current[state.settingsIndex + 1]); event.stopPropagation?.(); return; } }
     if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'strand') { const next = Math.max(0, Math.min(shellGames.length - 1, state.selectedIndex + (key === 'ArrowLeft' ? -1 : 1))); focusNative(strandRefs.current[next]); event.stopPropagation?.(); return; }
     if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'system') { const next = Math.max(0, Math.min(SYSTEM_ACTIONS.length - 1, state.systemIndex + (key === 'ArrowLeft' ? -1 : 1))); focusNative(systemRefs.current[next]); event.stopPropagation?.(); return; }
     if ((key === 'ArrowLeft' || key === 'ArrowRight') && state.focusRegion === 'spaces') { const next = state.space === 'games' ? 1 : 0; focusNative(spaceRefs.current[next]); event.stopPropagation?.(); return; }
@@ -290,14 +360,14 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   return <View style={shellStyles.viewport} {...windowsKeyCapture}><View style={[shellStyles.canvas, {transform: [{scale}]}]}>
-    <ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
+    <NativeFrameBackground framePaths={nativeBackgroundFrames} visible={state.surface === 'home'} /><ReactiveBackground backgroundPath={selectedShellBackground(selected, state.surface)} dimmed={state.surface !== 'home'} fallback={artwork} /><View style={shellStyles.backgroundMat} /><View style={shellStyles.backgroundShade} />
     <View style={shellStyles.systemBand}><View style={shellStyles.spaces}>{(['games', 'media'] as const).map((space, index) => <Pressable ref={node => { spaceRefs.current[index] = node; }} key={space} onFocus={() => dispatch({type: 'set-space', space})} onPress={() => dispatch({type: 'set-space', space})} style={shellStyles.spaceButton}><Text style={[shellStyles.spaceText, state.space === space && shellStyles.spaceTextActive, state.focusRegion === 'spaces' && state.space === space && shellStyles.spaceTextFocused]}>{space === 'games' ? 'Games' : 'Media'}</Text></Pressable>)}</View><View style={shellStyles.systemActions}>{SYSTEM_ACTIONS.map((action, index) => <SystemIconButton key={action.label} {...action} focused={state.focusRegion === 'system' && state.systemIndex === index} onRef={node => { systemRefs.current[index] = node; }} onFocus={() => dispatch({type: 'select-system', index})} onPress={() => { if (index === 1) { dispatch({type: 'open-settings'}); } else if (index === 2) { onDesktop(); } }} />)}<Text style={shellStyles.clock}>{formatClock(now)}</Text></View></View>
     {state.surface !== 'home' && <Pressable accessibilityRole="button" onPress={() => dispatch({type: 'home'})} style={shellStyles.backButton}><Text style={shellStyles.backText}>‹ Home</Text></Pressable>}
-    {state.surface === 'home' && <HomeSurface games={shellGames} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={game => setOptionsGame(game)} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
+    {state.surface === 'home' && <HomeSurface games={shellGames} selectedIndex={Math.min(state.selectedIndex, Math.max(0, shellGames.length - 1))} strandRefs={strandRefs} onLaunch={launch} onLibrary={() => dispatch({type: 'open-library'})} onOptions={openOptions} onSelect={index => dispatch({type: 'select-game', index, gameCount: shellGames.length})} />}
     {state.surface === 'library' && <LibrarySurface games={games} onLaunch={launch} />}
-    {state.surface === 'settings' && <SettingsSurface onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
+    {state.surface === 'settings' && <SettingsSurface onRef={(index, node) => { settingsRefs.current[index] = node; }} onActivate={index => setToast(`${SETTINGS_CATEGORIES[index][0]} is available in the desktop launcher`)} onSelect={index => dispatch({type: 'select-setting', index})} selectedIndex={state.settingsIndex} />}
     {state.surface === 'home' && selected && <Text style={shellStyles.keyGuide}>Enter Select   ·   Hold for Options</Text>}
-    {optionsGame && <OptionsModal game={optionsGame} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
+    {optionsGame && <OptionsModal game={optionsGame} onRef={(index, node) => { optionRefs.current[index] = node; }} onSelect={setOptionIndex} selectedIndex={optionIndex} onClose={() => setOptionsGame(undefined)} onPlay={() => launch(optionsGame)} />}
     {toast && <ShellToast message={toast} onClose={dismissToast} />}
   </View></View>;
 }
@@ -305,7 +375,7 @@ export function BigPictureShell({games, artwork, onDesktop, onLaunch}: BigPictur
 const shellStyles = StyleSheet.create({
   viewport: {flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#020408', overflow: 'hidden'},
   canvas: {position: 'absolute', width: 1920, height: 1080, backgroundColor: '#020408'},
-  backgroundArtwork: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'},
+  nativeFrameBackground: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'}, backgroundArtwork: {position: 'absolute', width: 1920, height: 1080, resizeMode: 'cover'},
   backgroundMat: {position: 'absolute', width: 1920, height: 1080, backgroundColor: 'rgba(2,4,8,0.2)'},
   backgroundShade: {position: 'absolute', width: 1920, height: 1080, backgroundColor: 'rgba(2,4,8,0.32)'},
   systemBand: {height: 126, marginHorizontal: 84, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'},
@@ -324,8 +394,9 @@ const shellStyles = StyleSheet.create({
   experienceCaption: {position: 'absolute', top: SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop, width: 560, height: 62, justifyContent: 'center'}, experienceTitle: {color: '#fff', fontSize: 30, fontWeight: '600'}, experienceMetaRow: {flexDirection: 'row', alignItems: 'center', marginTop: 8}, experienceMeta: {color: 'rgba(255,255,255,0.7)', fontSize: 18}, metaDivider: {width: 2, height: 22, marginHorizontal: 12, backgroundColor: 'rgba(255,255,255,0.25)'},
   backButton: {position: 'absolute', left: 84, top: 142, zIndex: 3, padding: 16}, backText: {color: '#fff', fontSize: 22}, contentSurface: {position: 'absolute', left: 172, top: 190, width: 1576, height: 820}, surfaceTitle: {color: '#fff', fontSize: 44, fontWeight: '600', marginBottom: 32},
   libraryGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 32, paddingBottom: 90}, libraryTile: {width: 370, marginBottom: 20}, libraryArt: {height: 220, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', resizeMode: 'cover'}, libraryMonogram: {color: '#fff', fontSize: 76, fontWeight: '700'}, libraryTitle: {color: '#fff', fontSize: 20, marginTop: 12},
-  settingsSurface: {width: 1200}, settingsList: {paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', overflow: 'hidden'}, settingsFocus: {position: 'absolute', inset: 0, borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)', backgroundColor: 'rgba(255,255,255,0.86)', borderRadius: 16}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsTextFocused: {color: '#333'}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsDetailFocused: {color: 'rgba(51,51,51,0.72)'}, settingsChevron: {color: '#fff', fontSize: 34},
-  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'hidden', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
+  genericFocusFrame: {position: 'absolute', left: -SHELL_METRICS.focusLineOffset, top: -SHELL_METRICS.focusLineOffset, right: -SHELL_METRICS.focusLineOffset, bottom: -SHELL_METRICS.focusLineOffset, zIndex: 1}, genericFocusLine: {position: 'absolute', inset: 0, borderWidth: SHELL_METRICS.focusLineWidth, borderTopColor: 'rgba(172,188,215,0.92)', borderLeftColor: 'rgba(153,192,211,0.92)', borderRightColor: 'rgba(191,187,198,0.92)', borderBottomColor: 'rgba(214,182,172,0.92)'},
+  settingsSurface: {width: 1200}, settingsList: {padding: SHELL_METRICS.focusLineOffset, paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', marginBottom: 6}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsChevron: {color: '#fff', fontSize: 34},
+  keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20}, optionsDismissArea: {position: 'absolute', inset: 0}, optionsPanel: {position: 'absolute', left: 634, bottom: 190, width: 652, minHeight: 216, borderRadius: 16, overflow: 'visible', backgroundColor: '#080A0F', paddingBottom: 8}, optionsTitle: {paddingHorizontal: 32, paddingTop: 20, paddingBottom: 10, color: 'rgba(255,255,255,0.7)', fontSize: 18, fontWeight: '400'}, optionRow: {minHeight: 98, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)'}, optionText: {color: '#fff', fontSize: 24}, toast: {position: 'absolute', alignSelf: 'center', bottom: 0, minWidth: 80, maxWidth: 652, minHeight: 72, paddingLeft: 20, paddingRight: 24, paddingVertical: 16, borderRadius: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)'}, toastIcon: {width: 40, height: 40, marginRight: 16, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)'}, toastIconMark: {width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff'}, toastText: {flexShrink: 1, color: '#fff', fontSize: 18, lineHeight: 22},
 });
 
 const SYSTEM_GEAR_TOOTH_STYLES = [

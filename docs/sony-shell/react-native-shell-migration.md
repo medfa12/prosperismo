@@ -48,6 +48,11 @@ It currently provides:
   controls; Arrow Up/Down no longer leaves an old desktop target active;
 - selected-title `pic0` composition with the firmware default 1000ms
   cross-fade, while Settings returns to the shell plate;
+- a local-only native-frame bridge: when the user's oracle contains the
+  accepted `shell-shot-bottom-shared-native-5` sequence, Big Picture plays its
+  1920x1080 recovered frames in a ping-pong sequence beneath title artwork.
+  The frames are not copied into source control or the application package;
+  absence is a clean fallback, not an error;
 - Prosperismo-owned settings categories, an undimmed dark options popup using
   the recovered 652px/16px/190px control-menu geometry, and a transient
   in-app toast with the recovered 40px-icon and 300ms/3500ms/200ms lifecycle;
