@@ -2,9 +2,10 @@
 
 Date: 2026-08-02
 
-Status: active Prosperismo bring-up checkpoint. Astro boots into its first GPU
-frame and reaches `TileBasedLighting`, but shader translation still terminates
-before a presentable game frame. No nonblack final frame is claimed.
+Status: active Prosperismo bring-up checkpoint. Astro now passes
+`TileBasedLighting`, submits repeated flips and sustains the first postprocess
+frame sequence, but no nonblack in-game frame has been captured. Do not infer
+render correctness from frame or flip counts.
 
 ## Current Prosperismo checkpoint
 
@@ -46,27 +47,41 @@ independent blockers before it could reach that boundary:
   as `s_ff1_i32_b64 vcc_hi, vcc`. The 64-bit least-significant-set-bit operation
   now handles low-half, high-half, zero and Astro's overlapping source/destination
   form in a focused Vulkan regression.
-- **CURRENT BLOCKER -- GPU-dynamic raw SMEM address binding:** decode, CFG and IR
-  now complete for `cs=0x500571000`, but resource tracking rejects the
-  `s_load_dwordx4 s20, s8, null` at PC `0x20b8`: the traversal loop constructs
-  `s8:s9` from a GPU-dynamic node value, so descriptor source 29 contains an
-  unknown low dword. Prosperismo can materialize CPU-resolvable SRT addresses
-  and fixed address snapshots, but cannot yet bind/dereference a raw scalar
-  guest address selected by the running shader. SharpEmu is a useful proven
-  differential here: its scalar evaluator records a real guest-memory binding
-  for dynamic SMEM when it can recover one and only zero-fills when it cannot.
-  Port the binding/base-bias contract; do not make Prosperismo accept the shader
-  by fabricating zero memory.
+- **CONFIRMED -- GPU-dynamic raw SMEM address binding:** the first precise
+  failure was `cs=0x500571000` at PC `0x1f6c`. PC `0x1f60` loads a pointer into
+  `s8:s9`; PC `0x1f6c` dereferences `s8 + 24`. CPU-folding that second load read
+  stale CPU memory at address `0x18`. Runtime address provenance now anchors the
+  live 48-bit SGPR address to a real guest allocation and rebases it in SPIR-V.
+  Grouped `s_load_dwordxN` emission preserves the original base when destination
+  SGPRs overlap it. A focused GPU test changes the address on the GPU and reads
+  four dwords from the selected allocation. Astro passes this shader with no
+  fabricated zero load and grows from 17 to 30 compiled shaders.
+- **CONFIRMED -- Sony ES base companion register:** the next packet wrote SH
+  offset `0xCA` (`SPI_SHADER_PGM_RSRC1_ES`) with `0x03000002`. Sony's
+  `sce::Agc::ShShaderBaseEs` NATVIS contract treats its third register as a
+  fixed `kDefault` word; only LO/HI form the executable ES address. Prosperismo
+  now explicitly accepts that word for direct and indirect packets. The next
+  Astro run passes the former fatal and submits repeated flips.
+- **CURRENT PERFORMANCE BOUNDARY -- rotating dynamic-address permutations:**
+  the sustained run repeatedly retranslates the dispatcher-fallback compute
+  programs at `0x500571000`, `0x50059cd00`, `0x5005cc100` and `0x5005fdb00`.
+  Their emitted modules are roughly 270k--285k SPIR-V words. The new dynamic
+  address binding specializes the allocation base, and Astro rotates the
+  backing allocation across frames; determine whether this is the cause of the
+  repeated permutations and move the binding base to runtime data if confirmed.
+  At the retained checkpoint the window title reached frame 38 at about
+  0.033 FPS. This is a performance observation, not proof of a valid guest
+  image.
 
 Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
 (pre-fix compare), `20260802-082506` (next VOP2 blocker),
 `20260802-082830` (next VOP3B blocker), `20260802-082946` (trap),
 `20260802-084504` (BVH), `20260802-085544` (`s_ff1_i32_b64`) and
-`20260802-090417` (current dynamic-SMEM boundary). The last run records executable
-SHA-256 `22AA47588AB5071F78826D8BDC75C4D487C7D1E4C759142D72C44EEDC11342BA`
-and embedded Git identity `6cc5c3a`. The focused selector
+`20260802-090417` (dynamic-SMEM boundary), `20260802-094750` (dynamic SMEM
+fixed; next `RSRC1_ES` boundary), and `20260802-095253` (repeated frames after
+the Sony ES companion-register fix). The focused selector
 `shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
-borrow, trap, BVH-miss and 64-bit-FF1 GPU semantic tests. The unfiltered
+borrow, trap, BVH-miss, 64-bit-FF1 and dynamic-SMEM GPU semantic tests. The unfiltered
 suite currently stops earlier in the pre-existing `ImageTransitionState`
 depth/stencil mip-copy test; it is not claimed green.
 
@@ -88,16 +103,16 @@ depth/stencil mip-copy test; it is not claimed green.
 
 ## Next falsifiable checkpoint
 
-First make `cs=0x500571000` materialize without fabricated SMEM:
+First separate the repeated shader work from the image-content question:
 
-1. recover a real guest allocation/binding base for the GPU-dynamic raw-SMEM
-   access at PC `0x20b8`, following the proven binding-plus-byte-bias shape;
-2. bind a range that covers the traversal's runtime addresses and preserve the
-   raw 48-bit guest address calculation in SPIR-V;
-3. add a focused test where the SGPR address changes on the GPU but remains
-   inside the captured guest allocation;
-4. confirm the shader compiles and dispatches with no unresolved or zero-filled
-   scalar loads.
+1. log the compute program-cache key and runtime-materialization mismatch for
+   the four repeatedly compiled programs;
+2. prove whether only the dynamic address allocation base differs between
+   permutations;
+3. if so, pass the address binding base as runtime push/binding data rather than
+   baking it into SPIR-V, while retaining bounds checks and allocation identity;
+4. confirm the same programs and Vulkan pipelines are reused across rotating
+   frame allocations and remeasure frame time.
 
 Then capture one paired producer boundary where a known-nonblack full-resolution
 source feeds the first required half-resolution target:
