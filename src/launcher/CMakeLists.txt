@@ -16,6 +16,7 @@ file(GLOB launcher_forms
 add_executable(launcher WIN32
 	${launcher_src}
 	${launcher_forms}
+	$<$<PLATFORM_ID:Windows>:${CMAKE_CURRENT_SOURCE_DIR}/../prosperismo.rc>
 )
 
 
@@ -57,7 +58,6 @@ if(WIN32)
 		COMMAND ${QT_WINDEPLOYQT} $<TARGET_FILE:launcher>
 			--no-compiler-runtime
 			--no-system-d3d-compiler
-			--no-system-dxc-compiler
 			--no-opengl-sw
 			--no-translations
 		COMMENT "Deploying Qt runtime and TLS plugins"
@@ -65,7 +65,7 @@ if(WIN32)
 	)
 endif()
 
-set(launcher_name "launcher")
+set(launcher_name "ProsperismoLauncher")
 
 set_target_properties(launcher PROPERTIES OUTPUT_NAME ${launcher_name})
 
@@ -77,7 +77,6 @@ if(WIN32)
     			COMMAND ${QT_WINDEPLOYQT} \"\${CMAKE_INSTALL_PREFIX}/${launcher_name}.exe\"
 				--no-compiler-runtime
 				--no-system-d3d-compiler
-				--no-system-dxc-compiler
 				--no-opengl-sw
 				--no-translations
     		)
