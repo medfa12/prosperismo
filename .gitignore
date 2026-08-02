@@ -1,0 +1,20 @@
+# Visual Studio 2015 cache/options directory
+.vs/
+.idea/
+build/
+_Build/vscode-clang/
+_Build/
+/artifacts/
+
+# Local, legally obtained title data and runtime state. Never distribute it.
+/games/**
+!/games/README.md
+
+# Local Sony SDK, firmware, symbols, dumps and research inputs. The tracked
+# README records the contract; every oracle payload remains outside Git.
+/ps5oracle/**
+!/ps5oracle/README.md
+
+# Emulator-local output.
+/run-logs/
+/shader_cache/

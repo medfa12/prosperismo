@@ -1,0 +1,12 @@
+# Prosperismo is a Windows-only React Native application.
+.DS_Store
+build/
+.idea/
+node_modules/
+npm-debug.log
+yarn-error.log
+*.jsbundle
+windows/**/Bundle/
+windows/**/BundleAssets/
+.metro-health-check*
+/coverage/
