@@ -315,7 +315,7 @@ function DesktopLauncher({
         </View>
         <View style={styles.settingsPanel}>
           <Image source={brandArtwork.desktopLight} style={styles.desktopPanelWatermark} />
-          <ScrollView horizontal contentContainerStyle={styles.tabs}>{(['game', 'settings', 'patches', 'trophies'] as Inspector[]).map(value => <Button key={value} label={value[0].toUpperCase() + value.slice(1)} primary={inspector === value} onPress={() => setInspector(value)} />)}</ScrollView>
+          <View style={styles.tabs}>{(['game', 'settings', 'patches', 'trophies'] as Inspector[]).map(value => <Button key={value} label={value[0].toUpperCase() + value.slice(1)} primary={inspector === value} onPress={() => setInspector(value)} />)}</View>
           {inspector === 'game' && selected && <ScrollView style={styles.inspectorScroll}>
             {(selected.backgroundPath ?? selected.artworkPath) && <Image source={{uri: fileImageUri(selected.backgroundPath ?? selected.artworkPath)}} resizeMode="cover" style={styles.pic0} />}
             <Text style={styles.sectionHeading}>{selected.titleName}</Text><Text style={styles.pathText}>{selected.titleId || 'No title ID'} · {selected.gameVersion || 'Unknown version'} · firmware {selected.firmwareVersion || 'unknown'}</Text>
