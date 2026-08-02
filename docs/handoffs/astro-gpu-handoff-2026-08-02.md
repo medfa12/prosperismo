@@ -62,16 +62,27 @@ independent blockers before it could reach that boundary:
   fixed `kDefault` word; only LO/HI form the executable ES address. Prosperismo
   now explicitly accepts that word for direct and indirect packets. The next
   Astro run passes the former fatal and submits repeated flips.
-- **CURRENT PERFORMANCE BOUNDARY -- rotating dynamic-address permutations:**
-  the sustained run repeatedly retranslates the dispatcher-fallback compute
+- **CONFIRMED -- rotating dynamic-address permutations removed:** the sustained
+  run repeatedly retranslated the dispatcher-fallback compute
   programs at `0x500571000`, `0x50059cd00`, `0x5005cc100` and `0x5005fdb00`.
   Their emitted modules are roughly 270k--285k SPIR-V words. The new dynamic
   address binding specializes the allocation base, and Astro rotates the
-  backing allocation across frames; determine whether this is the cause of the
-  repeated permutations and move the binding base to runtime data if confirmed.
-  At the retained checkpoint the window title reached frame 38 at about
-  0.033 FPS. This is a performance observation, not proof of a valid guest
+  backing allocation across frames. Existing cache telemetry proved each miss
+  was `address resource 1 no longer matches specialization`. The binding base is
+  now supplied as two runtime shader-data dwords per address resource and is no
+  longer part of the SPIR-V specialization. Across the rotating allocations all
+  four programs and their Vulkan pipelines are reused with zero mismatch. A
+  clean Release run reaches frame 189 at about 1.87 FPS, versus about 0.033 FPS
+  before the fix. This is a performance result, not proof of a valid guest
   image.
+- **CONFIRMED -- first observed half-resolution writer executes:** marker
+  `resize_normal`, `cs=0x5006F7700`, dispatches `120x68x1`. It samples the
+  full-resolution images at `0x510D10000` and `0x5104A0000`, then writes
+  960x540 storage images at `0x539910000` and `0x539B90000`. The immediately
+  following `ScreenSpaceShadow` shader `cs=0x500700A00` samples
+  `0x539910000`. Therefore this half-resolution surface is not waiting for a
+  skipped CB metadata draw: its compute producer is present. Pixel content at
+  the producer boundary has not yet been read back in Prosperismo.
 
 Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
 (pre-fix compare), `20260802-082506` (next VOP2 blocker),
@@ -79,7 +90,10 @@ Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
 `20260802-084504` (BVH), `20260802-085544` (`s_ff1_i32_b64`) and
 `20260802-090417` (dynamic-SMEM boundary), `20260802-094750` (dynamic SMEM
 fixed; next `RSRC1_ES` boundary), and `20260802-095253` (repeated frames after
-the Sony ES companion-register fix). The focused selector
+the Sony ES companion-register fix), `20260802-095659-cache-proof` (exact
+specialization-mismatch proof), `20260802-100034-runtime-address-base`
+(cross-frame shader reuse), and `20260802-100534-release` (clean Release
+performance and producer boundary). The focused selector
 `shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
 borrow, trap, BVH-miss, 64-bit-FF1 and dynamic-SMEM GPU semantic tests. The unfiltered
 suite currently stops earlier in the pre-existing `ImageTransitionState`
@@ -103,16 +117,17 @@ depth/stencil mip-copy test; it is not claimed green.
 
 ## Next falsifiable checkpoint
 
-First separate the repeated shader work from the image-content question:
+Capture the `resize_normal` producer boundary without changing shader results:
 
-1. log the compute program-cache key and runtime-materialization mismatch for
-   the four repeatedly compiled programs;
-2. prove whether only the dynamic address allocation base differs between
-   permutations;
-3. if so, pass the address binding base as runtime push/binding data rather than
-   baking it into SPIR-V, while retaining bounds checks and allocation identity;
-4. confirm the same programs and Vulkan pipelines are reused across rotating
-   frame allocations and remeasure frame time.
+1. read back full-resolution inputs `0x510D10000` and `0x5104A0000` immediately
+   before `cs=0x5006F7700`;
+2. read back outputs `0x539910000` and `0x539B90000` immediately after the
+   dispatch and its compute-write barrier;
+3. record descriptor format, tile mode, metadata identity and nonzero component
+   counts for all four images;
+4. if inputs are nonzero and outputs zero, compare this 46-instruction shader
+   byte-for-byte with Sony's ISA oracle and test its image load/store semantics;
+   if the inputs are already zero, move upstream to their writers.
 
 Then capture one paired producer boundary where a known-nonblack full-resolution
 source feeds the first required half-resolution target:
