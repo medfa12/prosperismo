@@ -83,6 +83,31 @@ independent blockers before it could reach that boundary:
   `0x539910000`. Therefore this half-resolution surface is not waiting for a
   skipped CB metadata draw: its compute producer is present. Pixel content at
   the producer boundary has not yet been read back in Prosperismo.
+- **CONFIRMED -- the current super-resolution pass inherits black RGB:** in
+  `20260802-104324-superres-bound-images`, the exact Vulkan sampled binding of
+  `cs=0x500690F00` at `0x53AA00000` had 2,081,320 nonzero *bytes* and hash
+  `0xA2FFED664DD95323`; its exact storage binding at `0x53B9F0000` began zero.
+  Channel-aware native-image readback in
+  `20260802-104933-superres-source-footprint` resolved the ambiguity: the
+  1920x1080 RGBA16F source had **zero RGB-nonzero pixels** and nonzero alpha in
+  all 2,073,600 pixels. The buffer-offset shader-data dword was zero, so the
+  complete 32-byte constant buffer was addressed at its bound base.
+- **CONFIRMED -- `0x500690F00` is not the current first black producer:** a
+  diagnostic-only differential replaced its 48 `IMAGE_LOAD` results with
+  `float4(0.5, 0.5, 0.5, 1.0)` while retaining the original 1,112-instruction
+  ALU, dispatch, coordinates and four stores. The output became fully
+  populated (`23,288,832` nonzero bytes) in
+  `20260802-104759-superres-constant-load`. The unmodified output is
+  black-with-alpha. Together with the exact bound-image readback, this proves
+  that the shader's native loads correctly inherit a black RGB source; it does
+  not support an NSA-coordinate, storage-write, EXEC-coverage or ALU failure.
+  The substitution was removed and is not a rendering fix.
+- **CONFIRMED -- presentation is stale while guest work advances:** in
+  `20260802-102045-present-hashes`, present samples 0, 60, 120, 180 and 240
+  were byte-identical (`0x95D803D3F5D100F6`) while the guest loaded later UI
+  and world-map assets. The visible dark PlayStation Studios image is retained
+  presentation content, not proof that the current AGC scene target is
+  nonblack.
 
 Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
 (pre-fix compare), `20260802-082506` (next VOP2 blocker),
@@ -93,7 +118,11 @@ fixed; next `RSRC1_ES` boundary), and `20260802-095253` (repeated frames after
 the Sony ES companion-register fix), `20260802-095659-cache-proof` (exact
 specialization-mismatch proof), `20260802-100034-runtime-address-base`
 (cross-frame shader reuse), and `20260802-100534-release` (clean Release
-performance and producer boundary). The focused selector
+performance and producer boundary), `20260802-102045-present-hashes` (stale
+present proof), `20260802-104324-superres-bound-images` (exact compute
+bindings), `20260802-104759-superres-constant-load` (diagnostic load
+differential), and `20260802-104933-superres-source-footprint` (channel-aware
+native readback). The focused selector
 `shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
 borrow, trap, BVH-miss, 64-bit-FF1 and dynamic-SMEM GPU semantic tests. The unfiltered
 suite currently stops earlier in the pre-existing `ImageTransitionState`
@@ -101,51 +130,55 @@ depth/stencil mip-copy test; it is not claimed green.
 
 ## Established boundary
 
-- SharpEmu captured the full-resolution HDR scene target at guest address
-  `0x514080000` with 869,977 nonblack pixels. The scene does render.
+- Historical SharpEmu captures contain nonblack full-resolution scene targets,
+  but they are controls from different runs and allocation lifetimes. They do
+  not establish the content of Prosperismo's current frame. In the current
+  frame-3 lifetime, `0x514080000` and the following `0x53AA00000` RGBA16F
+  image are byte-identical and have zero nonblack RGB pixels; their nonzero-byte
+  counts are alpha. Never use a byte count as a pixel finding.
 - The downstream 960x540 G-buffer/postprocess inputs examined at the clustered
   lighting boundary were all zero and were DCC-flagged.
 - The final tone-map pixel shader had complete scalar constants
   (`smem_zero_filled=0`) and inherited black input. It was not the first stage
   where pixels became zero.
 - Sony's `agc-registerstructs.natvis` identifies `CB_COLOR_CONTROL` mode 6 as
-  `kDccDecompress`. Dropping that operation is therefore a live correctness
-  suspect, not an unknown register interpretation.
+  `kDccDecompress`. This remains a general correctness contract, but the
+  current `0x500690F00` boundary does not implicate it: the exact expanded host
+  image selected for sampling is genuinely black in RGB.
 - The historical slow `ps=0x5008F1400` loop walked a GPU-built linked list whose
   producer had previously been absent. Performance must be remeasured after the
   producer path is present before changing control-flow semantics.
 
 ## Next falsifiable checkpoint
 
-Capture the `resize_normal` producer boundary without changing shader results:
+Move upstream from the current `0x514080000` black-RGB source, and keep early
+blank transition frames separate from the later title/world-map lifetime:
 
-1. read back full-resolution inputs `0x510D10000` and `0x5104A0000` immediately
-   before `cs=0x5006F7700`;
-2. read back outputs `0x539910000` and `0x539B90000` immediately after the
-   dispatch and its compute-write barrier;
-3. record descriptor format, tile mode, metadata identity and nonzero component
-   counts for all four images;
-4. if inputs are nonzero and outputs zero, compare this 46-instruction shader
-   byte-for-byte with Sony's ISA oracle and test its image load/store semantics;
-   if the inputs are already zero, move upstream to their writers.
+1. read back the exact `0x514080000` host image after each writer, with RGB and
+   alpha counted separately, until the first writer that should produce title
+   or world-map colour is identified;
+2. retain the guest marker/state and shader addresses for that occurrence so a
+   deliberately blank early frame is not mistaken for the persistent failure;
+3. audit the observed rect-list draw that targets `0x514080000` but is skipped
+   because the current vertex replay reports no parameter exports while its
+   pixel shader requires two inputs. This is an **OPEN lead**, not yet a root
+   cause: the submitted state includes a separate native primitive program at
+   `gs=0x500705600`, so the ordinary-ES fallback may be discarding the stage
+   that owns those exports;
+4. compare that native-primitive contract with Sony's
+   `agc_basic_geometry_shader/native_prim.pssl` and the preserved, tested NGG
+   replay implementation before admitting or replacing the draw;
+5. only after a writer produces nonblack RGB, follow its exact host-image
+   identity through `6CB800 -> 690F -> 650600` and presentation.
 
-Then capture one paired producer boundary where a known-nonblack full-resolution
-source feeds the first required half-resolution target:
+This distinguishes the currently live root-cause classes:
 
-1. record the source and destination guest descriptors, including tile mode,
-   DCC address/lifetime, pitch, mip and format;
-2. prove whether the writer draw/dispatch executes;
-3. inspect the destination host image immediately after the writer;
-4. inspect the same resource at its first sampled alias;
-5. compare address/swizzle math with Sony's `libSceAgcGpuAddress.dll` and the
-   metadata transition with the SDK compression samples.
-
-This distinguishes the two remaining root-cause classes:
-
-- the DCC decompress/fast-clear metadata operation is dropped or implemented
-  incorrectly; or
-- render-target residency/alias identity selects a fresh or incompatible host
-  image when the written surface is sampled.
+- a required full-resolution producer/native-primitive draw is skipped or
+  replayed without its output contract;
+- the producer executes but writes black because one of its inputs or shader
+  semantics is wrong; or
+- a later writer/alias transition replaces valid colour before the observed
+  `0x514080000` sample.
 
 Do this offline from retained draw state where possible, then perform one
 targeted boot only after the probe wiring and exact executable are verified.
@@ -167,8 +200,14 @@ a stock RDNA2 decode table.
 
 ## Avoided dead ends
 
-- Do not re-litigate whether Astro renders any scene pixels; the full-resolution
-  capture already answers that.
+- Do not carry a nonblack result across runs or allocation lifetimes. The
+  current native `0x514080000` image is black in RGB even though historical
+  controls at the same guest address were nonblack.
+- Do not infer colour from nonzero bytes in RGBA targets; alpha alone produced
+  the misleading 2,081,320-byte count in the current run.
+- Do not continue changing `0x500690F00`: exact bindings, constants, synthetic
+  nonblack replay, native fetch behavior, ALU, coverage and stores are now
+  separated, and its current source is genuinely black RGB.
 - Do not blame the final tone mapper without finding an earlier nonblack input.
 - Do not use a draw count, trace share or absence of ERROR-level telemetry as a
   finding.
