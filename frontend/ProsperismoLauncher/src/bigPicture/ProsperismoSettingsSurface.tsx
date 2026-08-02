@@ -1,7 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {Animated, Easing, findNodeHandle, Pressable, StyleSheet, Text, UIManager, View} from 'react-native';
+import {findNodeHandle, Pressable, StyleSheet, Text, UIManager, View} from 'react-native';
 import type {LauncherSettings} from '../core/models';
 import {SHELL_METRICS} from './shellMetrics';
+import {SHELL_SETTINGS_METRICS} from './shellSurfaces';
 import {shellTextStyle} from './shellTypography';
 
 export const PROSPERISMO_SETTINGS_CATEGORIES = [
@@ -32,13 +33,7 @@ function nextValue<T>(values: readonly T[], value: T): T {
 }
 
 function SettingsFocus({active}: {active: boolean}) {
-  const phase = useRef(new Animated.Value(active ? 1 : 0)).current;
-  useEffect(() => {
-    const animation = Animated.timing(phase, {toValue: active ? 1 : 0, duration: active ? 250 : 180, easing: Easing.out(Easing.exp), useNativeDriver: true});
-    animation.start();
-    return () => animation.stop();
-  }, [active, phase]);
-  return <Animated.View pointerEvents="none" style={[styles.focus, {opacity: phase}]} />;
+  return active ? <View pointerEvents="none" style={styles.focus} /> : null;
 }
 
 function CategoryGlyph({index}: {index: number}) {
@@ -69,7 +64,6 @@ export function ProsperismoSettingsRoot({selectedIndex, onSelect, onActivate, on
         <CategoryGlyph index={index} />
         <View style={styles.categoryCopy}>
           <Text style={styles.categoryTitle}>{name}</Text>
-          <Text numberOfLines={1} style={styles.categoryDescription}>{description}</Text>
         </View>
         <Text style={styles.chevron}>›</Text>
       </Pressable>)}
@@ -83,32 +77,34 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
   onSave(next: LauncherSettings): void;
   onBack(): void;
 }) {
+  const [activeCategory, setActiveCategory] = useState(categoryIndex);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [focusColumn, setFocusColumn] = useState<'tabs' | 'rows'>('rows');
   const refs = useRef<any[]>([]);
-  const category = PROSPERISMO_SETTINGS_CATEGORIES[categoryIndex] ?? PROSPERISMO_SETTINGS_CATEGORIES[0];
+  const category = PROSPERISMO_SETTINGS_CATEGORIES[activeCategory] ?? PROSPERISMO_SETTINGS_CATEGORIES[0];
   const updateGlobal = <K extends keyof LauncherSettings['global']>(key: K, value: LauncherSettings['global'][K]) => onSave({...settings, global: {...settings.global, [key]: value}});
-  const rows: SettingRow[] = categoryIndex === 0 ? [
+  const rows: SettingRow[] = activeCategory === 0 ? [
     {label: 'Game folders', value: `${settings.gameDirectories.length} configured`},
     {label: 'Library sort', value: settings.library.sortField, onPress: () => onSave({...settings, library: {...settings.library, sortField: nextValue(LIBRARY_SORT_FIELDS, settings.library.sortField)}})},
     {label: 'Sort direction', value: settings.library.sortDirection, onPress: () => onSave({...settings, library: {...settings.library, sortDirection: settings.library.sortDirection === 'ascending' ? 'descending' : 'ascending'}})},
-  ] : categoryIndex === 1 ? [
+  ] : activeCategory === 1 ? [
     {label: 'Resolution', value: settings.global.screenResolution, onPress: () => updateGlobal('screenResolution', settings.global.screenResolution === '1280x720' ? '1920x1080' : '1280x720')},
     {label: 'Vblank frequency', value: `${settings.global.vblankFrequency} Hz`, onPress: () => updateGlobal('vblankFrequency', settings.global.vblankFrequency === 60 ? 120 : 60)},
     {label: 'Vulkan validation', value: settings.global.vulkanValidation ? 'On' : 'Off', onPress: () => updateGlobal('vulkanValidation', !settings.global.vulkanValidation)},
     {label: 'RenderDoc', value: settings.global.renderDoc ? 'On' : 'Off', onPress: () => updateGlobal('renderDoc', !settings.global.renderDoc)},
-  ] : categoryIndex === 2 ? [
+  ] : activeCategory === 2 ? [
     {label: 'Controller mapping', value: 'Windows host'},
     {label: 'Keyboard input', value: 'Windows host'},
-  ] : categoryIndex === 3 ? [
+  ] : activeCategory === 3 ? [
     {label: 'Shader optimization', value: settings.global.shaderOptimization, onPress: () => updateGlobal('shaderOptimization', nextValue(SHADER_OPTIMIZATIONS, settings.global.shaderOptimization))},
     {label: 'Shader validation', value: settings.global.shaderValidation ? 'On' : 'Off', onPress: () => updateGlobal('shaderValidation', !settings.global.shaderValidation)},
     {label: 'NGG rectlist draw', value: settings.global.nggRectlistDraw ? 'On' : 'Off', onPress: () => updateGlobal('nggRectlistDraw', !settings.global.nggRectlistDraw)},
-  ] : categoryIndex === 4 ? [
+  ] : activeCategory === 4 ? [
     {label: 'Shader log direction', value: settings.global.shaderLogDirection, onPress: () => updateGlobal('shaderLogDirection', nextValue(['Silent', 'Console', 'File'] as const, settings.global.shaderLogDirection))},
     {label: 'Shader log folder', value: settings.global.shaderLogFolder},
     {label: 'Buffer dump', value: settings.global.commandBufferDump ? 'On' : 'Off', onPress: () => updateGlobal('commandBufferDump', !settings.global.commandBufferDump)},
     {label: 'Printf output', value: settings.global.printfDirection, onPress: () => updateGlobal('printfDirection', nextValue(['Silent', 'Console', 'File'] as const, settings.global.printfDirection))},
-  ] : categoryIndex === 5 ? [
+  ] : activeCategory === 5 ? [
     {label: 'Patch titles', value: `${Object.keys(settings.patchSelections).length} configured`},
     {label: 'Compatibility profiles', value: `${Object.keys(settings.compatibility).length} imported`},
   ] : [
@@ -116,6 +112,9 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
     {label: 'Presentation', value: 'Firmware-derived contracts'},
   ];
   useEffect(() => {
+    setActiveCategory(categoryIndex);
+    setFocusedIndex(0);
+    setFocusColumn('rows');
     focusNative(refs.current[0]);
   }, [categoryIndex]);
   const onKeyDown = (event: any) => {
@@ -125,18 +124,44 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
       event.stopPropagation?.();
       return;
     }
+    if ((key === 'ArrowLeft' || key === 'GamepadDPadLeft') && focusColumn === 'rows') {
+      setFocusColumn('tabs');
+      event.stopPropagation?.();
+      return;
+    }
+    if ((key === 'ArrowRight' || key === 'GamepadDPadRight') && focusColumn === 'tabs') {
+      setFocusColumn('rows');
+      focusNative(refs.current[focusedIndex]);
+      event.stopPropagation?.();
+      return;
+    }
     if (key === 'ArrowDown' || key === 'GamepadDPadDown' || key === 'ArrowUp' || key === 'GamepadDPadUp') {
       const delta = key === 'ArrowDown' || key === 'GamepadDPadDown' ? 1 : -1;
-      const next = Math.max(0, Math.min(rows.length - 1, focusedIndex + delta));
-      setFocusedIndex(next);
-      focusNative(refs.current[next]);
+      if (focusColumn === 'tabs') {
+        setActiveCategory(index => Math.max(0, Math.min(PROSPERISMO_SETTINGS_CATEGORIES.length - 1, index + delta)));
+        setFocusedIndex(0);
+      } else {
+        const next = Math.max(0, Math.min(rows.length - 1, focusedIndex + delta));
+        setFocusedIndex(next);
+        focusNative(refs.current[next]);
+      }
       event.stopPropagation?.();
     }
   };
   return <View style={styles.stage} {...({onKeyDownCapture: onKeyDown} as any)}>
     <Pressable accessibilityRole="button" onPress={onBack} style={styles.backTarget}><Text style={styles.backText}>‹ Settings</Text></Pressable>
     <Text style={styles.detailTitle}>{category[0]}</Text>
-    <Text style={styles.detailDescription}>{category[1]}</Text>
+    <View style={styles.detailTabs}>
+      {PROSPERISMO_SETTINGS_CATEGORIES.map(([label], index) => <Pressable
+        accessibilityRole="tab"
+        key={label}
+        onFocus={() => { setFocusColumn('tabs'); setActiveCategory(index); setFocusedIndex(0); }}
+        onPress={() => { setActiveCategory(index); setFocusedIndex(0); setFocusColumn('rows'); }}
+        style={styles.detailTab}>
+        {focusColumn === 'tabs' && activeCategory === index && <SettingsFocus active />}
+        <Text style={[styles.detailTabText, activeCategory !== index && styles.detailTabTextDim]}>{label}</Text>
+      </Pressable>)}
+    </View>
     <View style={styles.detailList}>
       {rows.map((row, index) => <Pressable
         ref={node => { refs.current[index] = node; }}
@@ -145,7 +170,7 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
         onFocus={() => setFocusedIndex(index)}
         onPress={row.onPress}
         style={styles.detailRow}>
-        <SettingsFocus active={focusedIndex === index} />
+        <SettingsFocus active={focusColumn === 'rows' && focusedIndex === index} />
         <Text style={styles.detailLabel}>{row.label}</Text>
         <Text numberOfLines={1} style={styles.detailValue}>{row.value}</Text>
       </Pressable>)}
@@ -155,14 +180,18 @@ export function ProsperismoSettingsDetail({categoryIndex, settings, onSave, onBa
 
 const styles = StyleSheet.create({
   stage: {position: 'absolute', inset: 0},
-  pageTitle: {position: 'absolute', left: 304, top: 80, color: '#fff', ...shellTextStyle('SizeXLarge')},
-  categoryList: {position: 'absolute', left: 304, top: 186, width: 1312, height: 894},
-  categoryRow: {height: 112, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center'},
-  focus: {position: 'absolute', left: 0, top: 3, right: 0, bottom: 5, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)', borderRadius: 16},
-  categoryGlyph: {width: 48, height: 48, marginRight: 20, alignItems: 'center', justifyContent: 'center'},
+  pageTitle: {position: 'absolute', left: 96, top: 82, color: '#fff', ...shellTextStyle('SizeLarge')},
+  categoryList: {position: 'absolute', left: SHELL_SETTINGS_METRICS.listLeft, top: SHELL_SETTINGS_METRICS.listTop, width: SHELL_SETTINGS_METRICS.listWidth, height: SHELL_SETTINGS_METRICS.listHeight},
+  categoryRow: {height: SHELL_SETTINGS_METRICS.capturedRowPitch, paddingLeft: SHELL_SETTINGS_METRICS.titleMarginLeft, paddingRight: SHELL_SETTINGS_METRICS.titleMarginRight, flexDirection: 'row', alignItems: 'center'},
+  focus: {position: 'absolute', left: SHELL_SETTINGS_METRICS.focusMargin, top: SHELL_SETTINGS_METRICS.focusMargin, right: SHELL_SETTINGS_METRICS.focusMargin, bottom: SHELL_SETTINGS_METRICS.focusMargin, borderWidth: SHELL_METRICS.focusLineWidth, borderColor: 'rgba(255,255,255,0.94)', borderRadius: 16},
+  categoryGlyph: {width: SHELL_SETTINGS_METRICS.iconSize, height: SHELL_SETTINGS_METRICS.iconSize, marginRight: SHELL_SETTINGS_METRICS.imageMarginRight, alignItems: 'center', justifyContent: 'center'},
   glyphMark: {width: 28, height: 28, borderWidth: 3, borderColor: '#fff'}, glyphRound: {borderRadius: 14}, glyphDiamond: {transform: [{rotate: '45deg'}]}, glyphInner: {position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff'},
   categoryCopy: {flex: 1}, categoryTitle: {color: '#fff', ...shellTextStyle('SizeNormal')}, categoryDescription: {marginTop: 5, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size3XSmall')}, chevron: {width: 52, color: '#fff', textAlign: 'center', ...shellTextStyle('SizeXLarge')},
-  backTarget: {position: 'absolute', left: 304, top: 62, paddingVertical: 10, paddingRight: 28}, backText: {color: 'rgba(255,255,255,0.72)', ...shellTextStyle('Size2XSmall')},
-  detailTitle: {position: 'absolute', left: 304, top: 112, color: '#fff', ...shellTextStyle('SizeXLarge')}, detailDescription: {position: 'absolute', left: 304, top: 166, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size2XSmall')},
-  detailList: {position: 'absolute', left: 304, top: 224, width: 1312}, detailRow: {height: 96, borderRadius: 16, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', ...shellTextStyle('SizeSmall')}, detailValue: {maxWidth: 540, color: 'rgba(255,255,255,0.72)', textAlign: 'right', ...shellTextStyle('SizeXSmall')},
+  backTarget: {position: 'absolute', left: 96, top: 38, paddingVertical: 10, paddingRight: 28}, backText: {color: 'rgba(255,255,255,0.72)', ...shellTextStyle('Size2XSmall')},
+  detailTitle: {position: 'absolute', left: 96, top: 82, color: '#fff', ...shellTextStyle('SizeLarge')}, detailDescription: {position: 'absolute', left: 304, top: 166, color: 'rgba(255,255,255,0.7)', ...shellTextStyle('Size2XSmall')},
+  detailTabs: {position: 'absolute', left: SHELL_SETTINGS_METRICS.tabLeft, top: SHELL_SETTINGS_METRICS.tabTop, width: SHELL_SETTINGS_METRICS.tabWidth, height: SHELL_SETTINGS_METRICS.tabPanelHeight},
+  detailTab: {height: SHELL_SETTINGS_METRICS.capturedTabPitch, paddingHorizontal: 20, justifyContent: 'center'},
+  detailTabText: {color: '#fff', ...shellTextStyle('SizeNormal')}, detailTabTextDim: {opacity: 0.7},
+  detailList: {position: 'absolute', left: SHELL_SETTINGS_METRICS.tabLeft + SHELL_SETTINGS_METRICS.tabWidth + SHELL_SETTINGS_METRICS.tabPanelLeft, top: SHELL_SETTINGS_METRICS.tabTop, width: SHELL_SETTINGS_METRICS.tabPanelWidth, height: SHELL_SETTINGS_METRICS.tabPanelHeight, overflow: 'hidden'},
+  detailRow: {height: SHELL_SETTINGS_METRICS.detailRowPitch, borderRadius: 16, paddingLeft: 16, paddingRight: 48, flexDirection: 'row', alignItems: 'center'}, detailLabel: {flex: 1, color: '#fff', ...shellTextStyle('SizeSmall')}, detailValue: {maxWidth: 540, marginRight: 16, opacity: SHELL_SETTINGS_METRICS.longTextValueOpacity, color: '#fff', textAlign: 'right', ...shellTextStyle('SizeXSmall')},
 });

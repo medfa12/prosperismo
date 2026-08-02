@@ -90,3 +90,29 @@ This module closes the plate math, not the entire FirstWave stack. The animated
 folded mesh still requires `fw_flow_vl/h/dv`, OIT composition, blur, and FXAA.
 Do not describe the result as the complete native background until those passes
 are translated and visually validated.
+
+## React Native Windows ownership
+
+`ShellBackgroundSurface.tsx` is the persistent React owner. It checks RNW's
+`hasViewManagerConfig` before evaluating the code-generated native component,
+so a missing Fabric registration cannot replace the shell with a white client.
+The native implementation similarly uses `try_as` for every optional
+Composition interface and becomes a transparent no-op if the required bridge
+is unavailable.
+
+The native view is mounted at one stable location beneath every Big Picture
+route. Its presentation contract is deliberately only two states:
+
+| Shell state | Layer mask | Native result |
+| --- | ---: | --- |
+| unobscured Home | `3` | FirstWave plate plus additive particle stream |
+| Settings, Library, or any modal | `1` | persistent FirstWave plate; particles hidden |
+
+Selected-title artwork is a separate low-opacity image layer with the recovered
+633.333ms linear handoff. It does not replace or recolour the native plate.
+When the development producer is launched, its runtime particle inputs resolve
+from `C:\prosperismo\ps5oracle`: the 4.03 firmware reconstruction supplies the
+two BGLayer GNF textures and the oracle draw cache supplies the recovered
+descriptors/buffers. None is copied into this repository or application
+package. Automatic packaged-producer lifecycle remains a separate deployment
+task; absence of that helper leaves the translated FirstWave plate running.

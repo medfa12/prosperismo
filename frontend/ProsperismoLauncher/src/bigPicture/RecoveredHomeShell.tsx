@@ -1,28 +1,43 @@
-import React from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
   Image,
   type ImageSourcePropType,
   Pressable,
   StyleSheet,
   Text,
+  type ViewStyle,
   View,
 } from 'react-native';
 import type {GameInstall} from '../core/models';
+import {
+  focusAreaOpacityScale,
+  HOME_GEOMETRY,
+  HOME_SPRINGS,
+  HomeStartupChoreography,
+  homeTileLeft,
+  homeTileMatOpacity,
+  homeTileRadius,
+  ShellFocusTimeline,
+  ShellSpring,
+  type ShellFocusSnapshot,
+  type ShellRect,
+} from './shellHomeMotion';
+import {focusColorAt} from './shellFocusShader';
 import type {ShellFocusRegion, ShellSpace} from './shellState';
 
-const DESIGN_WIDTH = 1920;
-const DESIGN_HEIGHT = 1080;
-const SYSTEM_HEIGHT = 126;
-const CONTENT_INSET = 84;
-const SELECTED_TILE_LEFT = 172;
-const SELECTED_TILE_SIZE = 168;
-const IDLE_TILE_SIZE = 106;
+const DESIGN_WIDTH = HOME_GEOMETRY.designWidth;
+const DESIGN_HEIGHT = HOME_GEOMETRY.designHeight;
+const SYSTEM_HEIGHT = HOME_GEOMETRY.systemHeight;
+const CONTENT_INSET = HOME_GEOMETRY.contentInset;
+const SELECTED_TILE_LEFT = HOME_GEOMETRY.focusedTileLeft;
+const SELECTED_TILE_SIZE = HOME_GEOMETRY.focusedTileSize;
+const IDLE_TILE_SIZE = HOME_GEOMETRY.tileSize;
 const IDLE_TILE_TOP = SYSTEM_HEIGHT + (SELECTED_TILE_SIZE - IDLE_TILE_SIZE) / 2;
-const SELECTED_TILE_RADIUS = (SELECTED_TILE_SIZE / IDLE_TILE_SIZE) * 16;
-const TITLE_LEFT = 356;
+const SELECTED_TILE_RADIUS = homeTileRadius(SELECTED_TILE_SIZE);
+const TITLE_LEFT = HOME_GEOMETRY.titleX;
 const TITLE_TOP = SYSTEM_HEIGHT + IDLE_TILE_SIZE;
-const SYSTEM_ICON_SIZE = 56;
-const SYSTEM_ICON_PITCH = 104;
+const SYSTEM_ICON_SIZE = HOME_GEOMETRY.systemIconSize;
+const SYSTEM_ICON_PITCH = HOME_GEOMETRY.systemIconSize + HOME_GEOMETRY.systemIconMargin;
 const SYSTEM_ICON_COUNT = 3;
 const CLOCK_MARGIN_LEFT = 88;
 const CLOCK_WIDTH = 120;
@@ -32,6 +47,13 @@ const SYSTEM_GROUP_WIDTH =
   + CLOCK_MARGIN_LEFT
   + CLOCK_WIDTH;
 const SYSTEM_GROUP_LEFT = DESIGN_WIDTH - CONTENT_INSET - SYSTEM_GROUP_WIDTH;
+const FOCUS_EXTERIOR = 6;
+
+interface TileMotion {
+  left: ShellSpring;
+  side: ShellSpring;
+  released: boolean;
+}
 
 type SystemAction = 'search' | 'settings' | 'profile';
 
@@ -62,6 +84,8 @@ export interface RecoveredHomeShellProps {
   onSelectSystem(index: number): void;
   onActivateSystem(action: SystemAction): void;
   onOpenLibrary(): void;
+  onFocusLibrary(): void;
+  libraryRef: React.MutableRefObject<any>;
   spaceRefs: React.MutableRefObject<any[]>;
   strandRefs: React.MutableRefObject<any[]>;
   systemRefs: React.MutableRefObject<any[]>;
@@ -121,6 +145,77 @@ function SystemGlyph({action, focused, settingsIconPath, searchIconPath}: {
   return <ProfileGlyph dark={focused} />;
 }
 
+function homeFocusTarget(
+  region: ShellFocusRegion,
+  selectedSpace: ShellSpace,
+  systemIndex: number,
+  hasGames: boolean,
+): {rect: ShellRect; radius: number} | undefined {
+  if (region === 'strand' && hasGames) {
+    return {
+      rect: {x: SELECTED_TILE_LEFT, y: SYSTEM_HEIGHT, width: SELECTED_TILE_SIZE, height: SELECTED_TILE_SIZE},
+      radius: SELECTED_TILE_RADIUS,
+    };
+  }
+  if (region === 'library-shortcut') {
+    return {
+      rect: {x: 1602, y: IDLE_TILE_TOP, width: IDLE_TILE_SIZE, height: IDLE_TILE_SIZE},
+      radius: HOME_GEOMETRY.tileRadius,
+    };
+  }
+  if (region === 'system') {
+    const index = Math.max(0, Math.min(systemIndex, SYSTEM_ICON_COUNT - 1));
+    return {
+      rect: {
+        x: SYSTEM_GROUP_LEFT + index * SYSTEM_ICON_PITCH,
+        y: (SYSTEM_HEIGHT - SYSTEM_ICON_SIZE) / 2,
+        width: SYSTEM_ICON_SIZE,
+        height: SYSTEM_ICON_SIZE,
+      },
+      radius: SYSTEM_ICON_SIZE / 2,
+    };
+  }
+  if (region === 'spaces') {
+    // HOME's space switcher has its own named focus region. These bounds are
+    // the authored label containers (padding included), not a second card.
+    const media = selectedSpace === 'media';
+    return {
+      rect: {x: media ? 235 : 84, y: 35, width: media ? 96 : 104, height: 56},
+      radius: 8,
+    };
+  }
+  return undefined;
+}
+
+function focusRgba(snapshot: ShellFocusSnapshot): string {
+  const shimmer = Math.max(0, Math.min((snapshot.shimmer[0] + snapshot.shimmer[1] + 2) / 4, 1));
+  const color = focusColorAt(0.25 + shimmer * 0.5);
+  return `rgba(${Math.round(color.r * 255)},${Math.round(color.g * 255)},${Math.round(color.b * 255)},${snapshot.lineOpacity})`;
+}
+
+function tileFrameStyle(
+  scale: number,
+  left: number,
+  top: number,
+  side: number,
+  isSelected: boolean,
+  distance: number,
+): ViewStyle {
+  return {
+    left: left * scale,
+    top: top * scale,
+    width: side * scale,
+    height: side * scale,
+    borderRadius: homeTileRadius(side) * scale,
+    opacity: side > 0.5 ? 1 : 0,
+    zIndex: isSelected ? 1000 : 500 - distance,
+  };
+}
+
+function tileMatStyle(opacity: number): ViewStyle {
+  return {backgroundColor: `rgba(2,4,8,${opacity})`};
+}
+
 /**
  * A deliberately small port of the recovered SharpEmu HOME surface. Every
  * coordinate is authored in the firmware bundle's 1920 x 1080 design space,
@@ -149,16 +244,93 @@ export function RecoveredHomeShell({
   onSelectSystem,
   onActivateSystem,
   onOpenLibrary,
+  onFocusLibrary,
+  libraryRef,
   spaceRefs,
   strandRefs,
   systemRefs,
 }: RecoveredHomeShellProps) {
+  const visibleGames = games.slice(0, HOME_GEOMETRY.maxTiles);
+  const clampedIndex = Math.max(0, Math.min(selectedIndex, Math.max(0, visibleGames.length - 1)));
+  const selectedGame = visibleGames[clampedIndex];
+  const focusTimeline = useRef(new ShellFocusTimeline());
+  const startup = useRef(new HomeStartupChoreography());
+  const tileMotion = useRef<TileMotion[]>([]);
+  const revealElapsedMs = useRef(0);
+  const [, setMotionFrame] = useState(0);
+
+  if (tileMotion.current.length !== visibleGames.length) {
+    tileMotion.current = visibleGames.map((_, index) => {
+      const left = new ShellSpring();
+      const side = new ShellSpring();
+      left.snapTo(homeTileLeft(index, clampedIndex));
+      side.snapTo(0);
+      return {left, side, released: false};
+    });
+    revealElapsedMs.current = 0;
+    startup.current.begin(visibleGames.length);
+  }
+
+  useEffect(() => {
+    tileMotion.current.forEach((motion, index) => {
+      motion.left.springTo(homeTileLeft(index, clampedIndex), HOME_SPRINGS.strand);
+      if (motion.released) {
+        motion.side.springTo(index === clampedIndex ? SELECTED_TILE_SIZE : IDLE_TILE_SIZE, HOME_SPRINGS.strand);
+      }
+    });
+  }, [clampedIndex, visibleGames.length]);
+
+  useEffect(() => {
+    const target = homeFocusTarget(focusRegion, selectedSpace, selectedSystemIndex, visibleGames.length > 0);
+    if (target) {
+      if (focusTimeline.current.snapshot().state === 'hidden') {
+        focusTimeline.current.showAt(target.rect, target.radius);
+      } else {
+        focusTimeline.current.retarget(target.rect, target.radius);
+      }
+    } else {
+      focusTimeline.current.hide();
+    }
+  }, [focusRegion, selectedSpace, selectedSystemIndex, visibleGames.length]);
+
+  useEffect(() => {
+    let active = true;
+    let frameHandle = 0;
+    let previous = Date.now();
+    const tick = () => {
+      if (!active) {
+        return;
+      }
+      const now = Date.now();
+      const deltaMs = Math.max(0, Math.min(now - previous, 64));
+      previous = now;
+      revealElapsedMs.current += deltaMs;
+      startup.current.advance(deltaMs);
+      tileMotion.current.forEach((motion, index) => {
+        if (!motion.released && revealElapsedMs.current >= index * HomeStartupChoreography.tileStaggerMs) {
+          motion.released = true;
+          motion.side.springTo(index === clampedIndex ? SELECTED_TILE_SIZE : IDLE_TILE_SIZE, HOME_SPRINGS.slower);
+        }
+        motion.left.advance(deltaMs / 1000);
+        motion.side.advance(deltaMs / 1000);
+      });
+      focusTimeline.current.advance(deltaMs / 1000);
+      setMotionFrame(value => value + 1);
+      frameHandle = requestAnimationFrame(tick);
+    };
+    frameHandle = requestAnimationFrame(tick);
+    return () => {
+      active = false;
+      cancelAnimationFrame(frameHandle);
+    };
+  }, [clampedIndex]);
+
   const scale = Math.max(0.01, Math.min(viewportWidth / DESIGN_WIDTH, viewportHeight / DESIGN_HEIGHT));
   const s = (value: number) => value * scale;
   const stageWidth = s(DESIGN_WIDTH);
   const stageHeight = s(DESIGN_HEIGHT);
   const stageStyles = StyleSheet.create({
-    stage: {width: stageWidth, height: stageHeight, backgroundColor: '#020408', overflow: 'hidden'},
+    stage: {width: stageWidth, height: stageHeight, backgroundColor: 'transparent', overflow: 'hidden'},
     background: {position: 'absolute', left: 0, top: 0, width: stageWidth, height: stageHeight, resizeMode: 'cover', opacity: 0.18},
     topBand: {position: 'absolute', left: 0, top: 0, width: stageWidth, height: s(SYSTEM_HEIGHT)},
     spaces: {position: 'absolute', left: s(CONTENT_INSET), top: s(43), flexDirection: 'row'},
@@ -169,14 +341,15 @@ export function RecoveredHomeShell({
     systemButton: {position: 'absolute', top: s(35), width: s(SYSTEM_ICON_SIZE), height: s(SYSTEM_ICON_SIZE), borderRadius: s(28), alignItems: 'center', justifyContent: 'center'},
     systemButtonFocused: {backgroundColor: '#FFFFFF'},
     clock: {position: 'absolute', left: s(SYSTEM_GROUP_LEFT + SYSTEM_ICON_COUNT * SYSTEM_ICON_PITCH - (SYSTEM_ICON_PITCH - SYSTEM_ICON_SIZE) + CLOCK_MARGIN_LEFT), top: s(43), width: s(CLOCK_WIDTH), color: '#FFFFFF', fontFamily: 'Fira Sans', fontSize: s(28), textAlign: 'right'},
-    selectedTile: {position: 'absolute', left: s(SELECTED_TILE_LEFT), top: s(SYSTEM_HEIGHT), width: s(SELECTED_TILE_SIZE), height: s(SELECTED_TILE_SIZE), borderRadius: s(SELECTED_TILE_RADIUS), overflow: 'hidden', backgroundColor: '#292929'},
-    idleTile: {position: 'absolute', top: s(IDLE_TILE_TOP), width: s(IDLE_TILE_SIZE), height: s(IDLE_TILE_SIZE), borderRadius: s(16), overflow: 'hidden', backgroundColor: '#292929'},
+    tile: {position: 'absolute', overflow: 'hidden', backgroundColor: '#292929'},
     tileImage: {width: '100%', height: '100%', resizeMode: 'cover'},
     tileFallback: {width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#353535'},
     selectedMonogram: {fontFamily: 'Fira Sans', fontSize: s(58), fontWeight: '700', color: '#FFFFFF'},
     idleMonogram: {fontFamily: 'Fira Sans', fontSize: s(40), fontWeight: '700', color: '#FFFFFF'},
-    cardFocus: {position: 'absolute', left: s(SELECTED_TILE_LEFT - 6), top: s(SYSTEM_HEIGHT - 6), width: s(SELECTED_TILE_SIZE + 12), height: s(SELECTED_TILE_SIZE + 12), borderRadius: s(SELECTED_TILE_RADIUS + 3), borderWidth: Math.max(1, s(3)), borderColor: 'rgba(255,255,255,0.92)'},
-    cardWash: {position: 'absolute', left: s(SELECTED_TILE_LEFT), top: s(SYSTEM_HEIGHT), width: s(SELECTED_TILE_SIZE), height: s(SELECTED_TILE_SIZE), borderRadius: s(SELECTED_TILE_RADIUS), backgroundColor: 'rgba(255,255,255,0.10)'},
+    focusLine: {position: 'absolute', borderStyle: 'solid'},
+    focusWash: {position: 'absolute', overflow: 'hidden'},
+    focusShimmer: {position: 'absolute', left: '-18%', top: '-18%', width: '136%', height: '136%', backgroundColor: '#FFFFFF', transform: [{rotate: '-18deg'}]},
+    tileMat: {position: 'absolute', left: 0, top: 0, right: 0, bottom: 0},
     titleBlock: {position: 'absolute', left: s(TITLE_LEFT), top: s(TITLE_TOP), width: s(560), height: s(62), justifyContent: 'center'},
     title: {fontFamily: 'Fira Sans', color: '#FFFFFF', fontSize: s(30), fontWeight: '600'},
     metadata: {fontFamily: 'Fira Sans', marginTop: s(6), color: 'rgba(255,255,255,0.7)', fontSize: s(18)},
@@ -187,17 +360,24 @@ export function RecoveredHomeShell({
     emptyHint: {position: 'absolute', left: s(172), top: s(208), color: 'rgba(255,255,255,0.7)', fontFamily: 'Fira Sans', fontSize: s(18)},
   });
 
-  const visibleGames = games.slice(0, 11);
-  const clampedIndex = Math.max(0, Math.min(selectedIndex, Math.max(0, visibleGames.length - 1)));
-  const selectedGame = visibleGames[clampedIndex];
   const background = fileSource(backgroundPath);
   const libraryIcon = fileSource(libraryIconPath);
   const genericGameIcon = fileSource(genericGameIconPath);
+  const entrance = startup.current;
+  const focus = focusTimeline.current.snapshot();
+  const focusScale = focus.inOutScale;
+  const focusWidth = focus.rect.width * focusScale;
+  const focusHeight = focus.rect.height * focusScale;
+  const focusX = focus.rect.x - (focusWidth - focus.rect.width) / 2;
+  const focusY = focus.rect.y - (focusHeight - focus.rect.height) / 2;
+  const focusExterior = FOCUS_EXTERIOR + Math.max(0, (focus.bandWidth - 3) / 2);
+  const washScale = focusAreaOpacityScale(focus.rect, {width: DESIGN_WIDTH, height: DESIGN_HEIGHT});
+  const shimmerOpacity = Math.max(0, Math.min(0.08 + ((focus.shimmer[0] + 1) * 0.045), 0.17));
 
   return <View style={stageStyles.stage}>
     {background && <Image source={background} style={stageStyles.background} />}
 
-    <View style={stageStyles.topBand}>
+    <View style={[stageStyles.topBand, {top: s(entrance.systemTranslateY), opacity: entrance.systemAlpha}]}>
       <View style={stageStyles.spaces}>{(['games', 'media'] as const).map((space, index) => {
         const selected = selectedSpace === space;
         const focused = focusRegion === 'spaces' && selected;
@@ -237,14 +417,12 @@ export function RecoveredHomeShell({
 
     {selectedGame ? <>
       {visibleGames.map((game, index) => {
-        const relativeIndex = index - clampedIndex;
-        if (relativeIndex < 0) {
-          return null;
-        }
         const isSelected = index === clampedIndex;
-        const left = isSelected
-          ? s(SELECTED_TILE_LEFT)
-          : s(SELECTED_TILE_LEFT + SELECTED_TILE_SIZE + 16 + (relativeIndex - 1) * (IDLE_TILE_SIZE + 8));
+        const motion = tileMotion.current[index];
+        const side = Math.max(0, motion?.side.value ?? (isSelected ? SELECTED_TILE_SIZE : IDLE_TILE_SIZE));
+        const left = (motion?.left.value ?? homeTileLeft(index, clampedIndex)) + entrance.switcherTranslateX;
+        const top = SYSTEM_HEIGHT + (SELECTED_TILE_SIZE - side) / 2 + entrance.switcherTranslateY;
+        const matOpacity = homeTileMatOpacity(index, clampedIndex);
         return <Pressable
           accessibilityLabel={`${game.titleName}, ${index + 1} of ${visibleGames.length}`}
           accessibilityRole="button"
@@ -253,19 +431,29 @@ export function RecoveredHomeShell({
           onLongPress={() => onOptions(game)}
           onPress={() => onLaunch(game)}
           ref={node => { strandRefs.current[index] = node; }}
-          style={[isSelected ? stageStyles.selectedTile : stageStyles.idleTile, !isSelected && {left}]}>
+          style={[
+            stageStyles.tile,
+            tileFrameStyle(scale, left, top, side, isSelected, Math.abs(index - clampedIndex)),
+          ]}>
           {game.artworkPath
             ? <Image source={fileSource(game.artworkPath)} style={stageStyles.tileImage} />
             : genericGameIcon
               ? <Image source={genericGameIcon} style={stageStyles.tileImage} />
               : <View style={stageStyles.tileFallback}><Text style={isSelected ? stageStyles.selectedMonogram : stageStyles.idleMonogram}>{game.titleName.slice(0, 1).toUpperCase()}</Text></View>}
+          {matOpacity > 0 && <View
+            pointerEvents="none"
+            style={[stageStyles.tileMat, tileMatStyle(matOpacity)]}
+          />}
         </Pressable>;
       })}
-      {focusRegion === 'strand' && <>
-        <View pointerEvents="none" style={stageStyles.cardWash} />
-        <View pointerEvents="none" style={stageStyles.cardFocus} />
-      </>}
-      <View style={stageStyles.titleBlock}>
+      <View style={[
+        stageStyles.titleBlock,
+        {
+          left: s(TITLE_LEFT + entrance.switcherTranslateX),
+          top: s(TITLE_TOP + entrance.switcherTranslateY),
+          opacity: entrance.titleAlpha * (focusRegion === 'strand' ? 1 : 0.7),
+        },
+      ]}>
         <Text numberOfLines={1} style={stageStyles.title}>{selectedGame.titleName}</Text>
         <Text numberOfLines={1} style={stageStyles.metadata}>
           {selectedGame.titleId || 'Local title'}  ·  {selectedGame.gameVersion || 'Unknown version'}
@@ -276,11 +464,57 @@ export function RecoveredHomeShell({
       <Text style={stageStyles.emptyHint}>Add a game folder from Desktop mode, then return to Big Picture.</Text>
     </>}
 
-    <Pressable accessibilityLabel="Game Library" accessibilityRole="button" onPress={onOpenLibrary} style={stageStyles.library}>
+    <Pressable
+      accessibilityLabel="Game Library"
+      accessibilityRole="button"
+      onFocus={onFocusLibrary}
+      onPress={onOpenLibrary}
+      ref={node => { libraryRef.current = node; }}
+      style={[
+        stageStyles.library,
+        {
+          left: s(1602 + entrance.switcherTranslateX),
+          top: s(IDLE_TILE_TOP + entrance.switcherTranslateY),
+        },
+      ]}>
       {libraryIcon
         ? <Image source={libraryIcon} style={stageStyles.libraryIcon} />
         : <Text style={stageStyles.libraryFallback}>▦</Text>}
     </Pressable>
+
+    {focus.state !== 'hidden' && <>
+      {(focusRegion === 'strand' || focusRegion === 'library-shortcut') && focus.areaOpacity > 0 && <View
+        pointerEvents="none"
+        style={[
+          stageStyles.focusWash,
+          {
+            left: s(focusX + entrance.switcherTranslateX),
+            top: s(focusY + entrance.switcherTranslateY),
+            width: s(focusWidth),
+            height: s(focusHeight),
+            borderRadius: s(focus.radius * focusScale),
+            opacity: focus.areaOpacity * washScale,
+          },
+        ]}>
+        <View style={[stageStyles.focusShimmer, {opacity: shimmerOpacity}]} />
+      </View>}
+      <View
+        pointerEvents="none"
+        style={[
+          stageStyles.focusLine,
+          {
+            left: s(focusX - focusExterior + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateX : 0)),
+            top: s(focusY - focusExterior + ((focusRegion === 'strand' || focusRegion === 'library-shortcut') ? entrance.switcherTranslateY : 0)),
+            width: s(focusWidth + focusExterior * 2),
+            height: s(focusHeight + focusExterior * 2),
+            borderRadius: s(focus.radius * focusScale + focusExterior),
+            borderWidth: Math.max(1, s(focus.bandWidth)),
+            borderColor: focusRgba(focus),
+            opacity: focus.lineOpacity,
+          },
+        ]}
+      />
+    </>}
   </View>;
 }
 

@@ -18,6 +18,21 @@ dotnet run --project .\tools\Prosperismo.NativeBackgroundProducer `
   --firmware-root C:\path\to\PS5_4.03_reconstructed
 ```
 
+For the canonical migrated workspace the corresponding runtime inputs are:
+
+```powershell
+C:\dotnet\dotnet.exe `
+  .\tools\Prosperismo.NativeBackgroundProducer\bin\Release\net10.0\Prosperismo.NativeBackgroundProducer.dll `
+  --cache-root C:\prosperismo\ps5oracle\evidence\shell-rendering\native-small-bottom\draw-cache `
+  --firmware-root C:\prosperismo\ps5oracle\sony\PS5_4.03_reconstructed
+```
+
+The explicit `C:\dotnet\dotnet.exe` matters on the current development machine:
+the system-wide host exposes .NET 8 while this helper targets .NET 10. The
+launcher still discovers the oracle from `PROSPERISMO_PS5_ORACLE` first and
+then the canonical sibling `C:\prosperismo\ps5oracle`; no asset path is compiled
+into the executable.
+
 Add `--frame-limit 2` for a bounded renderer/protocol smoke test.
 
 The producer publishes only the blue ripple/dust **overlay**. It subtracts the

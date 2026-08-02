@@ -71,16 +71,15 @@ It currently provides:
   `shell-shot-bottom-shared-native-5` proof remain fallbacks; two of the latter
   proof's three samples are byte-identical.
   The frames are not copied into source control or the application package.
-  The recovery HOME slice does not mount this bridge yet: it first proves a
-  stable React visual tree with the dark plate and selected-title art, then the
-  native base/particle owner can be reintroduced behind that tree without
-  reviving the white-client regression;
+  The recovery HOME slice no longer plays those PNGs in product. They remain
+  oracle evidence and a fallback diagnostic for the live producer;
 - a code-generated React Native Windows Fabric/Composition surface and a
-  versioned two-slot BGRA shared-memory protocol are prepared for the live
-  renderer helper. The surface is deliberately not mounted in the product tree
-  until that producer is connected and its lifecycle handshake passes. The
-  currently visible animation is the recovered 51-frame renderer sequence
-  above, not a claim of continuous shader execution;
+  versioned two-slot BGRA shared-memory protocol connect the live renderer
+  helper. `ShellBackgroundSurface` is mounted once, below the React shell, and
+  is retained while Home, Library, Settings, search, profile, options, and
+  dialogs change. It evaluates the translated 12.40 `fw_background_p` plate at
+  30fps. The producer contributes only the recovered additive particle layer;
+  no oracle image, shader, texture, or draw cache is copied into the package;
 - a local-only firmware-icon bridge for the exact `emoji_settings`,
   `emoji_game_and_apps`, `emoji_system`, `emoji_game`, and `iconid_search`
   payloads extracted from the
@@ -101,12 +100,13 @@ It currently provides:
   UI dispatcher; changing the AppWindow presenter on the module thread can
   detach the Win32 React island and leave a responsive white client area.
 
-The React Native layer deliberately does **not** claim to execute proprietary
-PUI focus shaders, native particle programs, or a guest shell application. It
-uses only the settled geometry, colors, timing, and state contracts that the
-oracle exposes. The title/background composition is a state-responsive
-crossfade; native background execution remains a separate emulator-renderer
-integration task and must not be replaced with invented ambient motion.
+The React Native layer deliberately does **not** claim to execute a guest shell
+application or the still-untranslated PUI focus shaders. It uses the settled
+geometry, colors, timing, and state contracts exposed by the oracle. The native
+surface now executes the translated FirstWave pixel pass, and the optional
+out-of-process renderer executes the recovered particle shader/resources from
+the user's oracle. The remaining FirstWave mesh/OIT/blur/FXAA passes are still a
+recovery boundary and must not be replaced with invented ambient motion.
 
 ## Recovery checkpoint (2026-08-02)
 
@@ -122,7 +122,11 @@ The Release executable builds and starts the Big Picture component without a
 React error after replacing the unsupported focus call. Native React logging
 is persisted to `%LOCALAPPDATA%\Prosperismo\launcher-startup.log`, and the root
 error boundary prevents future module/render faults from degrading to an
-unexplained white surface. A screenshot comparison is still required before
+unexplained white surface. The native background is guarded twice: JavaScript
+loads its code-generated component only when RNW reports the Fabric registration,
+and the C++ view uses non-throwing composition-interface discovery. Missing or
+incompatible native support therefore leaves the ordinary React tree visible
+over the neutral basemat. A screenshot comparison is still required before
 calling this slice visually accepted.
 
 ## Next validation gate
@@ -131,8 +135,8 @@ calling this slice visually accepted.
    modal, and toast states.
 2. Compare focus line thickness, card-wash opacity, and glyph inversion timing
    to the oracle captures before changing the visual constants.
-3. Connect the native background owner through a bounded host surface only
-   after its existing emulator renderer exposes a stable frame contract.
+3. Validate Home layer mask `3` and Settings/Library/modal layer mask `1`
+   while the same native surface remains mounted across the transition.
 4. Route the settings category detail pages to Prosperismo data; never expose
    a console settings hierarchy in the product shell.
 

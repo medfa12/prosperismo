@@ -125,10 +125,19 @@ struct NativeBackgroundViewState
     m_readyEvent.attach(CreateEventW(nullptr, TRUE, FALSE, ReadyEventName));
     try {
       auto compositionView =
-          view.as<winrt::Microsoft::ReactNative::Composition::ViewComponentView>();
-      m_context = compositionView
-                      .as<winrt::Microsoft::ReactNative::Composition::Experimental::IInternalComponentView>()
-                      .CompositionContext();
+          view.try_as<winrt::Microsoft::ReactNative::Composition::ViewComponentView>();
+      if (!compositionView) {
+        return;
+      }
+      auto internalView = compositionView.try_as<
+          winrt::Microsoft::ReactNative::Composition::Experimental::IInternalComponentView>();
+      if (!internalView) {
+        return;
+      }
+      m_context = internalView.CompositionContext();
+      if (!m_context) {
+        return;
+      }
       m_visual = m_context.CreateSpriteVisual();
       m_visual.RelativeSizeWithOffset({0.0f, 0.0f}, {1.0f, 1.0f});
       m_visual.IsVisible(false);
@@ -169,13 +178,20 @@ struct NativeBackgroundViewState
 
   winrt::Microsoft::UI::Composition::Visual CreateVisual(
       winrt::Microsoft::ReactNative::ComponentView const &view) noexcept override {
-    if (!m_visual) {
-      return view.as<winrt::Microsoft::ReactNative::Composition::ComponentView>()
-          .Compositor()
-          .CreateSpriteVisual();
+    try {
+      if (m_visual) {
+        return winrt::Microsoft::ReactNative::Composition::Experimental::
+            MicrosoftCompositionContextHelper::InnerVisual(m_visual);
+      }
+      if (auto compositionView =
+              view.try_as<winrt::Microsoft::ReactNative::Composition::ComponentView>()) {
+        return compositionView.Compositor().CreateSpriteVisual();
+      }
+    } catch (...) {
+      // A missing composition bridge must never tear down the sibling React
+      // tree. The component remains a transparent no-op on that host.
     }
-    return winrt::Microsoft::ReactNative::Composition::Experimental::
-        MicrosoftCompositionContextHelper::InnerVisual(m_visual);
+    return nullptr;
   }
 
   void UpdateProps(

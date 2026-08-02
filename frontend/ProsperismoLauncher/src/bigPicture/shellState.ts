@@ -2,7 +2,7 @@ import type {GameInstall} from '../core/models';
 
 export type ShellSpace = 'games' | 'media';
 export type ShellSurface = 'home' | 'library' | 'settings';
-export type ShellFocusRegion = 'spaces' | 'strand' | 'system' | 'content';
+export type ShellFocusRegion = 'spaces' | 'strand' | 'library-shortcut' | 'system' | 'content';
 export type ShellDirection = 'left' | 'right' | 'up' | 'down';
 
 export interface ShellState {
@@ -56,7 +56,16 @@ export function navigateHomeFocus(
   if (state.focusRegion === 'strand') {
     if (direction === 'left' || direction === 'right') {
       const delta = direction === 'left' ? -1 : 1;
+      if (direction === 'right' && gameCount > 0 && state.selectedIndex >= gameCount - 1) {
+        return {...state, focusRegion: 'library-shortcut'};
+      }
       return {...state, selectedIndex: clamp(state.selectedIndex + delta, gameCount)};
+    }
+    return direction === 'up' ? {...state, focusRegion: 'spaces'} : state;
+  }
+  if (state.focusRegion === 'library-shortcut') {
+    if (direction === 'left' && gameCount > 0) {
+      return {...state, focusRegion: 'strand', selectedIndex: gameCount - 1};
     }
     return direction === 'up' ? {...state, focusRegion: 'spaces'} : state;
   }

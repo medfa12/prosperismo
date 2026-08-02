@@ -422,6 +422,7 @@ export default function App() {
          firmwareShellIcons={firmwareShellIcons}
          games={games}
          settings={settings}
+         onAddFolders={() => { void chooseFolders(); }}
          onSaveSettings={next => { void persist(next); }}
          onDesktop={() => switchRoute('desktop')}
          errorMessage={error}

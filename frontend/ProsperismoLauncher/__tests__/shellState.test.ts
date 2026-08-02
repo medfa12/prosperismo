@@ -70,6 +70,15 @@ describe('Sony-grounded shell state', () => {
     expect(navigateHomeFocus(lastSystem, 'right', 5, 3).systemIndex).toBe(2);
   });
 
+  it('gives the library shortcut its own terminal focus node', () => {
+    const lastGame = {...INITIAL_SHELL_STATE, selectedIndex: 4};
+    const library = navigateHomeFocus(lastGame, 'right', 5, 3);
+    expect(library.focusRegion).toBe('library-shortcut');
+    const restored = navigateHomeFocus(library, 'left', 5, 3);
+    expect(restored.focusRegion).toBe('strand');
+    expect(restored.selectedIndex).toBe(4);
+  });
+
   it('positions the single HOME focus owner on recovered card and system geometry', () => {
     expect(shellHomeFocusTarget('strand')).toMatchObject({kind: 'card', x: 166, y: 120, width: 180, height: 180});
     expect(shellHomeFocusTarget('system', 0)).toMatchObject({kind: 'system', x: 1364, y: 35, width: 56, height: 56});
