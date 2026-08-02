@@ -52,7 +52,14 @@ It currently provides:
   accepted `shell-shot-bottom-shared-native-5` sequence, Big Picture plays its
   1920x1080 recovered frames in a ping-pong sequence beneath title artwork.
   The frames are not copied into source control or the application package;
-  absence is a clean fallback, not an error;
+  absence is a clean fallback, not an error. When the sequence is present the
+  generic brand-art fallback is suppressed, so it cannot obscure the native
+  particles; selected-title `pic0` artwork still crossfades above them;
+- a local-only firmware-icon bridge for the exact `emoji_settings`,
+  `emoji_game_and_apps`, and `emoji_system` PNG payloads extracted from the
+  user's `Sce.PlayStation.PUI_UI3.rco`. The files remain under
+  `ps5oracle/evidence/shell-icons-runtime`, are never bundled or committed, and
+  retain the animated white-to-dark glyph inversion used by system focus;
 - Prosperismo-owned settings categories, an undimmed dark options popup using
   the recovered 652px/16px/190px control-menu geometry, and a transient
   in-app toast with the recovered 40px-icon and 300ms/3500ms/200ms lifecycle;

@@ -52,7 +52,7 @@ import {
   subscribeToProcessLifecycle,
 } from './src/core/process';
 import {parseTrophyPackage, type TrophySet} from './src/core/trophies';
-import {BigPictureShell} from './src/bigPicture/BigPictureShell';
+import {BigPictureShell, type FirmwareShellIconPaths} from './src/bigPicture/BigPictureShell';
 import {
   hasNativeProsperismoHost,
   prosperismoHost,
@@ -73,6 +73,12 @@ const ORACLE_NATIVE_BACKGROUND_FRAMES = [
   'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_0500ms.png',
   'C:\\prosperismo\\ps5oracle\\evidence\\shell-rendering\\shell-shot-bottom-shared-native-5\\native-background-bottom_1000ms.png',
 ] as const;
+
+const ORACLE_SHELL_ICON_PATHS: Required<FirmwareShellIconPaths> = {
+  settings: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_settings.png',
+  library: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_game_and_apps.png',
+  desktop: 'C:\\prosperismo\\ps5oracle\\evidence\\shell-icons-runtime\\Sce.PlayStation.PUI_UI3\\emoji_system.png',
+};
 
 type Route = 'desktop' | 'big-picture';
 type Inspector = 'game' | 'settings' | 'patches' | 'trophies';
@@ -355,6 +361,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [nativeBackgroundFrames, setNativeBackgroundFrames] = useState<string[]>([]);
+  const [firmwareShellIcons, setFirmwareShellIcons] = useState<FirmwareShellIconPaths>({});
   const refresh = useCallback(async (current: LauncherSettings) => {
     setBusy(true); setError(undefined);
     try { setGames(await scanGameDirectories(prosperismoHost, current.gameDirectories, current.global, current.perGame)); }
@@ -367,6 +374,18 @@ export default function App() {
     let mounted = true;
     Promise.all(ORACLE_NATIVE_BACKGROUND_FRAMES.map(path => prosperismoHost.fileExists(path)))
       .then(found => { if (mounted && found.every(Boolean)) { setNativeBackgroundFrames([...ORACLE_NATIVE_BACKGROUND_FRAMES]); } })
+      .catch(() => undefined);
+    return () => { mounted = false; };
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    const entries = Object.entries(ORACLE_SHELL_ICON_PATHS) as [keyof FirmwareShellIconPaths, string][];
+    Promise.all(entries.map(async ([key, path]) => [key, path, await prosperismoHost.fileExists(path)] as const))
+      .then(found => {
+        if (mounted) {
+          setFirmwareShellIcons(Object.fromEntries(found.filter(([, , exists]) => exists).map(([key, path]) => [key, path])));
+        }
+      })
       .catch(() => undefined);
     return () => { mounted = false; };
   }, []);
@@ -397,6 +416,7 @@ export default function App() {
     ? <DesktopLauncher games={games} settings={settings} session={session} busy={busy} error={error} onChooseFolders={chooseFolders} onRefresh={() => refresh(settings)} onRefreshCompatibility={refreshCompatibility} onLaunch={run} onSaveSettings={persist} onSaveRoots={updateRoots} onBigPicture={() => switchRoute('big-picture')} onError={setError} onClearUntrackedSession={() => setSession(DEFAULT_PROCESS_SESSION)} />
     : <BigPictureShell
          artwork={brandArtwork.bigPicture}
+         firmwareShellIcons={firmwareShellIcons}
          games={games}
          nativeBackgroundFrames={nativeBackgroundFrames}
          settings={settings}
