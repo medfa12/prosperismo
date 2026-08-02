@@ -75,6 +75,31 @@ independent blockers before it could reach that boundary:
   clean Release run reaches frame 189 at about 1.87 FPS, versus about 0.033 FPS
   before the fix. This is a performance result, not proof of a valid guest
   image.
+- **CONFIRMED -- programmable image performance modulation is accepted:**
+  Astro submits Sony image descriptors with `PERF_MOD` set. The field is a
+  cache/performance hint, not an alternate image layout, and rejecting it
+  stopped the postprocess sequence before the next observable boundary. The
+  descriptor path now accepts the field without changing texture semantics.
+- **CONFIRMED -- gfx1013 `s_cmp_eq_u64`:** the scalar decoder and SPIR-V
+  lowering implement the 64-bit equality operation used after the postprocess
+  sequence. Focused true, false and overlapping-register cases pass.
+- **CONFIRMED -- Sony mip-range normalization:** Astro's storage descriptor
+  `055ea000,c4700000,010dc1df,91b66fac,00000000,00700050,00000000,00000000`
+  requests base/last mip 6 while `MAX_MIP` describes a six-level allocation.
+  SDK 10's `agc/core/texture.h` defines `MAX_MIP` as the allocation level count
+  and gives the explicit mip range precedence; it does not require the range's
+  last value to be less than `MAX_MIP`. The host allocation remains six levels
+  and the Vulkan view is clamped to its last real level (base 5, count 1),
+  matching the independently proven implementation. The focused exact
+  descriptor test passes, and a real boot passed the former crash and sustained
+  at least frame 361.
+- **CONFIRMED -- never-mapped unmaps do not drain the GPU:** a curated
+  reference change demonstrated that Astro's wandering boot stall came from
+  synchronously draining the GPU for ranges that had never acquired GPU
+  resources. Prosperismo had the same unconditional path. `UnmapMemory` now
+  proves that neither cache owns an intersecting range and performs the local
+  unmap without a GPU round trip. Range-intersection tests pass. This is a boot
+  reliability fix, not an explanation for zero RGB.
 - **CONFIRMED -- first observed half-resolution writer executes:** marker
   `resize_normal`, `cs=0x5006F7700`, dispatches `120x68x1`. It samples the
   full-resolution images at `0x510D10000` and `0x5104A0000`, then writes
@@ -108,21 +133,29 @@ independent blockers before it could reach that boundary:
   and world-map assets. The visible dark PlayStation Studios image is retained
   presentation content, not proof that the current AGC scene target is
   nonblack.
+- **CONFIRMED -- the first measured full-resolution writer chain remains RGB
+  zero through the last ordinary pixel draw:** in the retained
+  `20260802-115409-sony-mip-view` run, the compute writers `0x500571000`,
+  `0x50059CD00`, `0x5005CC100`, `0x5005FDB00` and both occurrences of pixel
+  shader `0x50074F400` executed at frames 120, 240 and 360. Every readback had
+  zero RGB pixels and alpha in all 2,073,600 pixels. The immediately following
+  geometry draw at `gs=0x500705600` was skipped each time with the exact state
+  `stages=0x2030`, `prim_group=3`, `vert_group=24`, `ngg=0x46`,
+  `max_out=216`, `gs_max_vert=72`, `gs_out_prim=2`. This is the current first
+  unexecuted writer boundary; it is not yet proof that the draw itself would
+  produce nonblack colour.
+- **CLASSIFIED, ROOT CAUSE OPEN -- frame-361 host termination:** Windows
+  recorded `0xc0000409` with exception data `7`. Microsoft SDK `winnt.h`
+  defines value 7 as `FAST_FAIL_FATAL_APP_EXIT`, not a stack-cookie failure.
+  The log ends mid-command without a Prosperismo fatal report and WER retained
+  no dump, so the initiating `abort`/`std::terminate` path is not identified.
+  Do not conflate this explicit host termination with the skipped geometry
+  writer or the previously fixed unmap stall.
 
-Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
-(pre-fix compare), `20260802-082506` (next VOP2 blocker),
-`20260802-082830` (next VOP3B blocker), `20260802-082946` (trap),
-`20260802-084504` (BVH), `20260802-085544` (`s_ff1_i32_b64`) and
-`20260802-090417` (dynamic-SMEM boundary), `20260802-094750` (dynamic SMEM
-fixed; next `RSRC1_ES` boundary), and `20260802-095253` (repeated frames after
-the Sony ES companion-register fix), `20260802-095659-cache-proof` (exact
-specialization-mismatch proof), `20260802-100034-runtime-address-base`
-(cross-frame shader reuse), and `20260802-100534-release` (clean Release
-performance and producer boundary), `20260802-102045-present-hashes` (stale
-present proof), `20260802-104324-superres-bound-images` (exact compute
-bindings), `20260802-104759-superres-constant-load` (diagnostic load
-differential), and `20260802-104933-superres-source-footprint` (channel-aware
-native readback). The focused selector
+The retained validated run artifact is
+`artifacts/astro-runs/20260802-115409-sony-mip-view`; older large probe
+directories were deliberately pruned after their measurements were distilled
+into this handoff. The focused selector
 `shader_recompiler_compute_tests.exe --vop3-u64-compare-only` passes the compare,
 borrow, trap, BVH-miss, 64-bit-FF1 and dynamic-SMEM GPU semantic tests. The unfiltered
 suite currently stops earlier in the pre-existing `ImageTransitionState`
@@ -159,15 +192,16 @@ blank transition frames separate from the later title/world-map lifetime:
    or world-map colour is identified;
 2. retain the guest marker/state and shader addresses for that occurrence so a
    deliberately blank early frame is not mistaken for the persistent failure;
-3. audit the observed rect-list draw that targets `0x514080000` but is skipped
-   because the current vertex replay reports no parameter exports while its
-   pixel shader requires two inputs. This is an **OPEN lead**, not yet a root
-   cause: the submitted state includes a separate native primitive program at
-   `gs=0x500705600`, so the ordinary-ES fallback may be discarding the stage
-   that owns those exports;
-4. compare that native-primitive contract with Sony's
-   `agc_basic_geometry_shader/native_prim.pssl` and the preserved, tested NGG
-   replay implementation before admitting or replacing the draw;
+3. classify and replay the observed `0x500705600` draw without treating it as
+   the simpler point-to-triangle native sample. Its state is a classic
+   geometry-shader lowering: three input primitives, 24 input vertex slots,
+   72 output vertices per input and a 70-triangle strip amplification. Sony's
+   `agc_basic_geometry_shader/native_prim.pssl` defines the subgroup count,
+   allocation and packed-connectivity ABI, but the exact shader's emit/cut and
+   export loop must be decoded from its own bytes before it is admitted;
+4. keep unsupported launch shapes fail-closed. A register classifier that
+   recognizes the state is useful, but it is not a render fix without the
+   ES/GS ring, output allocation, emit/cut and vertex/primitive export replay;
 5. only after a writer produces nonblack RGB, follow its exact host-image
    identity through `6CB800 -> 690F -> 650600` and presentation.
 
