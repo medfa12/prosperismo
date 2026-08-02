@@ -31,9 +31,9 @@ const SETTINGS_CATEGORIES = [
 ] as const;
 
 const SYSTEM_ACTIONS = [
-  {label: 'Search', symbol: '⌕'},
-  {label: 'Settings', symbol: '⚙'},
-  {label: 'Desktop mode', symbol: '◉'},
+  {label: 'Search', glyph: 'search'},
+  {label: 'Settings', glyph: 'settings'},
+  {label: 'Desktop mode', glyph: 'profile'},
 ] as const;
 
 function formatClock(now: Date): string {
@@ -120,9 +120,21 @@ function ExperienceTile({game, index, selectedIndex, selected, onFocus, onPress,
   );
 }
 
-function SystemIconButton({label, symbol, focused, onFocus, onPress}: {
+type SystemGlyphKind = typeof SYSTEM_ACTIONS[number]['glyph'];
+
+function SystemGlyph({kind, color}: {kind: SystemGlyphKind; color: Animated.AnimatedInterpolation<string>}) {
+  if (kind === 'search') {
+    return <View pointerEvents="none" style={shellStyles.searchGlyph}><Animated.View style={[shellStyles.searchLens, {borderColor: color}]} /><Animated.View style={[shellStyles.searchHandle, {backgroundColor: color}]} /></View>;
+  }
+  if (kind === 'settings') {
+    return <View pointerEvents="none" style={shellStyles.settingsGlyphIcon}><Animated.View style={[shellStyles.settingsCore, {borderColor: color}]} />{SYSTEM_GEAR_TOOTH_STYLES.map((toothStyle, index) => <Animated.View key={index} style={[shellStyles.settingsTooth, toothStyle, {backgroundColor: color}]} />)}</View>;
+  }
+  return <View pointerEvents="none" style={shellStyles.profileGlyph}><Animated.View style={[shellStyles.profileFrame, {borderColor: color}]} /><Animated.View style={[shellStyles.profileSlash, {backgroundColor: color}]} /></View>;
+}
+
+function SystemIconButton({label, glyph, focused, onFocus, onPress}: {
   label: string;
-  symbol: string;
+  glyph: SystemGlyphKind;
   focused: boolean;
   onFocus(): void;
   onPress(): void;
@@ -139,7 +151,7 @@ function SystemIconButton({label, symbol, focused, onFocus, onPress}: {
   return (
     <Pressable accessibilityLabel={label} accessibilityRole="button" onFocus={onFocus} onPress={onPress} style={shellStyles.systemButton}>
       <Animated.View pointerEvents="none" style={[shellStyles.systemFocusCircle, {opacity: phase}]} />
-      <Animated.Text style={[shellStyles.systemGlyph, {color}]}>{symbol}</Animated.Text>
+      <SystemGlyph kind={glyph} color={color} />
     </Pressable>
   );
 }
@@ -274,7 +286,10 @@ const shellStyles = StyleSheet.create({
   spaces: {flexDirection: 'row', alignItems: 'center', gap: 64}, spaceButton: {paddingVertical: 8},
   spaceText: {color: 'rgba(255,255,255,0.6)', fontSize: 28, fontWeight: '400'}, spaceTextActive: {color: '#fff', fontWeight: '700'}, spaceTextFocused: {textDecorationLine: 'underline'},
   systemActions: {flexDirection: 'row', alignItems: 'center', gap: 48}, systemButton: {width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center'},
-  systemFocusCircle: {position: 'absolute', width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff'}, systemGlyph: {fontSize: 34, includeFontPadding: false},
+  systemFocusCircle: {position: 'absolute', width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff'},
+  searchGlyph: {width: 34, height: 34}, searchLens: {position: 'absolute', left: 3, top: 3, width: 20, height: 20, borderWidth: 4, borderRadius: 10}, searchHandle: {position: 'absolute', left: 22, top: 23, width: 13, height: 4, borderRadius: 2, transform: [{rotate: '47deg'}]},
+  settingsGlyphIcon: {width: 34, height: 34, alignItems: 'center', justifyContent: 'center'}, settingsCore: {width: 15, height: 15, borderWidth: 4, borderRadius: 8}, settingsTooth: {position: 'absolute', width: 5, height: 9, borderRadius: 2}, settingsTooth0: {top: 0, left: 15}, settingsTooth1: {top: 4, right: 4, transform: [{rotate: '45deg'}]}, settingsTooth2: {top: 15, right: 0, transform: [{rotate: '90deg'}]}, settingsTooth3: {right: 4, bottom: 4, transform: [{rotate: '135deg'}]}, settingsTooth4: {bottom: 0, left: 15}, settingsTooth5: {bottom: 4, left: 4, transform: [{rotate: '45deg'}]}, settingsTooth6: {top: 15, left: 0, transform: [{rotate: '90deg'}]}, settingsTooth7: {top: 4, left: 4, transform: [{rotate: '135deg'}]},
+  profileGlyph: {width: 42, height: 42, alignItems: 'center', justifyContent: 'center'}, profileFrame: {position: 'absolute', width: 42, height: 42, borderWidth: 1}, profileSlash: {width: 55, height: 1, transform: [{rotate: '45deg'}]},
   clock: {marginLeft: 40, color: '#fff', fontSize: 28, minWidth: 120, textAlign: 'right'},
   strand: {position: 'absolute', left: 0, top: 0, width: 1920, height: 294}, tilePosition: {position: 'absolute', left: 0, top: 157, width: 106, height: 106, alignItems: 'center', justifyContent: 'center'},
   tile: {width: 106, height: 106, borderRadius: 16, overflow: 'hidden', backgroundColor: '#292929'}, tileImage: {width: '100%', height: '100%', resizeMode: 'cover'}, tileFallback: {flex: 1, backgroundColor: '#353535', alignItems: 'center', justifyContent: 'center'}, tileMonogram: {fontSize: 48, color: '#fff', fontWeight: '700'},
@@ -286,3 +301,14 @@ const shellStyles = StyleSheet.create({
   settingsSurface: {width: 1200}, settingsList: {paddingBottom: 90}, settingsRow: {height: 88, borderRadius: 16, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', overflow: 'hidden'}, settingsFocus: {position: 'absolute', inset: 0, borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)', backgroundColor: 'rgba(255,255,255,0.86)', borderRadius: 16}, settingsGlyph: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#6d7480', marginRight: 20}, settingsCopy: {flex: 1}, settingsText: {color: '#fff', fontSize: 24}, settingsTextFocused: {color: '#333'}, settingsDetail: {marginTop: 3, color: 'rgba(255,255,255,0.7)', fontSize: 16}, settingsDetailFocused: {color: 'rgba(51,51,51,0.72)'}, settingsChevron: {color: '#fff', fontSize: 34},
   keyGuide: {position: 'absolute', right: 84, bottom: 44, color: 'rgba(255,255,255,0.7)', fontSize: 18}, modalLayer: {position: 'absolute', inset: 0, zIndex: 20, alignItems: 'center', justifyContent: 'center'}, modalScrim: {position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)'}, optionsPanel: {width: 652, borderRadius: 16, overflow: 'hidden', backgroundColor: '#f5f5f5', paddingTop: 28}, optionsTitle: {paddingHorizontal: 32, paddingBottom: 18, color: '#1d1d1f', fontSize: 28, fontWeight: '600'}, optionRow: {height: 72, justifyContent: 'center', paddingHorizontal: 32, borderTopWidth: 1, borderColor: 'rgba(0,0,0,0.08)'}, optionText: {color: '#1d1d1f', fontSize: 23}, toast: {position: 'absolute', left: 610, bottom: 72, minWidth: 700, paddingHorizontal: 28, height: 72, borderRadius: 16, justifyContent: 'center', backgroundColor: 'rgba(24,24,28,0.94)'}, toastText: {color: '#fff', fontSize: 21},
 });
+
+const SYSTEM_GEAR_TOOTH_STYLES = [
+  shellStyles.settingsTooth0,
+  shellStyles.settingsTooth1,
+  shellStyles.settingsTooth2,
+  shellStyles.settingsTooth3,
+  shellStyles.settingsTooth4,
+  shellStyles.settingsTooth5,
+  shellStyles.settingsTooth6,
+  shellStyles.settingsTooth7,
+] as const;
