@@ -142,9 +142,14 @@ void GpuResourceManager::UnmapMemory(uint64_t vaddr, uint64_t size) {
 		if (cached) {
 			EXIT("gpu-unmapped range still holds cached resources: addr=0x%016" PRIx64
 			     " size=0x%016" PRIx64 "\n",
-			     vaddr, size);
+				     vaddr, size);
 		}
-		unmap();
+		// This range never entered either GPU cache, so there is no command-buffer
+		// lifetime to retire. Calling the shared unmap closure here would still run
+		// FinishCurrent() from the guest thread and race the GPU thread's recorder.
+		m_page_manager.OnGpuUnmap(vaddr, size);
+		std::lock_guard lock(m_mapped_ranges_mutex);
+		m_mapped_ranges.Subtract(vaddr, size);
 		return;
 	}
 	m_gpu->SendCommandSync(unmap);
