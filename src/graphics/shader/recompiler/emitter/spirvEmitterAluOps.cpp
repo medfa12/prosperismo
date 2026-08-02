@@ -1500,6 +1500,46 @@ void EmitCompareNeU64(EmitterState& state, const IR::Instruction& inst) {
 	EmitCompareResult(state, inst.dst, cond);
 }
 
+void EmitISubBorrowCarryU32(EmitterState& state, const IR::Instruction& inst) {
+	const auto lhs       = EmitValueLoad(state, inst.src[0]);
+	const auto rhs       = EmitValueLoad(state, inst.src[1]);
+	const auto borrow_in_active = EmitLaneMaskOperandActiveBool(state, inst.src[2]);
+	const auto borrow_in = state.builder.AllocateId();
+	const auto partial   = state.builder.AllocateId();
+	const auto result    = state.builder.AllocateId();
+	const auto borrow0   = state.builder.AllocateId();
+	const auto borrow1   = state.builder.AllocateId();
+	const auto borrow    = state.builder.AllocateId();
+	state.builder.AddFunction({OpSelect, state.uint_type, borrow_in, borrow_in_active,
+	                           ConstantU32(state, 1), ConstantU32(state, 0)});
+	state.builder.AddFunction({OpISub, state.uint_type, partial, lhs, rhs});
+	state.builder.AddFunction({OpUGreaterThan, state.bool_type, borrow0, rhs, lhs});
+	state.builder.AddFunction({OpISub, state.uint_type, result, partial, borrow_in});
+	state.builder.AddFunction({OpUGreaterThan, state.bool_type, borrow1, borrow_in, partial});
+	state.builder.AddFunction({OpLogicalOr, state.bool_type, borrow, borrow0, borrow1});
+	EmitStoreU32(state, inst.dst, result);
+	EmitLaneMaskPairFromBool(state, inst.dst2, borrow);
+}
+
+void EmitCompareGtU64(EmitterState& state, const IR::Instruction& inst) {
+	const auto lhs_low  = EmitSequentialValueLoad(state, inst.src[0], 0);
+	const auto lhs_high = EmitSequentialValueLoad(state, inst.src[0], 1);
+	const auto rhs_low  = EmitSequentialValueLoad(state, inst.src[1], 0);
+	const auto rhs_high = EmitSequentialValueLoad(state, inst.src[1], 1);
+	const auto high_gt  = state.builder.AllocateId();
+	const auto high_eq  = state.builder.AllocateId();
+	const auto low_gt   = state.builder.AllocateId();
+	const auto equal_high_low_gt = state.builder.AllocateId();
+	const auto cond              = state.builder.AllocateId();
+	state.builder.AddFunction({OpUGreaterThan, state.bool_type, high_gt, lhs_high, rhs_high});
+	state.builder.AddFunction({OpIEqual, state.bool_type, high_eq, lhs_high, rhs_high});
+	state.builder.AddFunction({OpUGreaterThan, state.bool_type, low_gt, lhs_low, rhs_low});
+	state.builder.AddFunction(
+	    {OpLogicalAnd, state.bool_type, equal_high_low_gt, high_eq, low_gt});
+	state.builder.AddFunction({OpLogicalOr, state.bool_type, cond, high_gt, equal_high_low_gt});
+	EmitCompareResult(state, inst.dst, cond);
+}
+
 void EmitCompareConstant(EmitterState& state, const IR::Instruction& inst, bool value) {
 	const auto cond = state.builder.AllocateId();
 	state.builder.AddFunction({value ? OpIEqual : OpINotEqual, state.bool_type, cond,

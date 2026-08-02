@@ -29,6 +29,7 @@ constexpr OpcodeMap VOP2_OPS[] = {
     {0x23u, Opcode::VMbcntLoU32B32}, {0x24u, Opcode::VMbcntHiU32B32},
     {0x25u, Opcode::VAddNcU32},      {0x28u, Opcode::VAddcU32},
     {0x26u, Opcode::VSubNcU32},      {0x27u, Opcode::VSubrevNcU32},
+    {0x2au, Opcode::VSubrevCoCiU32},
     {0x2bu, Opcode::VMacF32},        {0x2cu, Opcode::VMadmkF32},
     {0x2du, Opcode::VMadakF32},      {0x2fu, Opcode::VCvtPkrtzF16F32},
     {0x32u, Opcode::VAddF16},        {0x33u, Opcode::VSubF16},
@@ -159,7 +160,8 @@ constexpr OpcodeMap VOPC_OPS[] = {
     {0xc5u, Opcode::VCmpNeU32},    {0xc6u, Opcode::VCmpGeU32},   {0xc7u, Opcode::VCmpTU32},
     {0xd1u, Opcode::VCmpxLtU32},   {0xd2u, Opcode::VCmpxEqU32},  {0xd3u, Opcode::VCmpxLeU32},
     {0xd4u, Opcode::VCmpxGtU32},   {0xd5u, Opcode::VCmpxNeU32},  {0xd6u, Opcode::VCmpxGeU32},
-    {0xe5u, Opcode::VCmpNeU64},    {0xc9u, Opcode::VCmpLtF16},   {0xcau, Opcode::VCmpEqF16},
+    {0xe4u, Opcode::VCmpGtU64},    {0xe5u, Opcode::VCmpNeU64},   {0xc9u, Opcode::VCmpLtF16},
+    {0xcau, Opcode::VCmpEqF16},
     {0xcbu, Opcode::VCmpLeF16},    {0xccu, Opcode::VCmpGtF16},   {0xcdu, Opcode::VCmpLgF16},
     {0xceu, Opcode::VCmpGeF16},    {0xedu, Opcode::VCmpNeqF16},  {0xd9u, Opcode::VCmpxLtF16},
     {0xdau, Opcode::VCmpxEqF16},   {0xdbu, Opcode::VCmpxLeF16},  {0xdcu, Opcode::VCmpxGtF16},
@@ -926,6 +928,7 @@ bool FinalizeVop2Instruction(uint32_t pc, std::span<const uint32_t> code, uint32
 			inst.src_count = 3;
 			break;
 		case Opcode::VAddcU32:
+		case Opcode::VSubrevCoCiU32:
 			inst.dst2.kind = OperandKind::VccLo;
 			inst.src2.kind = OperandKind::VccLo;
 			inst.src_count = 3;
@@ -1560,10 +1563,12 @@ bool DecodeVop3(uint32_t pc, std::span<const uint32_t> code, uint32_t word_index
 	inst.opcode    = LookupVop3Opcode(opcode);
 	SetRawWords(inst, code, word_index, 2);
 
-	const bool addc                    = inst.opcode == Opcode::VAddcU32 && opcode == 0x128u;
+	const bool vop3b_carry_in =
+	    (inst.opcode == Opcode::VAddcU32 && opcode == 0x128u) ||
+	    (inst.opcode == Opcode::VSubrevCoCiU32 && opcode == 0x12au);
 	const bool vop3b_carry_out         = IsVop3BCarryOutOpcode(inst.opcode);
 	const bool vop3b_mad_u64           = IsVop3BMadU64Opcode(inst.opcode);
-	const bool vop3b_uses_sdst         = addc || vop3b_carry_out || vop3b_mad_u64;
+	const bool vop3b_uses_sdst         = vop3b_carry_in || vop3b_carry_out || vop3b_mad_u64;
 	const bool mad_mix                 = false;
 	const bool f16_ternary             = IsNativeVop3F16TernaryOpcode(inst.opcode);
 	const bool b16_binary              = IsNativeVop3B16BinaryOpcode(inst.opcode);
@@ -1632,7 +1637,7 @@ bool DecodeVop3(uint32_t pc, std::span<const uint32_t> code, uint32_t word_index
 		}
 		return ReadLiteralOperands(code, word_index, inst, error);
 	}
-	if (addc) {
+	if (vop3b_carry_in) {
 		if (!DecodeScalarDestination(sdst, pc, inst.dst2, error) ||
 		    !DecodeScalarSource(src1, pc, inst.src1, error) ||
 		    !DecodeScalarSource(src2, pc, inst.src2, error)) {

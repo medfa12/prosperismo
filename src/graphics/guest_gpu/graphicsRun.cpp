@@ -449,7 +449,14 @@ void CommandProcessor::DmaData(uint8_t engine, uint8_t dst_sel, uint8_t dst_cach
 	if (num_bytes == 0) {
 		return;
 	}
-	EXIT_NOT_IMPLEMENTED((num_bytes & 3u) != 0);
+	if ((num_bytes & 3u) != 0) {
+		EXIT("unsupported unaligned dmaData: engine=%u dst_sel=%u dst=0x%016" PRIx64
+		     " src_sel=%u src=0x%016" PRIx64 " bytes=%u dst_cache=%u src_cache=%u"
+		     " wait=%u confirm=%u block=%u\n",
+		     engine, dst_sel, dst_address_or_offset, src_sel,
+		     src_address_or_offset_or_immediate, num_bytes, dst_cache_policy, src_cache_policy,
+		     wait_for_previous, write_confirm, block_engine);
+	}
 	EXIT_NOT_IMPLEMENTED(dst_cache_policy > 3);
 	EXIT_NOT_IMPLEMENTED(src_cache_policy > 3);
 	EXIT_NOT_IMPLEMENTED(wait_for_previous > 1);

@@ -659,6 +659,7 @@ std::string OpcodeToString(Opcode opcode) {
 		case Opcode::VMadMixhiF16: return "v_mad_mixhi_f16";
 		case Opcode::VAddNcU32: return "v_add_nc_u32";
 		case Opcode::VAddcU32: return "v_addc_u32";
+		case Opcode::VSubrevCoCiU32: return "v_subrev_co_ci_u32";
 		case Opcode::VSubNcU32: return "v_sub_nc_u32";
 		case Opcode::VSubrevNcU32: return "v_subrev_nc_u32";
 		case Opcode::VAddNcU16: return "v_add_nc_u16";
@@ -766,6 +767,7 @@ std::string OpcodeToString(Opcode opcode) {
 		case Opcode::VCmpNeU32: return "v_cmp_ne_u32";
 		case Opcode::VCmpGeU32: return "v_cmp_ge_u32";
 		case Opcode::VCmpTU32: return "v_cmp_t_u32";
+		case Opcode::VCmpGtU64: return "v_cmp_gt_u64";
 		case Opcode::VCmpNeU64: return "v_cmp_ne_u64";
 		case Opcode::VCmpxLtU32: return "v_cmpx_lt_u32";
 		case Opcode::VCmpxEqU32: return "v_cmpx_eq_u32";

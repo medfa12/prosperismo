@@ -11148,6 +11148,78 @@ TestCase VectorVop3CompareNeU64OnGpu() {
 	         O::SEndpgm}};
 }
 
+TestCase VectorVop3CompareGtU64OnGpu() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	code.push_back(EncodeVop1(0x01, 1, InlineU32(1)));
+
+	code.push_back(EncodeSop1(0x04, 106, 126)); // s_mov_b64 vcc, exec
+	code.push_back(0xd4e4006au);
+	code.push_back(0x0001006au); // v_cmp_gt_u64 vcc, vcc, 0 (Sony gfx1013 oracle)
+	code.push_back(EncodeVop2(0x01, 2, InlineU32(0), 1));
+	AppendStoreVgpr(&code, 2, 0);
+
+	AppendSMovLiteral(&code, 106, 0);
+	AppendSMovLiteral(&code, 107, 0);
+	code.push_back(0xd4e4006au);
+	code.push_back(0x0001006au); // v_cmp_gt_u64 vcc, vcc, 0
+	code.push_back(EncodeVop2(0x01, 3, InlineU32(0), 1));
+	AppendStoreVgpr(&code, 3, 1);
+	AppendEnd(&code);
+
+	return {"VectorVop3CompareGtU64OnGpu",
+	        code,
+	        {},
+	        {1, 0},
+	        {O::VMovB32, O::SMovB64, O::VCmpGtU64, O::VCndmaskB32, O::SMovB32,
+	         O::BufferStoreDword, O::SEndpgm}};
+}
+
+TestCase VectorSubrevBorrowCarryOnGpu() {
+	using O = ShaderOpcode;
+
+	std::vector<u32> code;
+	AppendVMovU32(&code, 1, 1);
+	AppendVMovU32(&code, 24, 5);
+
+	AppendSMovLiteral(&code, 106, 0);
+	AppendSMovLiteral(&code, 107, 0);
+	code.push_back(0x54003080u); // v_subrev_co_ci_u32 v0, vcc, 0, v24, vcc
+	AppendStoreVgpr(&code, 0, 0);
+	code.push_back(EncodeVop2(0x01, 2, InlineU32(0), 1));
+	AppendStoreVgpr(&code, 2, 1);
+
+	code.push_back(EncodeSop1(0x04, 106, 126)); // s_mov_b64 vcc, exec
+	code.push_back(0x54003080u);
+	AppendStoreVgpr(&code, 0, 2);
+	code.push_back(EncodeVop2(0x01, 2, InlineU32(0), 1));
+	AppendStoreVgpr(&code, 2, 3);
+
+	AppendVMovU32(&code, 24, 0);
+	code.push_back(EncodeSop1(0x04, 106, 126));
+	code.push_back(0x54003080u);
+	AppendStoreVgpr(&code, 0, 4);
+	code.push_back(EncodeVop2(0x01, 2, InlineU32(0), 1));
+	AppendStoreVgpr(&code, 2, 5);
+
+	AppendVMovU32(&code, 25, 5);
+	code.push_back(EncodeSop1(0x04, 4, 126)); // s_mov_b64 s[4:5], exec
+	code.push_back(0xd52a6a05u);
+	code.push_back(0x00123280u); // v_subrev_co_ci_u32 v5, vcc, 0, v25, s4
+	AppendStoreVgpr(&code, 5, 6);
+	code.push_back(EncodeVop2(0x01, 2, InlineU32(0), 1));
+	AppendStoreVgpr(&code, 2, 7);
+	AppendEnd(&code);
+
+	return {"VectorSubrevBorrowCarryOnGpu",
+	        code,
+	        {},
+	        {5, 0, 4, 0, 0xffffffffu, 1, 4, 0},
+	        {O::VMovB32, O::SMovB32, O::VSubrevCoCiU32, O::VCndmaskB32, O::BufferStoreDword,
+	         O::SMovB64, O::SEndpgm}};
+}
+
 TestCase VectorCompareClassF32() {
 	using O = ShaderOpcode;
 
@@ -14616,6 +14688,8 @@ std::vector<TestCase> MakeCases() {
 	AddCase(VectorSinCosMaxFiniteSpecialCases);
 	AddCase(VectorCompareOps);
 	AddCase(VectorVop3CompareNeU64OnGpu);
+	AddCase(VectorVop3CompareGtU64OnGpu);
+	AddCase(VectorSubrevBorrowCarryOnGpu);
 	AddCase(VectorCompareClassF32);
 	AddCase(VectorCompareF16Ops);
 	AddCase(Vop2SdwaCndmaskSourceModifier);
@@ -17343,6 +17417,12 @@ int main(int argc, char** argv) {
 	EnsureConfigInitialized();
 	CheckLeastRecentlyUsedCacheOrdering();
 	CheckColorDccDescriptorIdentity();
+	if (argc == 2 && std::strcmp(argv[1], "--vop3-u64-compare-only") == 0) {
+		VulkanHarness vulkan;
+		RunCase(&vulkan, VectorVop3CompareGtU64OnGpu());
+		RunCase(&vulkan, VectorSubrevBorrowCarryOnGpu());
+		return 0;
+	}
 	if (argc == 2 && std::strcmp(argv[1], "--clip-control-only") == 0) {
 		CheckClipControlDepthClipState();
 		return 0;

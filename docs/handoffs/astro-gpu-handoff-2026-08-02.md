@@ -2,9 +2,45 @@
 
 Date: 2026-08-02
 
-Status: investigation checkpoint only. The parallel Astro worker was stopped at
-the user's request and produced no source changes. No Astro boot, nonblack final
-frame or GPU fix is claimed by this handoff.
+Status: active Prosperismo bring-up checkpoint. Astro boots into its first GPU
+frame and reaches `TileBasedLighting`, but shader translation still terminates
+before a presentable game frame. No nonblack final frame is claimed.
+
+## Current Prosperismo checkpoint
+
+The inherited SharpEmu surface evidence below remains useful background, but it
+is not yet a measurement of Prosperismo's renderer. Prosperismo had earlier,
+independent blockers before it could reach that boundary:
+
+- **CONFIRMED — AGC async DMA ABI:** `GraphicsAcbDmaData` incorrectly used the
+  synchronous draw-command-buffer signature. Sony's SDK archive symbol records
+  `AsyncCommandBuffer::dmaData(AsyncDmaDataDst, CachePolicy, uint64,
+  AsyncDmaDataSrc, CachePolicy, uint64, uint32,
+  DmaDataWaitForPreviousDmas, DmaDataWriteConfirm)` with no CP-engine or
+  block-engine parameters. Correcting that ABI moved Astro from
+  `Classification_Async` into `Classification_0`, `DeferredLighting_0` and
+  `TileBasedLighting`.
+- **CONFIRMED — gfx1013 `v_cmp_gt_u64`:** Sony's ISA library disassembles raw
+  `6a 00 e4 d4 6a 00 01 00` as `v_cmp_gt_u64 vcc_lo, vcc, 0`. The decoder and
+  SPIR-V emitter now implement unsigned 64-bit greater-than using high/low
+  32-bit words. The exact instruction passes a Vulkan compute regression.
+- **CONFIRMED — gfx1013 reverse subtract with borrow:** Sony disassembles
+  `80 30 00 54` as `v_subrev_co_ci_u32 v0, vcc_lo, 0, v24, vcc_lo`, and the
+  corresponding VOP3B bytes as the same operation with an arbitrary scalar
+  borrow mask. Both encodings now lower as `src1 - src0 - borrow_in`, produce
+  the architectural borrow mask, and pass true/false/underflow GPU tests.
+- **CURRENT BLOCKER:** the same tiled-lighting compute shader now reaches PC
+  `0x1f80`, raw `01 00 92 bf`. Sony renders this as `_SCE_BREAK()` and LLVM's
+  byte-exact gfx10 tests identify it as `s_trap 1`. This requires an explicit
+  CFG and Vulkan trap policy; treating it as an ordinary no-op is not justified.
+
+Validated run artifacts are under `artifacts/astro-runs/20260802-081824`
+(pre-fix compare), `20260802-082506` (next VOP2 blocker),
+`20260802-082830` (next VOP3B blocker), and `20260802-082946` (current trap).
+The focused selector `shader_recompiler_compute_tests.exe
+--vop3-u64-compare-only` passes both added GPU semantic tests. The unfiltered
+suite currently stops earlier in the pre-existing `ImageTransitionState`
+depth/stencil mip-copy test; it is not claimed green.
 
 ## Established boundary
 
@@ -52,8 +88,8 @@ targeted boot only after the probe wiring and exact executable are verified.
 2. Byte-exact firmware behavior and symbols under `ps5oracle/sony`.
 3. LLVM's gfx1013 definition/MC tests and AMD's RDNA 1 ISA baseline for families
    missing from the partial Sony ISA capture.
-4. PAL, Mesa ACO, KytyPS5, SharpEmu, Raeen and other curated implementations as
-   differentials, never as authority over conflicting Sony evidence.
+4. PAL, Mesa ACO, preserved emulator implementations and other curated projects
+   as differentials, never as authority over conflicting Sony evidence.
 
 The partial Sony ISA capture has no instruction bodies for vector memory,
 LDS/GDS, image, FLAT or export. A failed grep of that capture is not evidence of
@@ -81,4 +117,3 @@ a stock RDNA2 decode table.
 - `docs/imported/sharpemu-home/what-the-firmware-taught-us.md`
 - `ps5oracle/public-references/PUBLIC-ISA-REFERENCES-README.md`
 - `ps5oracle/sony/prospero-sdk-10.00/HOST-TOOLS-README.md`
-
