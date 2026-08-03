@@ -132,6 +132,9 @@ bool ProtectAddressSpace(uint64_t vaddr, uint64_t size,
   DWORD old_protection = 0;
   g_protection_calls++;
   g_protection_ranges.push_back({vaddr, size});
+  if (vaddr == 0) {
+    return true;
+  }
   return VirtualProtect(reinterpret_cast<void *>(vaddr), size, protection,
                         &old_protection) != 0;
 }
@@ -190,6 +193,32 @@ void TestSharedWatcherCounts() {
   Check(IsWritable(memory), "last unwatch did not restore access");
   manager.OnGpuUnmap(address, page_size);
   Check(VirtualFree(memory, 0, MEM_RELEASE) != 0, "VirtualFree failed");
+}
+
+void TestZeroPageUnwatch() {
+  g_protection_calls = 0;
+  g_protection_ranges.clear();
+  PageManager manager;
+  const auto page_size = manager.GetPageSize();
+
+  manager.UpdatePageWatchers<true>(1, page_size - 1);
+  Check(g_protection_calls == 1 && g_protection_ranges.size() == 1 &&
+            g_protection_ranges[0].address == 0 &&
+            g_protection_ranges[0].size == page_size,
+        "unaligned low range did not watch page zero");
+
+  g_protection_calls = 0;
+  g_protection_ranges.clear();
+  manager.UpdatePageWatchers<false>(0, page_size);
+  Check(g_protection_calls == 1 && g_protection_ranges.size() == 1 &&
+            g_protection_ranges[0].address == 0 &&
+            g_protection_ranges[0].size == page_size,
+        "aligned page-zero unwatch was rejected");
+
+  RegionBits page_zero;
+  page_zero.Set(0);
+  manager.UpdatePageWatchersForRegion<true>(0, page_zero);
+  manager.UpdatePageWatchersForRegion<false>(0, page_zero);
 }
 
 void TestCrossRegionRange() {
@@ -497,6 +526,8 @@ void TestReadWriteWatcherInteractions() {
   const auto page_size = manager.GetPageSize();
   if (std::strcmp(name, "invalid-range") == 0) {
     manager.UpdatePageWatchers<true>((1ull << 40u) - 1, 2);
+  } else if (std::strcmp(name, "null-watch") == 0) {
+    manager.UpdatePageWatchers<true>(0, page_size);
   } else if (std::strcmp(name, "unknown-untrack") == 0) {
     manager.UpdatePageWatchers<false>(0x1000, page_size);
   } else if (std::strcmp(name, "destructor-watch") == 0) {
@@ -576,7 +607,7 @@ void CheckDeathCase(const char *name) {
 
 void TestFatalPaths() {
   for (const char *name :
-       {"invalid-range", "unknown-untrack", "destructor-watch",
+       {"invalid-range", "null-watch", "unknown-untrack", "destructor-watch",
         "known-write-underflow", "read-overflow", "write-overflow"}) {
     CheckDeathCase(name);
   }
@@ -599,6 +630,7 @@ int main(int argc, char **argv) {
   }
   TestWatchAndUnwatch();
   TestSharedWatcherCounts();
+  TestZeroPageUnwatch();
   TestCrossRegionRange();
   TestBatchedWatcherRanges();
   TestRegionMaskWatcherRanges();

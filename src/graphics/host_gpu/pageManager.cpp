@@ -108,8 +108,9 @@ private:
 	std::atomic_flag& m_lock;
 };
 
-void ValidateRange(uint64_t vaddr, uint64_t size) {
-	if (vaddr == 0 || size == 0 || vaddr >= ADDRESS_SIZE || size > ADDRESS_SIZE - vaddr) {
+void ValidateRange(uint64_t vaddr, uint64_t size, bool allow_zero = false) {
+	if ((!allow_zero && vaddr == 0) || size == 0 || vaddr >= ADDRESS_SIZE ||
+	    size > ADDRESS_SIZE - vaddr) {
 		Fatal("invalid range vaddr=0x%016" PRIx64 ", size=0x%016" PRIx64, vaddr, size);
 	}
 }
@@ -118,8 +119,8 @@ uint64_t PageStart(uint64_t vaddr) {
 	return vaddr & ~(PAGE_SIZE - 1);
 }
 
-uint64_t PageEnd(uint64_t vaddr, uint64_t size) {
-	ValidateRange(vaddr, size);
+uint64_t PageEnd(uint64_t vaddr, uint64_t size, bool allow_zero = false) {
+	ValidateRange(vaddr, size, allow_zero);
 	return PageStart(vaddr + size - 1) + PAGE_SIZE;
 }
 
@@ -300,7 +301,8 @@ struct PageManager::Impl {
 	template <bool track, bool is_read>
 	void UpdatePageWatchers(uint64_t vaddr, uint64_t size) {
 		const auto begin = PageStart(vaddr);
-		const auto end   = PageEnd(vaddr, size);
+		// Valid unaligned guest and region ranges can occupy page zero.
+		const auto end = PageEnd(vaddr, size, true);
 		for (auto chunk_begin = begin; chunk_begin < end;) {
 			const auto chunk_end   = std::min(end, (chunk_begin / REGION_SIZE + 1) * REGION_SIZE);
 			const auto region_base = chunk_begin / REGION_SIZE * REGION_SIZE;
@@ -332,6 +334,11 @@ uint64_t PageManager::GetPageSize() const {
 
 template <bool track>
 void PageManager::UpdatePageWatchers(uint64_t vaddr, uint64_t size) {
+	if constexpr (track) {
+		// Keep a null watch request invalid while allowing an aligned page-zero
+		// release for a valid unaligned range that was previously watched.
+		ValidateRange(vaddr, size);
+	}
 	m_impl->UpdatePageWatchers<track, false>(vaddr, size);
 }
 

@@ -81,6 +81,8 @@ public:
 	                                                             uint64_t source_offset,
 	                                                             uint64_t size);
 	bool                                DebugDumpImagePpm(ImageId id, const char* path);
+	void DebugTraceImageWriter(uint64_t address, ImageId id, bool compute, bool skipped,
+	                           uint64_t shader, uint32_t frame);
 
 	[[nodiscard]] bool ClearImageFromBuffer(CommandBuffer& command, uint64_t address, uint64_t size,
 	                                        uint32_t packed_clear);

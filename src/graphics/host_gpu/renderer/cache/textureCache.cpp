@@ -22,6 +22,7 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -1958,6 +1959,68 @@ bool TextureCache::DebugDumpImagePpm(ImageId id, const char* path) {
 	     path, width, height, static_cast<int>(format), image.info.data.address, max_r, max_g,
 	     max_b, max_a, nonzero_rgb);
 	return true;
+}
+
+void TextureCache::DebugTraceImageWriter(uint64_t address, ImageId id, bool compute, bool skipped,
+                                         uint64_t shader, uint32_t frame) {
+	static const uint64_t target_address = [] {
+		const char* value = std::getenv("PROSPERISMO_TRACE_IMAGE_WRITERS");
+		return value != nullptr ? std::strtoull(value, nullptr, 16) : 0ull;
+	}();
+	if (target_address == 0 || address != target_address || !id) {
+		return;
+	}
+	static const uint32_t start_frame = [] {
+		const char* value = std::getenv("PROSPERISMO_TRACE_IMAGE_WRITERS_START_FRAME");
+		return value != nullptr ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+	}();
+	if (frame < start_frame) {
+		return;
+	}
+
+	struct PreviousWriter {
+		ImageId  id;
+		bool     valid   = false;
+		bool     compute = false;
+		bool     skipped = false;
+		uint64_t shader  = 0;
+		uint32_t frame   = 0;
+		uint64_t ordinal = 0;
+	};
+	static PreviousWriter previous {};
+	static uint64_t       next_ordinal = 0;
+	const bool sample_frame =
+	    frame == start_frame || (frame - start_frame) % 120u == 0;
+
+	if (previous.valid) {
+		const auto stats = DebugDownloadByteStats(previous.id);
+		LOGF("ImageWriterOutput: addr=0x%010" PRIx64 " ordinal=%" PRIu64
+		     " frame=%u kind=%s skipped=%s shader=0x%016" PRIx64
+		     " size=%" PRIu64 " nonzero_bytes=%" PRIu64 " hash=0x%016" PRIx64
+		     " valid=%s rgb_pixels=%" PRIu64 " alpha_pixels=%" PRIu64
+		     " rgb_bbox=%u,%u-%u,%u next_frame=%u next_kind=%s next_skipped=%s "
+		     "next_shader=0x%016" PRIx64 "\n",
+		     target_address, previous.ordinal, previous.frame,
+		     previous.compute ? "compute" : "draw", previous.skipped ? "true" : "false",
+		     previous.shader, stats.size, stats.nonzero_bytes, stats.hash,
+		     stats.valid ? "true" : "false", stats.rgb_nonzero_pixels,
+		     stats.alpha_nonzero_pixels, stats.rgb_min_x, stats.rgb_min_y, stats.rgb_max_x,
+		     stats.rgb_max_y, frame, compute ? "compute" : "draw",
+		     skipped ? "true" : "false", shader);
+		previous.valid = false;
+	}
+	if (!sample_frame) {
+		return;
+	}
+	previous = PreviousWriter {
+	    .id      = id,
+	    .valid   = true,
+	    .compute = compute,
+	    .skipped = skipped,
+	    .shader  = shader,
+	    .frame   = frame,
+	    .ordinal = next_ordinal++,
+	};
 }
 
 std::vector<uint32_t> TextureCache::DebugDownloadBufferWords(vk::Buffer source,

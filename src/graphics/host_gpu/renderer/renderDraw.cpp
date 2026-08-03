@@ -1177,6 +1177,12 @@ void RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, RenderCommandBuffer
 	RebindIndexBuffer(buffer, index_binding);
 	state.rendering =
 	    AcquireRenderTargets(buffer, state.color_info, state.color_count, state.depth_info);
+	if (state.color_count != 0) {
+		m_context.GetTextureCache().DebugTraceImageWriter(
+		    state.color_info[0].base_addr, state.color_info[0].image_id, false, false,
+		    buffer.GetShaders().GetPs().ps_regs.data_addr,
+		    static_cast<uint32_t>(m_context.GetGpu().GetFrameNum()));
+	}
 
 	if (log_pipeline_phase) {
 		LogDrawPhase(draw.name, "CreatePipeline");
@@ -1336,6 +1342,38 @@ bool RenderExecutor::TryExecuteGeometryReplayDraw(uint64_t submit_id, RenderComm
 	if (!ShaderCompileGeometryReplayCS(merged, vertex_info, replay, cs_info, cs_spirv) ||
 	    replay.parameter_count == 0 || replay.parameter_count > 2) {
 		return false;
+	}
+	const auto& replay_program   = *cs_info.stage.program;
+	const auto& replay_resources = *cs_info.stage.resources;
+	for (uint32_t i = 0; i < replay_program.info.buffers.size(); i++) {
+		ShaderBufferResource descriptor {};
+		const auto&          value = replay_resources.buffers[i];
+		if (value.dword_count < std::size(descriptor.fields)) {
+			return false;
+		}
+		std::copy_n(value.dwords.begin(), std::size(descriptor.fields), descriptor.fields);
+		const uint64_t address = descriptor.Base48();
+		const uint64_t stride  = descriptor.Stride();
+		const uint64_t records = descriptor.NumRecords();
+		if (address == 0 || records == 0) {
+			continue;
+		}
+		if (stride != 0 && records > UINT64_MAX / stride) {
+			return false;
+		}
+		const uint64_t size = stride != 0 ? stride * records : records;
+		uint8_t        byte = 0;
+		if (!Libs::LibKernel::Memory::TryReadBacking(address, &byte, 1) ||
+		    !Libs::LibKernel::Memory::TryReadBacking(address + size - 1, &byte, 1)) {
+			static std::atomic<uint32_t> invalid_resource_log_count {0};
+			if (invalid_resource_log_count.fetch_add(1, std::memory_order_relaxed) < 32) {
+				LOGF("GeometryReplay: skipping unmapped buffer[%u] addr=0x%016" PRIx64
+				     " size=0x%016" PRIx64 " source=%u read=%d written=%d\n",
+				     i, address, size, replay_program.info.buffers[i].source,
+				     replay_program.info.buffers[i].read, replay_program.info.buffers[i].written);
+			}
+			return false;
+		}
 	}
 
 	const ShaderRecompiler::IR::GeometryReplayLayout layout {replay.vertex_slots,
@@ -1513,6 +1551,37 @@ bool RenderExecutor::TryExecuteGeometryReplayDraw(uint64_t submit_id, RenderComm
 					     read_f32(rec_base + 5ull * stride + 0x2c),
 					     read_f32(rec_base + 6ull * stride + 0x2c),
 					     read_f32(rec_base + 7ull * stride + 0x2c));
+					// The CS reads this data through the buffer cache; a stale or
+					// diverged GPU copy would explain a dead gate that looks live
+					// from the CPU. Read the same records back through the cache.
+					if (stride != 0 && num_records != 0) {
+						auto&          buffer_cache = m_context.GetBufferCache();
+						const uint64_t span = std::min<uint64_t>(num_records, 8u) * stride;
+						const bool     gpu_dirty =
+						    buffer_cache.IsRegionGpuModified(rec_base, span);
+						const auto binding =
+						    buffer_cache.ObtainBuffer(buffer, rec_base, span, false, true);
+						const uint64_t aligned = span + 64u;
+						const auto gpu_words = m_context.GetTextureCache().DebugDownloadBufferWords(
+						    binding.buffer, binding.offset, (aligned / 4u) * 4u);
+						auto gpu_f32 = [&](uint64_t byte_offset) {
+							float v = 0;
+							if (byte_offset / 4u < gpu_words.size()) {
+								std::memcpy(&v, &gpu_words[byte_offset / 4u], 4);
+							}
+							return v;
+						};
+						LOGF("GeometryReplayGateGpu: sample=%u gpu_dirty=%d words=%zu "
+						     "gate[0..2]=%g,%g,%g rec0=%08x,%08x,%08x,%08x,%08x,%08x\n",
+						     sample, gpu_dirty ? 1 : 0, gpu_words.size(), gpu_f32(0x2c),
+						     gpu_f32(stride + 0x2c), gpu_f32(2ull * stride + 0x2c),
+						     gpu_words.size() > 5 ? gpu_words[0] : 0u,
+						     gpu_words.size() > 5 ? gpu_words[1] : 0u,
+						     gpu_words.size() > 5 ? gpu_words[2] : 0u,
+						     gpu_words.size() > 5 ? gpu_words[3] : 0u,
+						     gpu_words.size() > 5 ? gpu_words[4] : 0u,
+						     gpu_words.size() > 5 ? gpu_words[5] : 0u);
+					}
 				} else {
 					LOGF("GeometryReplayGate: sample=%u srt=0x%016" PRIx64 " unreadable\n", sample,
 					     table);
@@ -1747,6 +1816,12 @@ void RenderExecutor::DrawAuto(uint64_t submit_id, RenderCommandBuffer& buffer, u
 
 	if (draw_prim7_as_ngg && state.vs_input_info.buffers_num == 0 &&
 	    state.vs_input_info.param_export_mask == 0 && state.ps_input_info.input_num != 0) {
+		if (state.color_count != 0) {
+			m_context.GetTextureCache().DebugTraceImageWriter(
+			    state.color_info[0].base_addr, state.color_info[0].image_id, false, true,
+			    sh_ctx.GetVs().gs_regs.data_addr,
+			    static_cast<uint32_t>(m_context.GetGpu().GetFrameNum()));
+		}
 		if (graphics_debug_dump_enabled()) {
 			LOGF("DrawIndexAuto: skipping rect-list draw with no VS param exports and PS inputs: "
 			     "ps_inputs=%u ps=0x%016" PRIx64 " es=0x%016" PRIx64 " gs=0x%016" PRIx64 "\n",

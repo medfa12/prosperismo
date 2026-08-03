@@ -322,6 +322,18 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, RenderCommandBuffer& buf
 	                                DescriptorCache::Stage::Compute);
 	RebindBuffers(buffer, bindings);
 	RebindImages(buffer, bindings);
+	for (uint32_t i = 0;
+	     i < program.info.images.size() && i < bindings.resources.images.size(); i++) {
+		const auto& program_image = program.info.images[i];
+		const auto& bound_image   = bindings.resources.images[i];
+		if (program_image.written &&
+		    (program_image.kind == ShaderRecompiler::IR::ResourceKind::StorageImage ||
+		     program_image.kind == ShaderRecompiler::IR::ResourceKind::StorageImageUint)) {
+			m_context.GetTextureCache().DebugTraceImageWriter(
+			    bound_image.desc.info.data.address, bound_image.image_id, true, false,
+			    sh_ctx.GetCs().cs_regs.data_addr, frame_num);
+		}
+	}
 
 	auto vk_buffer = buffer.Handle();
 	CommitBindings(buffer, vk::PipelineBindPoint::eCompute, pipeline.pipeline_layout, bindings);
