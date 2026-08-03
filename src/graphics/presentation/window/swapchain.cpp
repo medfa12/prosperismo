@@ -28,6 +28,9 @@
 #include "common/timer.h"
 #include "graphics/host_gpu/graphicContext.h"
 #include "graphics/host_gpu/renderer/render.h"
+
+#include <atomic>
+#include <cinttypes>
 #include "graphics/host_gpu/renderer/renderContext.h"
 #include "graphics/host_gpu/vma.h"
 #include "graphics/host_gpu/vulkanCommon.h"
@@ -384,8 +387,21 @@ struct Presenter::Impl {
 		desc.type                  = TextureCache::BindingType::VideoOut;
 
 		auto& cache           = renderer.GetTextureCache();
-		auto& image           = cache.GetImage(cache.FindImage(desc));
+		const auto image_id    = cache.FindImage(desc);
+		auto& image           = cache.GetImage(image_id);
 		image.usage.video_out = true;
+		if (Config::GraphicsDebugDumpEnabled()) {
+			static std::atomic_uint present_measure_count {0};
+			const auto measure = present_measure_count.fetch_add(1, std::memory_order_relaxed);
+			if (measure < 8 || (measure >= 60 && measure <= 360 && measure % 60 == 0)) {
+				const auto stats = cache.DebugDownloadByteStats(image_id);
+				LOGF("PresentBoundary: sample=%u addr=0x%016" PRIx64
+				     " size=%" PRIu64 " nonzero_bytes=%" PRIu64 " hash=0x%016" PRIx64
+				     " valid=%s\n",
+				     measure, info.data.address, stats.size, stats.nonzero_bytes,
+				     stats.hash, stats.valid ? "true" : "false");
+			}
+		}
 		return image;
 	}
 

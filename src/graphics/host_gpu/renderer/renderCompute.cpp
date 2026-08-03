@@ -29,7 +29,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <fmt/format.h>
 #include <limits>
 #include <span>
 #include <unordered_map>
@@ -229,9 +231,12 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, RenderCommandBuffer& buf
 		           image.kind == ShaderRecompiler::IR::ResourceKind::ImageUint;
 	    });
 	const bool                   has_sampler = !program.info.samplers.empty();
+	const bool                   target_probe =
+	    Config::GraphicsDebugDumpEnabled() &&
+	    sh_ctx.GetCs().cs_regs.data_addr == 0x0000000500690f00ull;
 	static std::atomic<uint32_t> dispatch_log_count {0};
-	if ((large_workgroup || has_sampler) &&
-	    dispatch_log_count.fetch_add(1, std::memory_order_relaxed) < 512) {
+	if ((large_workgroup || has_sampler || target_probe) &&
+	    (target_probe || dispatch_log_count.fetch_add(1, std::memory_order_relaxed) < 512)) {
 		LOGF("GraphicsRenderDispatchDirect: frame=%u shader=0x%016" PRIx64
 		     " groups=%ux%ux%u mode=0x%08" PRIx32 " local=%ux%ux%u "
 		     "buffers=%zu textures=%zu sampled=%zu storage=%zu samplers=%zu push=%u\n",
@@ -247,6 +252,19 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, RenderCommandBuffer& buf
 			     " stride=%u records=%u format=%u\n",
 			     i, buffer.source, buffer.written ? "read-write" : "read-only", r.Base48(),
 			     r.Stride(), r.NumRecords(), r.Format());
+			if (target_probe && frame_num == 3 && i == 0) {
+				uint32_t words[8] = {};
+				bool     readable = true;
+				for (uint32_t dword = 0; dword < 8; dword++) {
+					readable &= ShaderReadMappedGuestDword(
+					    nullptr, r.Base48() + static_cast<uint64_t>(dword) * 4u, &words[dword]);
+				}
+				LOGF("  CS target buffer raw readable=%s words=%08" PRIx32 " %08" PRIx32
+				     " %08" PRIx32 " %08" PRIx32 " %08" PRIx32 " %08" PRIx32
+				     " %08" PRIx32 " %08" PRIx32 "\n",
+				     readable ? "true" : "false", words[0], words[1], words[2], words[3], words[4],
+				     words[5], words[6], words[7]);
+			}
 		}
 		for (uint32_t i = 0; i < program.info.images.size(); i++) {
 			const auto& image = program.info.images[i];
@@ -322,6 +340,46 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, RenderCommandBuffer& buf
 	                                DescriptorCache::Stage::Compute);
 	RebindBuffers(buffer, bindings);
 	RebindImages(buffer, bindings);
+	const auto* astro_fullres_probe = std::getenv("PROSPERISMO_TRACE_ASTRO_FULLRES_WRITERS");
+	if (astro_fullres_probe != nullptr && std::strcmp(astro_fullres_probe, "1") == 0) {
+		for (uint32_t i = 0;
+		     i < program.info.images.size() && i < bindings.resources.images.size(); i++) {
+			const auto& program_image = program.info.images[i];
+			const auto& bound_image   = bindings.resources.images[i];
+			if (program_image.written &&
+			    (program_image.kind == ShaderRecompiler::IR::ResourceKind::StorageImage ||
+			     program_image.kind == ShaderRecompiler::IR::ResourceKind::StorageImageUint) &&
+			    bound_image.desc.info.data.address == 0x0000000514080000ull) {
+				m_context.GetTextureCache().DebugTraceAstroFullResWriter(
+				    bound_image.desc.info.data.address, bound_image.image_id, true, false,
+				    sh_ctx.GetCs().cs_regs.data_addr, frame_num);
+				break;
+			}
+		}
+	}
+	if (target_probe && frame_num == 3) {
+		auto& texture_cache = m_context.GetTextureCache();
+		std::string shader_data;
+		for (const auto value: bindings.user_data) {
+			shader_data += fmt::format(" {:08x}", value);
+		}
+		LOGF("SuperResolutionShaderData: dwords=%zu values=%s\n", bindings.user_data.size(),
+		     shader_data.c_str());
+		for (uint32_t i = 0; i < bindings.resources.images.size(); i++) {
+			const auto& image = bindings.resources.images[i];
+			const auto  stats = texture_cache.DebugDownloadByteStats(image.image_id);
+			LOGF("SuperResolutionBoundImage: index=%u addr=0x%010" PRIx64
+			     " extent=%ux%u fmt=%d size=%" PRIu64 " nonzero_bytes=%" PRIu64
+			     " hash=0x%016" PRIx64 " valid=%s storage=%s rgb_pixels=%" PRIu64
+			     " alpha_pixels=%" PRIu64 " rgb_bbox=%u,%u-%u,%u\n",
+			     i, image.desc.info.data.address, image.desc.info.extent.width,
+			     image.desc.info.extent.height, static_cast<int>(image.desc.info.pixel_format),
+			     stats.size, stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false",
+			     image.desc.type == TextureCache::BindingType::Storage ? "true" : "false",
+			     stats.rgb_nonzero_pixels, stats.alpha_nonzero_pixels, stats.rgb_min_x,
+			     stats.rgb_min_y, stats.rgb_max_x, stats.rgb_max_y);
+		}
+	}
 
 	auto vk_buffer = buffer.Handle();
 	CommitBindings(buffer, vk::PipelineBindPoint::eCompute, pipeline.pipeline_layout, bindings);

@@ -64,6 +64,21 @@ public:
 	[[nodiscard]] Image&        GetImage(ImageId id);
 	[[nodiscard]] const Image&  GetImage(ImageId id) const;
 	void                        MarkGpuWritten(ImageId id);
+	struct DebugImageByteStats {
+		bool     valid         = false;
+		uint64_t size          = 0;
+		uint64_t nonzero_bytes = 0;
+		uint64_t hash          = 0;
+		uint64_t rgb_nonzero_pixels   = 0;
+		uint64_t alpha_nonzero_pixels = 0;
+		uint32_t rgb_min_x            = UINT32_MAX;
+		uint32_t rgb_min_y            = UINT32_MAX;
+		uint32_t rgb_max_x            = 0;
+		uint32_t rgb_max_y            = 0;
+	};
+	[[nodiscard]] DebugImageByteStats DebugDownloadByteStats(ImageId id);
+	void DebugTraceAstroFullResWriter(uint64_t address, ImageId id, bool compute,
+	                                  bool skipped, uint64_t shader, uint32_t frame);
 
 	[[nodiscard]] bool ClearImageFromBuffer(CommandBuffer& command, uint64_t address, uint64_t size,
 	                                        uint32_t packed_clear);

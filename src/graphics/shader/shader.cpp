@@ -1348,10 +1348,9 @@ static void DumpShaderRecompilerSpirv(const char* type, uint64_t shader_hash,
 static void DumpShaderRecompilerOriginal(const char* type, uint64_t shader_hash,
                                          std::span<const uint32_t> code,
                                          const std::string&        decoded_dump) {
-	// if (!Config::GraphicsDebugDumpEnabled()) {
-	//	return;
-	// }
-	return;
+	if (!Config::GraphicsDebugDumpEnabled() || shader_hash != 0x0000000500690f00ull) {
+		return;
+	}
 	EXIT_IF(code.empty());
 
 	static std::atomic_int id = 0;
@@ -1513,7 +1512,8 @@ bool ShaderCompileSpirvCS(const HW::ComputeShaderInfo& regs, const HW::ShaderReg
 	options.compute_input_info   = &input_info;
 	options.wave_size            = input_info.wave_size;
 	options.lds_dword_count      = input_info.lds_dword_count;
-	options.dump_ir              = ShaderRecompilerTextDumpEnabled();
+	options.dump_ir              = ShaderRecompilerTextDumpEnabled() ||
+	                               shader_addr == 0x0000000500690f00ull;
 	options.early_dump           = options.dump_ir;
 	options.dump_label           = "ShaderRecompiler CS";
 

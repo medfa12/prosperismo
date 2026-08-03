@@ -76,6 +76,12 @@ static std::atomic<uint32_t> g_draw_input_log_count       = 0;
 static std::atomic<uint32_t> g_mrt_state_log_count        = 0;
 static std::atomic<uint32_t> g_shader_stage_log_count     = 0;
 static std::atomic<uint32_t> g_framebuffer_skip_log_count = 0;
+static std::atomic<uint32_t> g_present_binding_log_count  = 0;
+static std::atomic<uint32_t> g_scene_binding_log_count    = 0;
+static std::atomic<uint32_t> g_fullres_binding_log_count  = 0;
+static std::atomic<uint32_t> g_halfres_binding_log_count  = 0;
+static std::atomic<uint32_t> g_hdr_binding_log_count      = 0;
+static ImageId               g_hdr_first_target_probe;
 
 static const char* RenderColorTypeName(RenderColorType type) {
 	switch (type) {
@@ -1171,12 +1177,136 @@ void RenderExecutor::ExecutePreparedDraw(uint64_t submit_id, RenderCommandBuffer
 	LogDrawPhase(draw.name, "PrepareBindings");
 	auto bindings        = PrepareGraphicsBindings(buffer, state.vs_input_info.stage,
 	                                               state.ps_input_info.stage, state.ps_active);
+	if (graphics_debug_dump_enabled() && state.color_count != 0 &&
+	    state.color_info[0].extent.width == 3840 && state.color_info[0].extent.height == 2160 &&
+	    bindings.pixel.has_value()) {
+		const auto sample = g_present_binding_log_count.fetch_add(1, std::memory_order_relaxed);
+		if (sample < 8 || sample == 60) {
+			auto& texture_cache = m_context.GetTextureCache();
+			LOGF("PresentDrawBindings: sample=%u ps=0x%016" PRIx64 " target=0x%010" PRIx64
+			     " images=%zu\n",
+			     sample, bindings.pixel->program->shader_hash, state.color_info[0].base_addr,
+			     bindings.pixel->resources.images.size());
+			for (uint32_t i = 0; i < bindings.pixel->resources.images.size(); i++) {
+				const auto& image = bindings.pixel->resources.images[i];
+				const auto  stats = texture_cache.DebugDownloadByteStats(image.image_id);
+				LOGF("PresentDrawBindings: sample=%u image=%u addr=0x%010" PRIx64
+				     " size=%" PRIu64 " nonzero_bytes=%" PRIu64 " hash=0x%016" PRIx64
+				     " valid=%s storage=%s\n",
+				     sample, i, image.desc.info.data.address, stats.size, stats.nonzero_bytes,
+				     stats.hash, stats.valid ? "true" : "false",
+				     image.desc.type == TextureCache::BindingType::Storage ? "true" : "false");
+			}
+		}
+	}
+	if (graphics_debug_dump_enabled() && state.color_count != 0 &&
+	    state.color_info[0].extent.width == 2432 && state.color_info[0].extent.height == 1368 &&
+	    bindings.pixel.has_value()) {
+		const auto sample = g_scene_binding_log_count.fetch_add(1, std::memory_order_relaxed);
+		if (sample < 4) {
+			auto& texture_cache = m_context.GetTextureCache();
+			LOGF("SceneDrawBindings: sample=%u ps=0x%016" PRIx64 " target=0x%010" PRIx64
+			     " images=%zu\n",
+			     sample, bindings.pixel->program->shader_hash, state.color_info[0].base_addr,
+			     bindings.pixel->resources.images.size());
+			for (uint32_t i = 0; i < bindings.pixel->resources.images.size(); i++) {
+				const auto& image = bindings.pixel->resources.images[i];
+				const auto  stats = texture_cache.DebugDownloadByteStats(image.image_id);
+				LOGF("SceneDrawBindings: sample=%u image=%u addr=0x%010" PRIx64
+				     " extent=%ux%u fmt=%d size=%" PRIu64 " nonzero_bytes=%" PRIu64
+				     " hash=0x%016" PRIx64 " valid=%s storage=%s\n",
+				     sample, i, image.desc.info.data.address, image.desc.info.extent.width,
+				     image.desc.info.extent.height, static_cast<int>(image.desc.info.pixel_format),
+				     stats.size, stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false",
+				     image.desc.type == TextureCache::BindingType::Storage ? "true" : "false");
+			}
+		}
+	}
+	if (graphics_debug_dump_enabled() && state.color_count != 0 &&
+	    state.color_info[0].base_addr == 0x000000053d410000ull && bindings.pixel.has_value()) {
+		const auto sample = g_fullres_binding_log_count.fetch_add(1, std::memory_order_relaxed);
+		if (sample < 8) {
+			auto& texture_cache = m_context.GetTextureCache();
+			LOGF("FullResDrawBindings: sample=%u ps=0x%016" PRIx64 " target=0x%010" PRIx64
+			     " images=%zu\n",
+			     sample, bindings.pixel->program->shader_hash, state.color_info[0].base_addr,
+			     bindings.pixel->resources.images.size());
+			for (uint32_t i = 0; i < bindings.pixel->resources.images.size(); i++) {
+				const auto& image = bindings.pixel->resources.images[i];
+				const auto  stats = texture_cache.DebugDownloadByteStats(image.image_id);
+				LOGF("FullResDrawBindings: sample=%u image=%u addr=0x%010" PRIx64
+				     " extent=%ux%u fmt=%d size=%" PRIu64 " nonzero_bytes=%" PRIu64
+				     " hash=0x%016" PRIx64 " valid=%s storage=%s\n",
+				     sample, i, image.desc.info.data.address, image.desc.info.extent.width,
+				     image.desc.info.extent.height, static_cast<int>(image.desc.info.pixel_format),
+				     stats.size, stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false",
+				     image.desc.type == TextureCache::BindingType::Storage ? "true" : "false");
+			}
+		}
+	}
+	if (graphics_debug_dump_enabled() && state.color_count != 0 &&
+	    state.color_info[0].base_addr == 0x000000053a500000ull && bindings.pixel.has_value()) {
+		const auto sample = g_halfres_binding_log_count.fetch_add(1, std::memory_order_relaxed);
+		if (sample < 4) {
+			auto& texture_cache = m_context.GetTextureCache();
+			LOGF("HalfResDrawBindings: sample=%u ps=0x%016" PRIx64 " target=0x%010" PRIx64
+			     " images=%zu\n",
+			     sample, bindings.pixel->program->shader_hash, state.color_info[0].base_addr,
+			     bindings.pixel->resources.images.size());
+			for (uint32_t i = 0; i < bindings.pixel->resources.images.size(); i++) {
+				const auto& image = bindings.pixel->resources.images[i];
+				const auto  stats = texture_cache.DebugDownloadByteStats(image.image_id);
+				LOGF("HalfResDrawBindings: sample=%u image=%u addr=0x%010" PRIx64
+				     " extent=%ux%u fmt=%d size=%" PRIu64 " nonzero_bytes=%" PRIu64
+				     " hash=0x%016" PRIx64 " valid=%s\n",
+				     sample, i, image.desc.info.data.address, image.desc.info.extent.width,
+				     image.desc.info.extent.height, static_cast<int>(image.desc.info.pixel_format),
+				     stats.size, stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false");
+			}
+		}
+	}
+	if (graphics_debug_dump_enabled() && state.color_count != 0 &&
+	    state.color_info[0].base_addr == 0x000000053aa00000ull && bindings.pixel.has_value()) {
+		const auto sample = g_hdr_binding_log_count.fetch_add(1, std::memory_order_relaxed);
+		if (sample < 4) {
+			auto& texture_cache = m_context.GetTextureCache();
+			if (sample == 0) {
+				g_hdr_first_target_probe = state.color_info[0].image_id;
+			} else if (sample == 1 && g_hdr_first_target_probe) {
+				const auto output = texture_cache.DebugDownloadByteStats(g_hdr_first_target_probe);
+				LOGF("HdrFirstOutput: size=%" PRIu64 " nonzero_bytes=%" PRIu64
+				     " hash=0x%016" PRIx64 " valid=%s\n",
+				     output.size, output.nonzero_bytes, output.hash,
+				     output.valid ? "true" : "false");
+			}
+			LOGF("HdrDrawBindings: sample=%u ps=0x%016" PRIx64 " target=0x%010" PRIx64
+			     " images=%zu\n",
+			     sample, bindings.pixel->program->shader_hash, state.color_info[0].base_addr,
+			     bindings.pixel->resources.images.size());
+			for (uint32_t i = 0; i < bindings.pixel->resources.images.size(); i++) {
+				const auto& image = bindings.pixel->resources.images[i];
+				const auto  stats = texture_cache.DebugDownloadByteStats(image.image_id);
+				LOGF("HdrDrawBindings: sample=%u image=%u addr=0x%010" PRIx64
+				     " extent=%ux%u fmt=%d size=%" PRIu64 " nonzero_bytes=%" PRIu64
+				     " hash=0x%016" PRIx64 " valid=%s\n",
+				     sample, i, image.desc.info.data.address, image.desc.info.extent.width,
+				     image.desc.info.extent.height, static_cast<int>(image.desc.info.pixel_format),
+				     stats.size, stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false");
+			}
+		}
+	}
 	auto vertex_bindings = PrepareVertexBuffers(submit_id, buffer, draw, state.vs_input_info);
 	auto index_binding   = PrepareIndexBuffer(buffer, index_source);
 	RebindVertexBuffers(buffer, state.vs_input_info, vertex_bindings);
 	RebindIndexBuffer(buffer, index_binding);
 	state.rendering =
 	    AcquireRenderTargets(buffer, state.color_info, state.color_count, state.depth_info);
+	if (state.color_count != 0) {
+		m_context.GetTextureCache().DebugTraceAstroFullResWriter(
+		    state.color_info[0].base_addr, state.color_info[0].image_id, false, false,
+		    buffer.GetShaders().GetPs().ps_regs.data_addr,
+		    static_cast<uint32_t>(m_context.GetGpu().GetFrameNum()));
+	}
 
 	if (log_pipeline_phase) {
 		LogDrawPhase(draw.name, "CreatePipeline");
@@ -1459,6 +1589,12 @@ void RenderExecutor::DrawAuto(uint64_t submit_id, RenderCommandBuffer& buffer, u
 
 	if (draw_prim7_as_ngg && state.vs_input_info.buffers_num == 0 &&
 	    state.vs_input_info.param_export_mask == 0 && state.ps_input_info.input_num != 0) {
+		if (state.color_count != 0) {
+			m_context.GetTextureCache().DebugTraceAstroFullResWriter(
+			    state.color_info[0].base_addr, state.color_info[0].image_id, false, true,
+			    sh_ctx.GetVs().gs_regs.data_addr,
+			    static_cast<uint32_t>(m_context.GetGpu().GetFrameNum()));
+		}
 		if (graphics_debug_dump_enabled()) {
 			LOGF("DrawIndexAuto: skipping rect-list draw with no VS param exports and PS inputs: "
 			     "ps_inputs=%u ps=0x%016" PRIx64 " es=0x%016" PRIx64 " gs=0x%016" PRIx64 "\n",

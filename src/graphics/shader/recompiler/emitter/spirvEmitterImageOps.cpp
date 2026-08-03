@@ -145,7 +145,6 @@ void EmitImageLoad(EmitterState& state, const IR::Instruction& inst) {
 		    {OpImageFetch, integer ? state.vec4_uint_type : state.vec4_float_type, color, image,
 		     coord, ImageOperandsLodMask, EmitImageMipLodU32(state, inst, inst.src[0], view)});
 	}
-
 	const auto dmask     = inst.memory.dmask != 0 ? inst.memory.dmask : 1u;
 	uint32_t   dst_index = 0;
 	for (uint32_t component_index = 0; component_index < 4u; component_index++) {

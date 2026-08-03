@@ -20,6 +20,7 @@
 #include <array>
 #include <bit>
 #include <cinttypes>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -1769,6 +1770,130 @@ void TextureCache::DownloadImage(ImageId id) {
 	}
 	m_scheduler.FinishCurrent();
 	m_scheduler.DrainPriorityOperations();
+}
+
+TextureCache::DebugImageByteStats TextureCache::DebugDownloadByteStats(ImageId id) {
+	DebugImageByteStats stats {};
+	auto measure = [&stats](const uint8_t* begin, uint64_t size) {
+		stats.valid = true;
+		stats.size  = size;
+		stats.hash  = 1469598103934665603ull;
+		for (uint64_t i = 0; i < size; i++) {
+			stats.nonzero_bytes += begin[i] != 0 ? 1u : 0u;
+			stats.hash ^= begin[i];
+			stats.hash *= 1099511628211ull;
+		}
+	};
+	auto&               image = GetImage(id);
+	const auto          range = image.info.data;
+	if (!range.Valid()) {
+		return stats;
+	}
+	if (image.backing.image == nullptr || image.backing.samples != 1 ||
+	    image.backing.format == vk::Format::eUndefined) {
+		return stats;
+	}
+	const auto block_extent = vk::blockExtent(image.backing.format);
+	const auto block_bytes  = vk::blockSize(image.backing.format);
+	if (block_extent[0] == 0 || block_extent[1] == 0 || block_bytes == 0) {
+		return stats;
+	}
+	const uint64_t blocks_x =
+	    (image.backing.extent.width + block_extent[0] - 1u) / block_extent[0];
+	const uint64_t blocks_y =
+	    (image.backing.extent.height + block_extent[1] - 1u) / block_extent[1];
+	if (blocks_x == 0 || blocks_y > UINT64_MAX / blocks_x ||
+	    blocks_x * blocks_y > UINT64_MAX / block_bytes) {
+		return stats;
+	}
+	const uint64_t size = blocks_x * blocks_y * block_bytes;
+	auto [mapped, offset] = MapDownload(size, std::max<uint64_t>(block_bytes, 4u));
+	auto& download         = m_buffer_cache.GetUtilityBuffer(MemoryUsage::Download);
+	vk::BufferImageCopy copy {};
+	copy.bufferOffset      = offset;
+	copy.imageSubresource  = {vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+	copy.imageExtent       = image.backing.extent;
+	image.Download(std::span<const vk::BufferImageCopy>(&copy, 1), download.Handle(), offset, size);
+	m_scheduler.FinishCurrent();
+	download.Invalidate(offset, size);
+	measure(mapped, size);
+	if (image.backing.format == vk::Format::eR16G16B16A16Sfloat &&
+	    size == static_cast<uint64_t>(image.backing.extent.width) *
+	                image.backing.extent.height * 8u) {
+		for (uint32_t y = 0; y < image.backing.extent.height; y++) {
+			for (uint32_t x = 0; x < image.backing.extent.width; x++) {
+				uint16_t pixel[4] {};
+				std::memcpy(pixel,
+				            mapped + (static_cast<uint64_t>(y) * image.backing.extent.width + x) * 8u,
+				            sizeof(pixel));
+				const bool rgb = (pixel[0] & 0x7fffu) != 0 || (pixel[1] & 0x7fffu) != 0 ||
+				                 (pixel[2] & 0x7fffu) != 0;
+				if (rgb) {
+					stats.rgb_nonzero_pixels++;
+					stats.rgb_min_x = std::min(stats.rgb_min_x, x);
+					stats.rgb_min_y = std::min(stats.rgb_min_y, y);
+					stats.rgb_max_x = std::max(stats.rgb_max_x, x);
+					stats.rgb_max_y = std::max(stats.rgb_max_y, y);
+				}
+				stats.alpha_nonzero_pixels += (pixel[3] & 0x7fffu) != 0 ? 1u : 0u;
+			}
+		}
+	}
+	return stats;
+}
+
+void TextureCache::DebugTraceAstroFullResWriter(uint64_t address, ImageId id, bool compute,
+                                                bool skipped, uint64_t shader, uint32_t frame) {
+	constexpr uint64_t target_address = 0x0000000514080000ull;
+	const auto*        enabled = std::getenv("PROSPERISMO_TRACE_ASTRO_FULLRES_WRITERS");
+	if (enabled == nullptr || std::strcmp(enabled, "1") != 0 || address != target_address || !id) {
+		return;
+	}
+
+	struct PreviousWriter {
+		ImageId  id;
+		bool     valid   = false;
+		bool     compute = false;
+		bool     skipped = false;
+		uint64_t shader  = 0;
+		uint32_t frame   = 0;
+		uint64_t ordinal = 0;
+	};
+	static PreviousWriter previous {};
+	static uint64_t       next_ordinal = 0;
+	const bool            sample_frame = frame == 3 || frame % 120 == 0;
+
+	if (previous.valid) {
+		const auto stats = DebugDownloadByteStats(previous.id);
+		LOGF("AstroFullResWriterOutput: ordinal=%" PRIu64 " frame=%u kind=%s skipped=%s "
+		     "shader=0x%016" PRIx64 " size=%" PRIu64 " nonzero_bytes=%" PRIu64
+		     " hash=0x%016" PRIx64 " valid=%s rgb_pixels=%" PRIu64
+		     " alpha_pixels=%" PRIu64 " rgb_bbox=%u,%u-%u,%u next_frame=%u next_kind=%s "
+		     "next_skipped=%s next_shader=0x%016" PRIx64 "\n",
+		     previous.ordinal, previous.frame, previous.compute ? "compute" : "draw",
+		     previous.skipped ? "true" : "false", previous.shader, stats.size,
+		     stats.nonzero_bytes, stats.hash, stats.valid ? "true" : "false",
+		     stats.rgb_nonzero_pixels, stats.alpha_nonzero_pixels, stats.rgb_min_x,
+		     stats.rgb_min_y, stats.rgb_max_x, stats.rgb_max_y, frame,
+		     compute ? "compute" : "draw", skipped ? "true" : "false", shader);
+		previous.valid = false;
+	}
+
+	// A full HDR readback is 16.6 MiB. Sampling every writer on every frame changes the
+	// behavior under investigation enough to keep Astro in its boot UI indefinitely.
+	if (!sample_frame) {
+		return;
+	}
+
+	previous = PreviousWriter {
+	    .id      = id,
+	    .valid   = true,
+	    .compute = compute,
+	    .skipped = skipped,
+	    .shader  = shader,
+	    .frame   = frame,
+	    .ordinal = next_ordinal++,
+	};
 }
 
 bool TextureCache::InvalidateMemoryFromGPU(uint64_t address, uint64_t size,
