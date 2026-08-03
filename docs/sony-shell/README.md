@@ -1,24 +1,23 @@
-# Sony shell evidence and migration
+# Sony shell oracle and React Native implementation
 
-This directory preserves the evidence-backed PS5 shell work imported from the
-SharpEmu `codex/ps5-shell-integration` handoff at commits `687729af` and
-`d651a3b0`. It records recovered contracts, measurements, confidence levels,
-known unknowns, and dead ends. Read these documents before changing shell
-geometry, focus, animation, Home/Game Hub protocols, firmware-background
-replay, or system-asset handling.
+This directory contains the evidence-backed shell contracts used by
+Prosperismo. Firmware/oracle material is authoritative; imported historical
+implementation work is retained separately for provenance. Read these
+documents before changing shell geometry, focus, animation, Home/Game Hub
+protocols, firmware-background replay, or system-asset handling.
 
 Start with:
 
-1. [Current state](ps5-ui-state-of-work.md)
-2. [Evidence index](ps5-reverse-engineering-index.md)
-3. [Known unknowns](ps5-unknowns.md)
-4. [Original migration handoff](kytyps5-shell-migration-handoff.md)
+1. [React Native implementation](react-native-shell-migration.md)
+2. [Current evidence ledger](ps5-ui-state-of-work.md)
+3. [Evidence index](ps5-reverse-engineering-index.md)
+4. [Known unknowns](ps5-unknowns.md)
 
 ## Prosperismo architecture
 
 Prosperismo has two host UI routes in one React Native Windows application:
 
-- **Launcher** is a behavioral port of Kyty's Qt launcher. It owns local game
+- **Launcher** is a behavioral port of the previous desktop launcher. It owns local game
   discovery, metadata, configuration, compatibility notes, patches, trophies,
   save-data actions, and native-emulator process supervision.
 - **Big Picture** adapts the recovered Sony-like shell. It consumes the same
@@ -61,7 +60,7 @@ When sources disagree, prefer:
 2. LLVM's gfx1013 target definitions and tests for uncovered ISA families.
 3. Curated concrete implementations such as Fail0verflow Prosperous, PS5 Linux
    patches and maintained payload SDKs.
-4. PAL, Mesa/ACO, Kyty and other implementations as implementation references,
+4. PAL, Mesa/ACO, and other implementations as implementation references,
    never as proof of Sony behavior.
 
 Keep claims labelled **CONFIRMED**, **DIFFERENTIAL**, **ASSUMED**, or

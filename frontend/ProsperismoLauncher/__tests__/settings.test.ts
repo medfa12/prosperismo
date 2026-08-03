@@ -7,6 +7,14 @@ test('sanitizes settings while preserving original launcher defaults', () => {
   expect(result.global).toEqual({...DEFAULT_EMULATOR_SETTINGS, vblankFrequency: 120});
 });
 
+test('upgrades schema-one settings without fabricating compatibility data', () => {
+  const result = sanitizeSettings({schemaVersion: 1, gameDirectories: ['D:\\Games']});
+  expect(result.schemaVersion).toBe(2);
+  expect(result.compatibility).toEqual({});
+  expect(result.patchSelections).toEqual({});
+  expect(result.library).toEqual({sortField: 'titleName', sortDirection: 'ascending'});
+});
+
 test('stores custom settings by normalized Windows path', () => {
   const base = sanitizeSettings({});
   const custom = {...DEFAULT_EMULATOR_SETTINGS, screenResolution: '1920x1080' as const};

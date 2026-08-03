@@ -42,6 +42,7 @@ test('performs breadth-first child scanning, skips links, stops at eboot, and de
     ],
     'D:\\Games\\GameA\\sce_sys': [
       file('param.json', 'D:\\Games\\GameA\\sce_sys\\param.json'),
+      file('icon0.png', 'D:\\Games\\GameA\\sce_sys\\icon0.png'),
       file('pic0.png', 'D:\\Games\\GameA\\sce_sys\\pic0.png'),
     ],
     'D:\\Games\\Container': [directory('Alias', 'D:\\Games\\Alias')],
@@ -54,7 +55,9 @@ test('performs breadth-first child scanning, skips links, stops at eboot, and de
   expect(games[0]).toMatchObject({
     titleName: 'Astro Test',
     titleId: 'PPSA00001',
-    artworkPath: 'D:\\Games\\GameA\\sce_sys\\pic0.png',
+    iconPath: 'D:\\Games\\GameA\\sce_sys\\icon0.png',
+    backgroundPath: 'D:\\Games\\GameA\\sce_sys\\pic0.png',
+    artworkPath: 'D:\\Games\\GameA\\sce_sys\\icon0.png',
   });
   expect(host.listDirectory).not.toHaveBeenCalledWith('D:\\Games\\Linked');
   expect(host.listDirectory).not.toHaveBeenCalledWith('D:\\Games\\GameA\\NestedMustNotScan');

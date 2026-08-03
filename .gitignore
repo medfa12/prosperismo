@@ -14,6 +14,18 @@ _Build/
 # README records the contract; every oracle payload remains outside Git.
 /ps5oracle/**
 
+# Local Python verifier bytecode.
+__pycache__/
+
 # Emulator-local output.
 /run-logs/
 /shader_cache/
+
+# One-off standalone validation artifacts for the native Plane2 port. The
+# checked-in implementation is under frontend/ProsperismoLauncher/windows.
+/FirstWaveBackground.obj
+/NativeWavePlate.obj
+/NativeWavePlatePreview.obj
+/NativeWavePlate.preview.*
+/tools/FirstWavePlatePreview.exe
+/tools/NativeWavePlatePreview.exe

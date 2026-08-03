@@ -24,6 +24,12 @@
     <ClInclude Include="Prosperismo.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ProsperismoHost.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ProsperismoHostSupport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="AutolinkedNativeModules.g.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -33,6 +39,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Prosperismo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ProsperismoHost.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ProsperismoHostSupport.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="AutolinkedNativeModules.g.cpp">

@@ -38,7 +38,7 @@ test('emits the original launcher arguments in exact order', () => {
     '--command-buffer-dump', 'true',
     '--command-buffer-dump-folder', '_Buffers',
     '--printf-direction', 'Console',
-    '--printf-output-file', '_kyty.txt',
+    '--printf-output-file', '_prosperismo.txt',
     '--profiler-direction', 'Network',
     '--spirv-debug-printf', 'false',
     '--ngg-rectlist-draw', 'false',

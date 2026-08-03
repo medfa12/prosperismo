@@ -6,6 +6,7 @@ const path = require('node:path');
 const rnwPath = fs.realpathSync(
   path.resolve(require.resolve('react-native-windows/package.json'), '..'),
 );
+const nodeModulesPath = fs.realpathSync(path.resolve(__dirname, 'node_modules'));
 
 //
 
@@ -17,10 +18,13 @@ const rnwPath = fs.realpathSync(
  */
 
 const config = {
-  watchFolders: [path.resolve(__dirname, '../../assets/branding')],
+  // A UI worktree can reuse the checked-out dependency cache through a
+  // junction. Metro resolves the junction to its real path, so that path must
+  // be watched as well or bundle resolution loses @babel/runtime.
+  watchFolders: [path.resolve(__dirname, '../../assets/branding'), nodeModulesPath],
   //
   resolver: {
-    nodeModulesPaths: [path.resolve(__dirname, 'node_modules')],
+    nodeModulesPaths: [nodeModulesPath, path.resolve(__dirname, 'node_modules')],
     extraNodeModules: {
       'react-native': path.resolve(__dirname, 'node_modules/react-native'),
     },

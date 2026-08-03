@@ -2,13 +2,19 @@
 
 Date: 2026-08-02
 
+> Historical snapshot. The frontend changes described here were imported into
+> `C:\prosperismo-ui` on branch `codex/react-native-shell` so concurrent native
+> emulator work can continue on `main`. The active Big Picture state and
+> validation gate are documented in `docs/sony-shell/react-native-shell-migration.md`.
+
 ## Repository state
 
 - Repository: `C:\prosperismo`
 - Branch: `main`
 - Base commit: `a83ac2d389f900bde327b656dd4a78e54b6dbc01`
 - Remote: none configured
-- State: intentionally dirty; all React Native migration work described below is uncommitted.
+- State at snapshot: intentionally dirty; the frontend migration described
+  below had not yet been committed.
 - Do not reset or overwrite the concurrent HLE changes under `src/libs/` and `tests/HleContractTests.cpp`.
 
 ## Product boundary

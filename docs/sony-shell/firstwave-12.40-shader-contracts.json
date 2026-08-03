@@ -1,0 +1,311 @@
+{
+  "schema": "prosperismo.firstwave.shader-contracts.v1",
+  "source": "NPXS40087 12.40 eboot raw shader entry points; decoded with SDK 10 libSceShaderIsaP generation 2",
+  "eboot": {
+    "size": 21695212,
+    "sha256": "18c9320be767a540578e54cb769f94996c3f37a4f158ef977ebfb798ffd6b04f"
+  },
+  "constant_buffer_layout": {
+    "descriptor": "stage-specific scalar descriptor documented below",
+    "members": {
+      "0x40": "worldProjectionMatrix",
+      "0x110": "BackgroundColour0",
+      "0x120": "BackgroundColour1",
+      "0x130": "BackgroundLightColour",
+      "0x140": "ReflectionColour",
+      "0x150": "EnvironmentMapColour",
+      "0x160": "EdgeColour",
+      "0x170": "BlurParameters",
+      "0x180": "opacity",
+      "0x184": "time",
+      "0x188": "waveOpacity",
+      "0x18c": "oitSliceOffset",
+      "0x190": "screenDim.x",
+      "0x194": "screenDim.y"
+    }
+  },
+  "pipeline_order": [
+    "fw_flow_vl",
+    "fw_flow_h",
+    "fw_flow_dv",
+    "fw_oit_p",
+    "fw_comp_oit_p",
+    "fw_blurh_p",
+    "fw_blurv_p",
+    "fw_fxaa_p"
+  ],
+  "stages": [
+    {
+      "name": "fw_blurh_p",
+      "pipeline_role": "pixel: horizontal blur",
+      "file_offset": "0x11f4800",
+      "code_length": "0x35c",
+      "sha256": "2997bdc3cc3890d6b127497f38045976292b42d0f95dbe2e7f1fee7d2daba955",
+      "instruction_count": 122,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x8","opcode":"s_buffer_load_dwordx4","operands":["s[16:19]","s[12:15]","null"],"options":[]}
+      ],
+      "constant_reads": [{"descriptor":"s[12:15]","offset":"0x0","bytes":16}],
+      "resource_bindings": [
+        {"kind":"sampled_image_2d","descriptor":"s[0:7]","access":"sample"},
+        {"kind":"sampler","descriptor":"s[8:11]"}
+      ],
+      "resource_opcode_counts": {"image_sample":14},
+      "exports": [
+        {"relative_offset":"0x350","operands":["mrt0","v0","v1"],"options":["compr","vm","done"]}
+      ]
+    },
+    {
+      "name": "fw_blurv_p",
+      "pipeline_role": "pixel: vertical blur",
+      "file_offset": "0x11f4d00",
+      "code_length": "0x35c",
+      "sha256": "f82ffbb910a08b95a205d937c96037b9fbac3934fa08b8c783a2d46d509879bf",
+      "instruction_count": 122,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x8","opcode":"s_buffer_load_dwordx4","operands":["s[16:19]","s[12:15]","null"],"options":[]}
+      ],
+      "constant_reads": [{"descriptor":"s[12:15]","offset":"0x0","bytes":16}],
+      "resource_bindings": [
+        {"kind":"sampled_image_2d","descriptor":"s[0:7]","access":"sample"},
+        {"kind":"sampler","descriptor":"s[8:11]"}
+      ],
+      "resource_opcode_counts": {"image_sample":14},
+      "exports": [
+        {"relative_offset":"0x350","operands":["mrt0","v0","v1"],"options":["compr","vm","done"]}
+      ]
+    },
+    {
+      "name": "fw_blur_vv",
+      "pipeline_role": "vertex/vertex entry: fullscreen blur geometry",
+      "file_offset": "0x11f5200",
+      "code_length": "0xcc",
+      "sha256": "82679b5c0828ca7b110b96ee2ab4177c42cf05dd755fa611954e76633e214404",
+      "instruction_count": 40,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x40","opcode":"s_load_dwordx8","operands":["s[0:7]","s[12:13]","null"],"options":[]},
+        {"relative_offset":"0x4c","opcode":"s_buffer_load_dwordx16","operands":["s[12:27]","s[8:11]","null"],"options":[]}
+      ],
+      "constant_reads": [{"descriptor":"s[8:11]","offset":"0x0","bytes":64}],
+      "resource_bindings": [
+        {"kind":"vertex_buffer_xyzw","descriptor":"s[0:3]","access":"format load"},
+        {"kind":"vertex_buffer_xy","descriptor":"s[4:7]","access":"format load"},
+        {"kind":"root_table","descriptor":"s[12:13]","loads":"s[0:7]"}
+      ],
+      "resource_opcode_counts": {"buffer_load_format_xy":1,"buffer_load_format_xyzw":1},
+      "exports": [
+        {"relative_offset":"0x2c","operands":["prim","v0","off","off","off"],"options":["done"]},
+        {"relative_offset":"0xb4","operands":["pos0","v9","v0","v6","v7"],"options":["done"]},
+        {"relative_offset":"0xc0","operands":["param0","v4","v5","off","off"],"options":[]}
+      ]
+    },
+    {
+      "name": "fw_flow_dv",
+      "pipeline_role": "domain/vertex entry: folded-wave tessellation evaluation",
+      "file_offset": "0x11f5500",
+      "code_length": "0xf68",
+      "sha256": "625bab3ba69f5698444757bc5a5c03478a2fa486a0df12755d90d2fd0e53d762",
+      "instruction_count": 700,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x44","opcode":"s_load_dwordx4","operands":["s[0:3]","s[12:13]","null"],"options":["offset:0x000030"]},
+        {"relative_offset":"0x58","opcode":"s_buffer_load_dwordx16","operands":["s[44:59]","s[8:11]","null"],"options":["offset:0x000080"]},
+        {"relative_offset":"0x60","opcode":"s_buffer_load_dwordx16","operands":["s[12:27]","s[8:11]","null"],"options":["offset:0x0000c0"]},
+        {"relative_offset":"0x114","opcode":"s_buffer_load_dwordx16","operands":["s[28:43]","s[8:11]","null"],"options":[]}
+      ],
+      "constant_reads": [
+        {"descriptor":"s[8:11]","offset":"0x0","bytes":64},
+        {"descriptor":"s[8:11]","offset":"0x80","bytes":64},
+        {"descriptor":"s[8:11]","offset":"0xc0","bytes":64}
+      ],
+      "resource_bindings": [
+        {"kind":"root_table","descriptor":"s[12:13]","offset":"0x30","loads":"s[0:3]"},
+        {"kind":"control_point_buffer","descriptor":"s[0:3]","scalar_offset":"s4","dynamic_offset":"v0","loads":16,"stride":"0x20","range":"0x0..0x1e0","options":["offen","glc","dlc"]}
+      ],
+      "resource_opcode_counts": {"buffer_load_dwordx4":16},
+      "exports": [
+        {"relative_offset":"0x2c","operands":["prim","v0","off","off","off"],"options":["done"]},
+        {"relative_offset":"0xeb8","operands":["pos0","v75","v93","v89","v85"],"options":["done"]},
+        {"relative_offset":"0xf3c","operands":["param0","v5","v6","v7","off"],"options":[]},
+        {"relative_offset":"0xf44","operands":["param1","v49","v56","v27","off"],"options":[]},
+        {"relative_offset":"0xf4c","operands":["param2","v13","off","off","off"],"options":[]},
+        {"relative_offset":"0xf54","operands":["param3","v12","v19","v2","off"],"options":[]},
+        {"relative_offset":"0xf5c","operands":["param4","v9","v10","v11","off"],"options":[]}
+      ]
+    },
+    {
+      "name": "fw_flow_h",
+      "pipeline_role": "hull entry: LDS control-point read and tessellation-buffer write",
+      "file_offset": "0x11f6600",
+      "code_length": "0x108",
+      "sha256": "5a525911accf4e4e18c2f91033a0e6b5d010b758eea2e0021890aed18426355a",
+      "instruction_count": 41,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x8","opcode":"s_load_dwordx2","operands":["s[8:9]","s[0:1]","null"],"options":[]},
+        {"relative_offset":"0x40","opcode":"s_load_dwordx4","operands":["s[12:15]","s[8:9]","null"],"options":["offset:0x000030"]},
+        {"relative_offset":"0xb0","opcode":"s_load_dwordx4","operands":["s[16:19]","s[8:9]","null"],"options":["offset:0x000020"]}
+      ],
+      "constant_reads": [],
+      "resource_bindings": [
+        {"kind":"root_table","descriptor":"s[0:1]","loads":"s[8:9]"},
+        {"kind":"storage_buffer","descriptor":"s[12:15]","root_offset":"0x30","access":"write","scalar_offset":"s2"},
+        {"kind":"storage_buffer","descriptor":"s[16:19]","root_offset":"0x20","access":"write","scalar_offset":"s4"},
+        {"kind":"lds","access":"four ds_read2_b32 pairs covering offsets 0..7"}
+      ],
+      "resource_opcode_counts": {"buffer_store_dword":6,"buffer_store_dwordx2":1,"buffer_store_dwordx4":3,"ds_read2_b32":4},
+      "exports": []
+    },
+    {
+      "name": "fw_flow_vl",
+      "pipeline_role": "vertex/local entry: vertex fetch and LDS control-point write",
+      "file_offset": "0x11f6900",
+      "code_length": "0x72c",
+      "sha256": "9091d5bbb086dd01a171981b150a371afaaf1ae1b06799f71808ae664ddba0d8",
+      "instruction_count": 325,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_swappc_b64",
+      "terminator_operands": ["null","s[6:7]"],
+      "scalar_loads": [
+        {"relative_offset":"0x8","opcode":"s_load_dwordx8","operands":["s[16:23]","s[12:13]","null"],"options":[]},
+        {"relative_offset":"0x14","opcode":"s_buffer_load_dword","operands":["vcc_hi","s[8:11]","null"],"options":["offset:0x000184"]}
+      ],
+      "constant_reads": [{"descriptor":"s[8:11]","offset":"0x184","bytes":4,"members":["time"]}],
+      "resource_bindings": [
+        {"kind":"vertex_buffer_xyzw","descriptor":"s[16:19]","access":"format load"},
+        {"kind":"vertex_buffer_xyz","descriptor":"s[20:23]","access":"format load"},
+        {"kind":"root_table","descriptor":"s[12:13]","loads":"s[16:23]"},
+        {"kind":"lds","access":"two ds_write_b128 operations at byte offsets 0 and 0x10"}
+      ],
+      "resource_opcode_counts": {"buffer_load_format_xyz":1,"buffer_load_format_xyzw":1,"ds_write_b128":2},
+      "exports": []
+    },
+    {
+      "name": "fw_oit_p",
+      "pipeline_role": "pixel: order-independent transparency node construction",
+      "file_offset": "0x11f7200",
+      "code_length": "0xc84",
+      "sha256": "5ee68a4e8dd2c4d615cb79cc83a12cce00ce1a194b7c171b5cea5e40a9b4b80d",
+      "instruction_count": 524,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0xc","opcode":"s_buffer_load_dword","operands":["vcc_lo","s[8:11]","null"],"options":["offset:0x000188"]},
+        {"relative_offset":"0x90","opcode":"s_buffer_load_dwordx4","operands":["s[12:15]","s[8:11]","null"],"options":["offset:0x000190"]},
+        {"relative_offset":"0xac","opcode":"s_buffer_load_dwordx4","operands":["s[16:19]","s[8:11]","null"],"options":["offset:0x000170"]},
+        {"relative_offset":"0x518","opcode":"s_buffer_load_dword","operands":["vcc_lo","s[8:11]","null"],"options":["offset:0x000184"]},
+        {"relative_offset":"0x58c","opcode":"s_buffer_load_dwordx8","operands":["s[28:35]","s[8:11]","null"],"options":["offset:0x000150"]},
+        {"relative_offset":"0x5f8","opcode":"s_buffer_load_dwordx16","operands":["s[12:27]","s[8:11]","null"],"options":["offset:0x000110"]},
+        {"relative_offset":"0x830","opcode":"s_buffer_load_dword","operands":["vcc_lo","s[8:11]","null"],"options":["offset:0x00018c"]}
+      ],
+      "constant_reads": [
+        {"descriptor":"s[8:11]","offset":"0x110","bytes":64,"members":["BackgroundColour0","BackgroundColour1","BackgroundLightColour","ReflectionColour"]},
+        {"descriptor":"s[8:11]","offset":"0x150","bytes":32,"members":["EnvironmentMapColour","EdgeColour"]},
+        {"descriptor":"s[8:11]","offset":"0x170","bytes":16,"members":["BlurParameters"]},
+        {"descriptor":"s[8:11]","offset":"0x184","bytes":4,"members":["time"]},
+        {"descriptor":"s[8:11]","offset":"0x188","bytes":4,"members":["waveOpacity"]},
+        {"descriptor":"s[8:11]","offset":"0x18c","bytes":4,"members":["oitSliceOffset"]},
+        {"descriptor":"s[8:11]","offset":"0x190","bytes":16,"members":["screenDim.x","screenDim.y"]}
+      ],
+      "resource_bindings": [
+        {"kind":"oit_node_buffer","descriptor":"s[0:3]","access":"four indexed loads and four indexed stores"},
+        {"kind":"oit_counter_buffer","descriptor":"s[4:7]","access":"indexed atomic add with return"}
+      ],
+      "resource_opcode_counts": {"buffer_atomic_add":1,"buffer_load_dword":4,"buffer_store_dword":4},
+      "exports": [
+        {"relative_offset":"0x18","operands":["mrt0","v4","v4"],"options":["compr","vm","done"]}
+      ]
+    },
+    {
+      "name": "fw_comp_oit_p",
+      "pipeline_role": "pixel: order-independent transparency resolve/composite",
+      "file_offset": "0x11f8100",
+      "code_length": "0x3d0",
+      "sha256": "44e7fa5015d7091aa760637da25187591f6282bc1a3d7a8903d90a04cc12327d",
+      "instruction_count": 180,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x8","opcode":"s_buffer_load_dwordx4","operands":["s[12:15]","s[8:11]","null"],"options":["offset:0x00018c"]},
+        {"relative_offset":"0x140","opcode":"s_buffer_load_dword","operands":["vcc_lo","s[8:11]","null"],"options":["offset:0x000184"]},
+        {"relative_offset":"0x158","opcode":"s_buffer_load_dwordx8","operands":["s[0:7]","s[8:11]","null"],"options":["offset:0x000040"]},
+        {"relative_offset":"0x21c","opcode":"s_buffer_load_dwordx8","operands":["s[20:27]","s[8:11]","null"],"options":["offset:0x000110"]},
+        {"relative_offset":"0x224","opcode":"s_buffer_load_dwordx4","operands":["s[12:15]","s[8:11]","null"],"options":["offset:0x000130"]},
+        {"relative_offset":"0x39c","opcode":"s_buffer_load_dword","operands":["vcc_lo","s[8:11]","null"],"options":["offset:0x000180"]}
+      ],
+      "constant_reads": [
+        {"descriptor":"s[8:11]","offset":"0x40","bytes":32,"members":["worldProjectionMatrix"]},
+        {"descriptor":"s[8:11]","offset":"0x110","bytes":32,"members":["BackgroundColour0","BackgroundColour1"]},
+        {"descriptor":"s[8:11]","offset":"0x130","bytes":16,"members":["BackgroundLightColour"]},
+        {"descriptor":"s[8:11]","offset":"0x180","bytes":4,"members":["opacity"]},
+        {"descriptor":"s[8:11]","offset":"0x184","bytes":4,"members":["time"]},
+        {"descriptor":"s[8:11]","offset":"0x18c","bytes":16,"members":["oitSliceOffset","screenDim.x","screenDim.y"]}
+      ],
+      "resource_bindings": [
+        {"kind":"oit_node_buffer","descriptor":"s[0:3]","access":"two indexed loads"},
+        {"kind":"oit_head_buffer","descriptor":"s[4:7]","access":"one indexed load and one indexed store"}
+      ],
+      "resource_opcode_counts": {"buffer_load_dword":3,"buffer_store_dword":1},
+      "exports": [
+        {"relative_offset":"0x3c4","operands":["mrt0","v0","v1"],"options":["compr","vm","done"]}
+      ]
+    },
+    {
+      "name": "fw_fxaa_p",
+      "pipeline_role": "pixel: FXAA resolve",
+      "file_offset": "0x11f8700",
+      "code_length": "0xa00",
+      "sha256": "07774ba620581a0e80f7a5970e64bae289ad4bf1df2676e2fd7068c1b395dc8d",
+      "instruction_count": 463,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [],
+      "constant_reads": [],
+      "resource_bindings": [
+        {"kind":"sampled_image_2d","descriptor":"s[0:7]","access":"resinfo, gather and LZ sample"},
+        {"kind":"sampler","descriptor":"s[8:11]"}
+      ],
+      "resource_opcode_counts": {"image_gather4_lz":1,"image_gather4_lz_o":1,"image_get_resinfo":1,"image_sample_lz":24,"image_sample_lz_o":2},
+      "exports": [
+        {"relative_offset":"0x9f4","operands":["mrt0","v0","v1"],"options":["compr","vm","done"]}
+      ]
+    },
+    {
+      "name": "fw_background_p",
+      "pipeline_role": "pixel: persistent dark-room base layer",
+      "file_offset": "0x11f9300",
+      "code_length": "0x230",
+      "sha256": "7ae111131ca7ca639bb8625274715f2a9d02adcecba18f2bc8b162eeae2a07c8",
+      "instruction_count": 90,
+      "first_opcode": "s_inst_prefetch",
+      "last_opcode": "s_endpgm",
+      "scalar_loads": [
+        {"relative_offset":"0x8","opcode":"s_buffer_load_dwordx2","operands":["s[16:17]","s[0:3]","null"],"options":["offset:0x000180"]},
+        {"relative_offset":"0x10","opcode":"s_buffer_load_dwordx2","operands":["vcc","s[0:3]","null"],"options":["offset:0x000190"]},
+        {"relative_offset":"0x28","opcode":"s_buffer_load_dwordx8","operands":["s[4:11]","s[0:3]","null"],"options":["offset:0x000040"]},
+        {"relative_offset":"0x8c","opcode":"s_buffer_load_dwordx8","operands":["s[20:27]","s[0:3]","null"],"options":["offset:0x000110"]},
+        {"relative_offset":"0x10c","opcode":"s_buffer_load_dwordx4","operands":["s[28:31]","s[0:3]","null"],"options":["offset:0x000130"]}
+      ],
+      "constant_reads": [
+        {"descriptor":"s[0:3]","offset":"0x40","bytes":32,"members":["worldProjectionMatrix"]},
+        {"descriptor":"s[0:3]","offset":"0x110","bytes":32,"members":["BackgroundColour0","BackgroundColour1"]},
+        {"descriptor":"s[0:3]","offset":"0x130","bytes":16,"members":["BackgroundLightColour"]},
+        {"descriptor":"s[0:3]","offset":"0x180","bytes":8,"members":["opacity","time"]},
+        {"descriptor":"s[0:3]","offset":"0x190","bytes":8,"members":["screenDim.x","screenDim.y"]}
+      ],
+      "resource_bindings": [],
+      "resource_opcode_counts": {},
+      "exports": [
+        {"relative_offset":"0x224","operands":["mrt0","v0","v1"],"options":["compr","vm","done"]}
+      ]
+    }
+  ]
+}
