@@ -16,6 +16,7 @@
 #include "kernel/uuid.h"
 #include "libs/errno.h"
 #include "libs/libs.h"
+#include "libs/writeThrottling.h"
 #include "libs/network.h"
 #include "loader/elf.h"
 #include "loader/runtimeLinker.h"
@@ -1882,12 +1883,20 @@ namespace LibKernelWriteThrottling {
 
 LIB_VERSION("libkernel_write_throttling", 1, "libkernel", 1, 1);
 
-static uint64_t KYTY_SYSV_ABI WriteThrottlingStub() {
-	return 0;
+static int KYTY_SYSV_ABI WriteThrottlingQuery(WriteThrottlingResult* result) {
+	if (result == nullptr) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	// Windows has no Prospero SSD write-throttling state. Preserve the firmware
+	// ABI and report the neutral state instead of returning success without
+	// initializing the guest's 32-byte result.
+	*result = {};
+	return OK;
 }
 
 LIB_DEFINE(InitLibKernelWriteThrottling) {
-	LIB_FUNC("YFC3dBBipj8", WriteThrottlingStub);
+	LIB_FUNC("YFC3dBBipj8", WriteThrottlingQuery);
 }
 
 } // namespace LibKernelWriteThrottling

@@ -8,6 +8,7 @@
 #include "kernel/fileSystem.h"
 #include "libs/errno.h"
 #include "libs/libs.h"
+#include "libs/saveDataCapacity.h"
 #include "libs/saveDataMountSlots.h"
 #include "loader/symbolDatabase.h"
 #include "loader/systemContent.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <vector>
 
 namespace Libs {
@@ -295,10 +297,11 @@ static bool dir_name_match(const char* str, const char* pattern) {
 }
 
 static int mount_save_data(int slot, std::string_view dir_name, const std::string& directory,
-                           uint32_t status, SaveDataMountResult* result) {
+                           uint64_t blocks, uint32_t status, SaveDataMountResult* result) {
 	const std::string mount_point = SaveDataMountSlots::MountPoint(static_cast<size_t>(slot));
 	LibKernel::FileSystem::Mount(directory, mount_point);
-	g_mount_slots.Mount(static_cast<size_t>(slot), dir_name);
+	g_mount_slots.Mount(static_cast<size_t>(slot), dir_name, directory,
+	                    blocks == 0 ? SAVE_DATA_BLOCKS_MAX : blocks);
 	std::snprintf(result->mount_point.data, sizeof(result->mount_point.data), "%s",
 	              mount_point.c_str());
 	result->required_blocks = 0;
@@ -474,7 +477,8 @@ int KYTY_SYSV_ABI SaveDataMount3(const SaveDataMount3* mount, SaveDataMountResul
 		EXIT_NOT_IMPLEMENTED((!Common::File::IsDirectoryExisting(mount_dir)));
 	}
 
-	return mount_save_data(slot, dir_name, mount_dir, created ? 1u : 0u, mount_result);
+	return mount_save_data(slot, dir_name, mount_dir, mount->blocks, created ? 1u : 0u,
+	                       mount_result);
 }
 
 int KYTY_SYSV_ABI SaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param,
@@ -611,7 +615,7 @@ int KYTY_SYSV_ABI SaveDataTransferringMount(const SaveDataTransferringMount* mou
 		Common::File::CreateDirectories(mount_dir);
 	}
 
-	return mount_save_data(slot, dir_name, mount_dir, 1, mount_result);
+	return mount_save_data(slot, dir_name, mount_dir, SAVE_DATA_BLOCKS_MAX, 1, mount_result);
 }
 
 int KYTY_SYSV_ABI SaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
@@ -848,13 +852,33 @@ int KYTY_SYSV_ABI SaveDataGetMountInfo(const SaveDataMountPoint* mount_point,
                                        SaveDataMountInfo*        info) {
 	PRINT_NAME();
 
-	EXIT_NOT_IMPLEMENTED(mount_point == nullptr);
-	EXIT_NOT_IMPLEMENTED(info == nullptr);
+	if (mount_point == nullptr || info == nullptr) {
+		return SAVE_DATA_ERROR_PARAMETER;
+	}
 
 	*info = {};
 
-	info->blocks      = SAVE_DATA_BLOCKS_MAX;
-	info->free_blocks = SAVE_DATA_BLOCKS_MAX;
+	Common::LockGuard lock(g_mount_mutex);
+	const int slot = g_mount_slots.Find(mount_point->data);
+	if (slot == SaveDataMountSlots::FULL) {
+		return SAVE_DATA_ERROR_BAD_MOUNTED;
+	}
+	const auto* mounted = g_mount_slots.Get(static_cast<size_t>(slot));
+	if (mounted == nullptr) {
+		return SAVE_DATA_ERROR_BAD_MOUNTED;
+	}
+
+	uint64_t used_bytes = 0;
+	for (const auto& file: Common::File::FindFiles(mounted->host_path)) {
+		if (file.size > std::numeric_limits<uint64_t>::max() - used_bytes) {
+			used_bytes = std::numeric_limits<uint64_t>::max();
+			break;
+		}
+		used_bytes += file.size;
+	}
+
+	info->blocks      = mounted->blocks;
+	info->free_blocks = SaveDataFreeBlocks(mounted->blocks, used_bytes);
 
 	return OK;
 }

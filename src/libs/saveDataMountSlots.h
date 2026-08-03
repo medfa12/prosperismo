@@ -2,6 +2,7 @@
 #define EMULATOR_INCLUDE_EMULATOR_LIBS_SAVEDATAMOUNTSLOTS_H_
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,6 +11,12 @@ namespace Libs::SaveData {
 
 class SaveDataMountSlots {
 public:
+	struct Entry {
+		std::string directory;
+		std::string host_path;
+		uint64_t    blocks = 0;
+	};
+
 	static constexpr int    BUSY  = -2;
 	static constexpr int    FULL  = -1;
 	static constexpr size_t COUNT = 16;
@@ -18,7 +25,7 @@ public:
 		int available = FULL;
 		for (size_t index = 0; index < m_directories.size(); index++) {
 			const auto& mounted = m_directories[index];
-			if (mounted == directory) {
+			if (mounted.has_value() && mounted->directory == directory) {
 				return BUSY;
 			}
 			if (!mounted.has_value() && available == FULL) {
@@ -28,7 +35,10 @@ public:
 		return available;
 	}
 
-	void Mount(size_t slot, std::string_view directory) { m_directories[slot] = directory; }
+	void Mount(size_t slot, std::string_view directory, std::string_view host_path,
+	           uint64_t blocks) {
+		m_directories[slot] = Entry {std::string(directory), std::string(host_path), blocks};
+	}
 
 	void Release(size_t slot) {
 		if (slot < m_directories.size()) {
@@ -45,6 +55,13 @@ public:
 		return FULL;
 	}
 
+	[[nodiscard]] const Entry* Get(size_t slot) const {
+		if (slot >= m_directories.size() || !m_directories[slot].has_value()) {
+			return nullptr;
+		}
+		return &*m_directories[slot];
+	}
+
 	[[nodiscard]] static std::string MountPoint(size_t slot) {
 		return "/savedata" + std::to_string(slot);
 	}
@@ -59,7 +76,7 @@ public:
 	}
 
 private:
-	std::array<std::optional<std::string>, COUNT> m_directories;
+	std::array<std::optional<Entry>, COUNT> m_directories;
 };
 
 } // namespace Libs::SaveData

@@ -1,13 +1,25 @@
 #include "kernel/eventFlag.h"
 #include "kernel/uuid.h"
+#include "libs/agc.h"
 #include "libs/errno.h"
+#include "libs/saveDataCapacity.h"
+#include "libs/saveDataMountSlots.h"
 #include "libs/systemService.h"
+#include "libs/textToSpeech2.h"
+#include "libs/writeThrottling.h"
 
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <type_traits>
+
+using AcbDmaDataAbi = uint32_t*(KYTY_SYSV_ABI*)(Libs::Graphics::Gen5::CommandBuffer*, uint8_t,
+                                                uint8_t, uint64_t, uint8_t, uint8_t, uint64_t,
+                                                uint32_t, uint8_t, uint8_t);
+static_assert(std::is_same_v<decltype(&Libs::Graphics::Gen5::GraphicsAcbDmaData), AcbDmaDataAbi>,
+              "sceAgcAcbDmaData must match Sony's async command-buffer ABI");
 
 namespace {
 
@@ -88,11 +100,73 @@ void TestNamedEventFlagLifetimeAndExtendedAttribute() {
 	Check(KernelDeleteEventFlag(created) == OK, "event flag cleanup failed");
 }
 
+void TestProsperoSaveDataCapacityAndMountIdentity() {
+	using namespace Libs::SaveData;
+
+	Check(SaveDataBytesToBlocks(0) == 0, "empty save data consumed a block");
+	Check(SaveDataBytesToBlocks(SAVE_DATA_BLOCK_SIZE) == 1,
+	      "one exact Prospero block was rounded incorrectly");
+	Check(SaveDataBytesToBlocks(SAVE_DATA_BLOCK_SIZE + 1) == 2,
+	      "Prospero block usage did not round up");
+	Check(SaveDataFreeBlocks(48, SAVE_DATA_BLOCK_SIZE + 1) == 46,
+	      "free save-data blocks report used blocks instead of remaining blocks");
+	Check(SaveDataFreeBlocks(1, SAVE_DATA_BLOCK_SIZE + 1) == 0,
+	      "save-data free-block subtraction did not saturate");
+
+	SaveDataMountSlots slots;
+	const auto         slot = slots.FindAvailable("WORLD_A");
+	Check(slot == 0, "first save-data mount did not select slot zero");
+	slots.Mount(static_cast<size_t>(slot), "WORLD_A", "host/world-a", 48);
+	const auto* mounted = slots.Get(static_cast<size_t>(slot));
+	Check(mounted != nullptr && mounted->directory == "WORLD_A" &&
+	          mounted->host_path == "host/world-a" && mounted->blocks == 48,
+	      "live mount lost its host directory or allocated block count");
+	Check(slots.FindAvailable("WORLD_A") == SaveDataMountSlots::BUSY,
+	      "duplicate live save-data directory was accepted");
+}
+
+void TestFirmwareWriteThrottlingResultLayout() {
+	using Libs::LibKernelWriteThrottling::WriteThrottlingResult;
+	const WriteThrottlingResult result {};
+	Check(sizeof(result) == 0x20, "write-throttling result has the wrong firmware size");
+	Check(result.state == 0 && result.flags == 0,
+	      "Windows write-throttling fallback is not neutral");
+	for (const auto byte: result.reserved) {
+		Check(byte == 0, "write-throttling reserved output was not initialized");
+	}
+}
+
+void TestTextToSpeech2SdkLifecycle() {
+	using namespace Libs::TextToSpeech2;
+	State state;
+	Check(state.Initialize(false) == ERROR_INVALID_ARGUMENT,
+	      "text-to-speech accepted a null initialization parameter");
+	Check(state.Open(true) == ERROR_NOT_INITIALIZED,
+	      "text-to-speech opened before initialization");
+	Check(state.Initialize(true) == 0, "text-to-speech initialization failed");
+	Check(state.Initialize(true) == ERROR_ALREADY_INITIALIZED,
+	      "text-to-speech duplicate initialization was accepted");
+	Check(state.Open(true) == 0, "text-to-speech open failed");
+	Check(state.Open(true) == ERROR_ALREADY_OPENED,
+	      "text-to-speech duplicate open was accepted");
+	Check(state.RequireOpen(false) == ERROR_INVALID_ARGUMENT,
+	      "text-to-speech accepted a null speech parameter");
+	Check(state.RequireOpen() == 0, "text-to-speech rejected an opened operation");
+	Check(state.Close() == 0, "text-to-speech close failed");
+	Check(state.Close() == ERROR_NOT_OPENED, "text-to-speech duplicate close was accepted");
+	Check(state.Terminate() == 0, "text-to-speech termination failed");
+	Check(state.Terminate() == ERROR_NOT_INITIALIZED,
+	      "text-to-speech duplicate termination was accepted");
+}
+
 } // namespace
 
 int main() {
 	TestFirmwareHdrFallback();
 	TestUuidVersionOneLayout();
 	TestNamedEventFlagLifetimeAndExtendedAttribute();
+	TestProsperoSaveDataCapacityAndMountIdentity();
+	TestFirmwareWriteThrottlingResultLayout();
+	TestTextToSpeech2SdkLifecycle();
 	return 0;
 }
