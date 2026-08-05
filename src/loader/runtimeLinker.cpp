@@ -952,6 +952,46 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 				}
 				::close(fd);
 			}
+
+			// Also capture the objects the faulting code was walking. Registers alone only show six
+			// qwords each, which is not enough to reach a member at +0x168. Each region is written
+			// as {address, length, bytes} so it can be located offline, and pointers are chased one
+			// level so the payload behind a list node is captured too.
+			::snprintf(path, sizeof(path), "%s.regions", dump_path);
+			if (int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644); fd >= 0) {
+				const uint64_t roots[] = {info->rax, info->rbx, info->rcx, info->rdx,
+				                          info->rsi, info->rdi, info->r8,  info->r9,
+				                          info->r10, info->r11, info->r12, info->r13,
+				                          info->r14, info->r15};
+				const auto     plausible = [](uint64_t a) {
+                    return a > 0x10000ull && a < 0x10000000000ull && (a & 7u) == 0;
+				};
+				const auto dump_region = [&](uint64_t base) {
+					constexpr uint64_t LEN    = 0x200;
+					const uint64_t     hdr[2] = {base, LEN};
+					(void)::write(fd, hdr, sizeof(hdr));
+					for (uint64_t off = 0; off < LEN; off += 64) {
+						if (::write(fd, reinterpret_cast<const void*>(base + off), 64) != 64) {
+							break;
+						}
+					}
+				};
+				for (uint64_t root : roots) {
+					if (!plausible(root)) {
+						continue;
+					}
+					dump_region(root);
+					// One level of indirection: list nodes hold the interesting object at +8.
+					for (uint64_t slot = 0; slot <= 8; slot += 8) {
+						uint64_t child = 0;
+						::memcpy(&child, reinterpret_cast<const void*>(root + slot), sizeof(child));
+						if (plausible(child)) {
+							dump_region(child);
+						}
+					}
+				}
+				::close(fd);
+			}
 		}
 	}
 
