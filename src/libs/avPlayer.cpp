@@ -1009,14 +1009,15 @@ private:
 	// receive_frame were marshaled to the worker; av_read_frame, sws_scale, swr_convert_frame and
 	// the hwframe transfer all still ran on the guest stack. Run the whole decode there instead.
 	bool DecodeUntil(int wanted) {
-		return codec_runner.Run([this, wanted] { return DecodeUntilOnWorker(wanted) ? 1 : 0; }) != 0;
-	}
-	bool DecodeUntilOnWorker(int wanted) {
 		PacketQueue& own = wanted == video_id.value_or(-1) ? video_packets : audio_packets;
 		while (!eof) {
 			AVPacket* p = own.Pop();
 			if (p == nullptr) {
 				p       = av_packet_alloc();
+				// Not marshaled: av_read_frame pulls through our AVIOContext callbacks, which do
+				// guest file I/O and take guest mutexes. Those require g_pthread_self, which only
+				// guest threads have - running it on the host worker trips
+				// "Not implemented (self == nullptr)" in NativeMutexLock.
 				auto rc = av_read_frame(fmt, p);
 				if (rc < 0) {
 					av_packet_free(&p);
@@ -1067,8 +1068,10 @@ private:
 			return false;
 		}
 		// Already on the worker via DecodeUntil; Run() is not reentrant.
-		const auto send_result = avcodec_send_packet(video_ctx, p);
-		auto       rc = send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
+		auto rc = codec_runner.Run([this, p, f] {
+			const auto send_result = avcodec_send_packet(video_ctx, p);
+			return send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
+		});
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
@@ -1078,7 +1081,8 @@ private:
 		AVFrame* sw = nullptr;
 		if (f->format == AV_PIX_FMT_VIDEOTOOLBOX) {
 			sw = av_frame_alloc();
-			if (sw == nullptr || av_hwframe_transfer_data(sw, f, 0) < 0) {
+			if (sw == nullptr ||
+			    codec_runner.Run([sw, f] { return av_hwframe_transfer_data(sw, f, 0); }) < 0) {
 				av_frame_free(&sw);
 				av_frame_free(&f);
 				return false;
@@ -1102,8 +1106,10 @@ private:
 		if (f == nullptr) {
 			return false;
 		}
-		const auto send_result = avcodec_send_packet(audio_ctx, p);
-		auto       rc = send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
+		auto rc = codec_runner.Run([this, p, f] {
+			const auto send_result = avcodec_send_packet(audio_ctx, p);
+			return send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
+		});
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
@@ -1244,7 +1250,11 @@ private:
 				av_frame_free(&tmp);
 				return;
 			}
-			sws_scale(sws, src->data, src->linesize, 0, src->height, tmp->data, tmp->linesize);
+			// 4K colour conversion: large host frames, keep it off the guest stack.
+			codec_runner.Run([this, src, tmp] {
+				return sws_scale(sws, src->data, src->linesize, 0, src->height, tmp->data,
+				                 tmp->linesize);
+			});
 			nv12 = tmp;
 		}
 		auto* dst = current_video->Get();
@@ -1334,7 +1344,9 @@ private:
 				swr_src_rate     = src->sample_rate;
 				swr_src_channels = src->ch_layout.nb_channels;
 			}
-			if (swr == nullptr || swr_convert_frame(swr, tmp, src) < 0) {
+			if (swr == nullptr ||
+			    codec_runner.Run([this, tmp, src] { return swr_convert_frame(swr, tmp, src); }) <
+			        0) {
 				av_frame_free(&tmp);
 				return;
 			}

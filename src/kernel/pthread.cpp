@@ -718,15 +718,29 @@ static int CreateGuestStack(PthreadAttr attr) {
 		return KERNEL_ERROR_EINVAL;
 	}
 
-	if (attr->stack_addr != nullptr) {
+	// A game-supplied stack smaller than the host minimum cannot host the HLE that will run on it,
+	// and this path also forces guard_size to 0, so an overflow is not even caught. Ignore the
+	// guest's buffer and allocate one large enough; nothing in the ABI lets the guest observe
+	// which memory its thread actually runs on.
+	constexpr size_t HOST_MIN_STACK = 1024u * 1024u;
+	if (attr->stack_addr != nullptr && attr->stack_size >= HOST_MIN_STACK) {
 		attr->guard_size     = 0;
 		attr->stack_user     = true;
 		attr->stack_map_addr = 0;
 		attr->stack_map_size = 0;
 		return OK;
 	}
+	if (attr->stack_addr != nullptr) {
+		attr->stack_addr = nullptr; // fall through and allocate a host-adequate stack instead
+	}
 
-	const auto stack_size = RoundStackSize(attr->stack_size);
+	// Host-aware minimum. HLE runs on the guest's stack, and host libraries reserve far more than
+	// a PS5 title expects to need: FFmpeg's slice parser alone takes 0x8c38 (35896) bytes, and
+	// Astro creates threads with 32 KiB stacks. Clang emits no stack probes, so an oversized frame
+	// jumps the guard page entirely and scribbles over whatever is mapped below - guest stacks are
+	// packed contiguously, so that is usually another thread's stack. Give every guest thread
+	// enough room for the host code that will run on it.
+	const auto stack_size = RoundStackSize(std::max<size_t>(attr->stack_size, HOST_MIN_STACK));
 	const auto guard_size = RoundStackSize(attr->guard_size);
 	const auto map_size   = stack_size + guard_size;
 
