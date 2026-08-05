@@ -30,6 +30,13 @@ internal static class Program
             return Scan(eboot);
         }
 
+        if (args.Contains("--hunt"))
+        {
+            return Hunt(eboot,
+                Convert.ToInt64((Arg(args, "--offset") ?? "C751A0").Replace("0x", string.Empty), 16),
+                Convert.ToInt32((Arg(args, "--length") ?? "1C90").Replace("0x", string.Empty), 16));
+        }
+
         if (args.Contains("--sweep"))
         {
             return Sweep(eboot,
@@ -63,11 +70,28 @@ internal static class Program
 
         // A neutral source plate and an empty target; the shader supplies the
         // motion, so any variation between frames comes from the firmware code.
+        // The ripple is a POST-PROCESS: it samples the source image and
+        // displaces it. A flat source therefore yields a flat result no matter
+        // how correct the shader is, which is what made earlier runs look
+        // featureless. Feed it structure so the displacement is visible.
         var source = new byte[width * height * 4];
         var target = new byte[width * height * 4];
-        for (var i = 0; i < source.Length; i += 4)
         {
-            source[i] = 5; source[i + 1] = 10; source[i + 2] = 22; source[i + 3] = 255;
+            for (var y = 0; y < height; y++)
+            {
+                for (var x = 0; x < width; x++)
+                {
+                    var i = (y * width + x) * 4;
+                    var check = ((x / 32) + (y / 32)) % 2 == 0;
+                    var ramp = (byte)(30 + 200 * y / height);
+                    source[i] = check ? ramp : (byte)20;
+                    source[i + 1] = check ? (byte)(ramp / 2) : (byte)40;
+                    source[i + 2] = check ? (byte)220 : (byte)70;
+                    source[i + 3] = 255;
+                }
+            }
+
+            Console.WriteLine("source  : built-in checkerboard/ramp test pattern");
         }
 
         var constants = new List<ReadOnlyMemory<byte>>();
@@ -77,7 +101,13 @@ internal static class Program
             // Slot 2 is the animating input, found by sweeping the buffer
             // (--sweep): it is the only slot whose value changes the image.
             var slot = int.TryParse(Arg(args, "--timeslot"), out var s) ? s : 2;
-            BitConverter.TryWriteBytes(c0.AsSpan(slot * 4, 4), i * (1f / 30f));
+            // Log sweep rather than 1/30s steps: the shader responds across
+            // orders of magnitude, so a linear second-scale ramp only shows a
+            // sliver of its range.
+            var lo = float.TryParse(Arg(args, "--from"), out var a) ? a : 0f;
+            var hi = float.TryParse(Arg(args, "--to"), out var b) ? b : 8f;
+            var value = frames <= 1 ? lo : lo + (hi - lo) * i / (frames - 1f);
+            BitConverter.TryWriteBytes(c0.AsSpan(slot * 4, 4), value);
             constants.Add(c0);
         }
 
@@ -107,6 +137,79 @@ internal static class Program
         Console.WriteLine($"distinct : {distinct.Count} unique frame(s)  " +
                           $"({(distinct.Count > 1 ? "ANIMATED" : "static - shader ran but did not vary")})");
         Console.WriteLine($"output   : {Path.GetFullPath(outDir)}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Hunts for any input that makes the shader produce SPATIAL variation.
+    /// Animating in time is not enough - a flat field whose level changes is
+    /// still flat. This drives every slot across a wide magnitude range and
+    /// reports the per-row colour count, which is 1 for a flat field.
+    /// </summary>
+    private static int Hunt(string eboot, long offset, int length)
+    {
+        if (!Ps5NativeRippleCompiler.TryCompile(eboot, offset, length, out var program, out var error))
+        {
+            Console.Error.WriteLine($"translate: FAILED - {error}");
+            return 1;
+        }
+
+        const int width = 256;
+        const int height = 144;
+        var source = new byte[width * height * 4];
+        var target = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var i = (y * width + x) * 4;
+                var check = ((x / 16) + (y / 16)) % 2 == 0;
+                source[i] = check ? (byte)240 : (byte)15;
+                source[i + 1] = check ? (byte)120 : (byte)35;
+                source[i + 2] = check ? (byte)255 : (byte)90;
+                source[i + 3] = 255;
+            }
+        }
+
+        var values = new[] { -1000f, -100f, -10f, -1f, 0.001f, 0.1f, 1f, 10f, 100f, 1000f, 10000f };
+        var best = 1;
+        Console.WriteLine("slot   value      distinct-colours-in-centre-row");
+        for (var slot = 0; slot < 10; slot++)
+        {
+            foreach (var value in values)
+            {
+                var c0 = new byte[40];
+                BitConverter.TryWriteBytes(c0.AsSpan(slot * 4, 4), value);
+                try
+                {
+                    var frames = Ps5NativeRippleRenderer.RenderOpaqueFrames(
+                        program, width, height, source, target,
+                        new List<ReadOnlyMemory<byte>> { c0 });
+                    var span = frames[0].Rgba.Span;
+                    var row = (height / 2) * width * 4;
+                    var seen = new HashSet<int>();
+                    for (var x = 0; x < width; x++)
+                    {
+                        var o = row + x * 4;
+                        seen.Add((span[o] << 16) | (span[o + 1] << 8) | span[o + 2]);
+                    }
+
+                    if (seen.Count > 1)
+                    {
+                        Console.WriteLine($"{slot,4}  {value,10}  {seen.Count}   <== SPATIAL");
+                        best = Math.Max(best, seen.Count);
+                    }
+                }
+                catch
+                {
+                    // Some magnitudes trip the pipeline; keep hunting.
+                }
+            }
+        }
+
+        Console.WriteLine(best > 1
+            ? $"found spatial variation (max {best} colours per row)"
+            : "no input produced spatial variation - shader stays a flat field");
         return 0;
     }
 
