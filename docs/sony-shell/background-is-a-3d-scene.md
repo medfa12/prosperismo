@@ -86,6 +86,42 @@ sequence.
   valid — particles are genuinely one layer of this scene — but it is one
   element of several, and the light shaft is a bigger contributor to the look.
 
+## The complete asset manifest
+
+Every firmware asset the shell eboot names, extracted from its string table.
+This is the exhaustive list — there is nothing else to look for.
+
+**Textures (15 `.gnf`, all in `/system_ex/vsh_asset/`):**
+
+| File | Role |
+|---|---|
+| `Sce.Vsh.ShellUI.BGLayer.Particle0.gnf`, `…Particle1.gnf` | the particle light textures |
+| `shutdown_ramp.gnf` | the shutdown sequence's colour ramp |
+| `diffuse_default.gnf` | fallback material texture |
+| `all_symbols_2x.gnf` | symbol atlas |
+| `heightMark`, `heightMark_feet`, `hmdMark`, `indicator_L/R/arrow`, `Add_Mode_*`, `Erase_Mode_*` | PSVR2 play-area editor |
+
+**Shaders (4 `.ags`, under `shaders/effects/`):** `effect_post_process_vv`,
+`effect_post_process_copy_p`, `effect_post_process_fxaa_p`,
+`effect_post_process_fxaa_ssaa_x4_p`.
+
+So for the *background* specifically, only four files matter:
+`Particle0.gnf`, `Particle1.gnf`, `shutdown_ramp.gnf`, `diffuse_default.gnf`.
+
+**There are no model, scene or sequence asset files.** No `.mdl`, `.scn`,
+`.seq` or equivalent appears anywhere in the binary. Combined with
+`CreateBasicModel`, `CreateLightShaftModel` and `CreateLightShaftModel`'s
+placement next to the scene builder, the strong reading is that the room
+geometry and the shaft volume are **constructed in code**, with `.gnf` files
+supplying only textures.
+
+If that holds it is good news for a port: the geometry is recoverable by
+reading the builder rather than by extracting proprietary model assets, and
+the outstanding asset requirement shrinks to four texture files.
+
+This has not been confirmed — `LoadFreeForm` also appears nearby and may load
+geometry from somewhere not yet identified.
+
 ## Not yet established
 
 The scene file format, how sequences are authored and stored, which `.gnf`
