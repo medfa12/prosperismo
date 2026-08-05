@@ -348,7 +348,21 @@ bool Audio::QueueSdlAudio(PortOut* port, const void* data, bool blocking) {
 	}
 
 	if (cvt_result > 0) {
-		convert_buffer.resize(prepared_size * cvt.len_mult);
+		// prepared_size derives from guest-supplied samples_num, and len_mult from SDL. The build
+		// uses -fno-exceptions, so an over-large resize does not throw: libc++ calls abort() and
+		// the process dies with no diagnostic. That is the shape of the silent SIGABRT seen inside
+		// AudioOut2ContextPush. Refuse implausible sizes instead.
+		constexpr size_t CONVERT_LIMIT = 64u << 20u; // 64 MiB; a sane frame is a few KiB
+		const size_t     convert_size =
+		    static_cast<size_t>(prepared_size) * static_cast<size_t>(cvt.len_mult);
+		if (cvt.len_mult <= 0 || convert_size > CONVERT_LIMIT) {
+			printf("AudioOut: refusing conversion buffer of %zu bytes (prepared=%u len_mult=%d "
+			       "samples=%u channels=%u)\n",
+			       convert_size, prepared_size, cvt.len_mult, port->samples_num,
+			       static_cast<uint32_t>(port->channels_num));
+			return false;
+		}
+		convert_buffer.resize(convert_size);
 		std::memcpy(convert_buffer.data(), prepared_data, prepared_size);
 
 		cvt.buf = convert_buffer.data();
