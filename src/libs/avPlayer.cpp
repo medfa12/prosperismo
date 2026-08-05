@@ -1002,7 +1002,16 @@ private:
 		video_packets.Clear();
 		audio_packets.Clear();
 	}
+	// Guest Prospero threads get 32 KiB stacks and HLE runs on them, but FFmpeg's slice parser
+	// alone reserves 0x8c38 (35896) bytes - larger than the whole stack - and Clang emits no stack
+	// probes, so one frame leaps the guard page and scribbles over whatever is mapped below.
+	// Game-supplied stacks get guard_size forced to 0, so nothing catches it. Only send_packet and
+	// receive_frame were marshaled to the worker; av_read_frame, sws_scale, swr_convert_frame and
+	// the hwframe transfer all still ran on the guest stack. Run the whole decode there instead.
 	bool DecodeUntil(int wanted) {
+		return codec_runner.Run([this, wanted] { return DecodeUntilOnWorker(wanted) ? 1 : 0; }) != 0;
+	}
+	bool DecodeUntilOnWorker(int wanted) {
 		PacketQueue& own = wanted == video_id.value_or(-1) ? video_packets : audio_packets;
 		while (!eof) {
 			AVPacket* p = own.Pop();
@@ -1057,10 +1066,9 @@ private:
 		if (f == nullptr) {
 			return false;
 		}
-		auto rc = codec_runner.Run([this, p, f] {
-			const auto send_result = avcodec_send_packet(video_ctx, p);
-			return send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
-		});
+		// Already on the worker via DecodeUntil; Run() is not reentrant.
+		const auto send_result = avcodec_send_packet(video_ctx, p);
+		auto       rc = send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
@@ -1094,10 +1102,8 @@ private:
 		if (f == nullptr) {
 			return false;
 		}
-		auto rc = codec_runner.Run([this, p, f] {
-			const auto send_result = avcodec_send_packet(audio_ctx, p);
-			return send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
-		});
+		const auto send_result = avcodec_send_packet(audio_ctx, p);
+		auto       rc = send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
