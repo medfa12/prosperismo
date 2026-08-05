@@ -1053,14 +1053,7 @@ private:
 		return false;
 	}
 	bool DecodeVideo(AVPacket* p) {
-		// KYTY_M43_NO_VIDEO_DECODE=1 drops video decoding entirely (audio-only intro, which is the
-		// stock behaviour anyway since the game discards late frames). Used to test whether the
-		// AVFrame use-after-free inside FFmpeg is what ends the run.
-		static const bool no_video = [] {
-			const char* v = std::getenv("KYTY_M43_NO_VIDEO_DECODE");
-			return v != nullptr && v[0] != '\0' && v[0] != '0';
-		}();
-		if (no_video || video_ctx == nullptr) {
+		if (video_ctx == nullptr) {
 			return false;
 		}
 		AVFrame* f = av_frame_alloc();
