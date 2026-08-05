@@ -1,0 +1,41 @@
+PlayStation UI assets — status notice
+=====================================
+
+This is NOT a licence grant. It is a disclosure, so that anyone reading this
+repository's licensing metadata knows exactly what these files are.
+
+What the files are
+------------------
+The bitmaps under `assets/icons/shell/` are small user-interface pictograms
+(controller button glyphs such as L1/R1/cross/circle/square/triangle, and a few
+system pictograms) taken from the PlayStation 5 system software's UI resource
+containers. They are the work of Sony Interactive Entertainment Inc. and remain
+its property. See `docs/ps5-icons.md` for the mapping from each file here back
+to the original resource entry it came from.
+
+Why they are here
+-----------------
+They are included so the launcher can label controller input with the same
+glyphs the console uses, which is what makes the on-screen prompts legible and
+correct to a PlayStation user. Prosperismo is a non-commercial interoperability
+and research project.
+
+No permission has been granted
+------------------------------
+Sony Interactive Entertainment has not licensed these files to this project and
+has not authorised their redistribution. Their inclusion is a deliberate
+decision by this project's maintainer, on the view that these particular
+pictograms are minimal, functional interface elements used for identification
+and interoperability rather than for their creative expression.
+
+That is the maintainer's position. It is not a legal opinion, it has not been
+tested, and it may not hold in your jurisdiction.
+
+If you redistribute this repository
+-----------------------------------
+You are relying on your own assessment, not on any permission conveyed here.
+Packagers, distributors and forks that would rather not carry third-party
+assets should delete `assets/icons/shell/` — the launcher is built to work
+without it. `ShellIcons` falls back to reading the same pictograms from a
+firmware dump the user supplies, and failing that to its own text glyphs, so
+removing the directory changes only which artwork appears.

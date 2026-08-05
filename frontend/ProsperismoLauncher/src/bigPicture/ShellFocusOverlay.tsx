@@ -1,7 +1,10 @@
 import React from 'react';
-import {StyleSheet} from 'react-native';
-import ProsperismoFocusRing from './FocusRingNativeComponent';
+import {StyleSheet, View} from 'react-native';
+import {shellFocusRingComponent} from './nativeShellComponents';
 import {useShellFocusNoisePath} from './ShellFocusNoise';
+
+// Resolved once; null off Windows, where the codegen module is never required.
+const ProsperismoFocusRing = shellFocusRingComponent();
 
 export interface ShellFocusOverlayProps {
   active: boolean;
@@ -28,6 +31,18 @@ export function ShellFocusOverlay({active, width, height, radius, crop}: ShellFo
   const bodyHeight = Math.max(1, height - top - (crop?.bottom ?? 0));
   const surfaceWidth = width + SURFACE_MARGIN * 2;
   const surfaceHeight = height + SURFACE_MARGIN * 2;
+  if (!ProsperismoFocusRing) {
+    // Outline stand-in; not the recovered UI3 treatment. See RecoveredHomeShell.
+    return active ? <View
+      pointerEvents="none"
+      style={[
+        styles.surface,
+        styles.fallback,
+        {left: left - 3, top: top - 3, width: bodyWidth + 6, height: bodyHeight + 6,
+         borderRadius: radius + 3},
+      ]}
+    /> : null;
+  }
   return <ProsperismoFocusRing
     active={active}
     keyRepeating={false}
@@ -59,4 +74,5 @@ export function ShellFocusOverlay({active, width, height, radius, crop}: ShellFo
 
 const styles = StyleSheet.create({
   surface: {position: 'absolute', zIndex: 2},
+  fallback: {borderWidth: 3, borderColor: '#FFFFFF'},
 });

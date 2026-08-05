@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import type {GameInstall, LauncherSettings} from '../core/models';
 import {INITIAL_SHELL_STATE, reduceShellState, selectedShellBackground, selectedShellGame, type ShellDirection} from './shellState';
+import {ShellHubReadiness} from './shellHubTransition';
+import {appBrowseMetadataFromPackage} from './shellHubModuleHost';
 import {SHELL_METRICS} from './shellMetrics';
 import {RecoveredHomeShell} from './RecoveredHomeShell';
 import {ShellBackgroundSurface} from './ShellBackgroundSurface';
@@ -132,6 +134,11 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
   const [profileOpen, setProfileOpen] = useState(false);
   const [toast, setToast] = useState<string>();
   const dismissToast = useCallback(() => setToast(undefined), []);
+  // One-shot focusReady registry (m503). No executing hub app module exists
+  // yet, so every experience stays unready and Down on a tile is swallowed —
+  // the recovered pre-boot behaviour. The future app-module adapter marks
+  // readiness here; nothing else may.
+  const hubReadiness = useRef(new ShellHubReadiness()).current;
   const spaceRefs = useRef<any[]>([]);
   const strandRefs = useRef<any[]>([]);
   const systemRefs = useRef<any[]>([]);
@@ -195,8 +202,22 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
       return;
     }
     const homeDirection = homeDirectionForKey(key);
+    if (state.surface === 'home' && state.verticalPosition === 'hub'
+      && (key === 'Escape' || key === 'GamepadB' || homeDirection === 'up')) {
+      dispatch({type: 'ascend-home'});
+      event.stopPropagation?.();
+      return;
+    }
     if (state.surface === 'home' && homeDirection) {
-      dispatch({type: 'navigate-home', direction: homeDirection, gameCount: shellGames.length, systemCount: SYSTEM_ACTIONS.length});
+      if (homeDirection === 'down' && state.focusRegion === 'strand' && state.verticalPosition === 'home') {
+        // Readiness is keyed by the AppBrowse experience id (cid:scp: from a
+        // package concept id, else the cid:local: title key), never the raw
+        // title id or path.
+        const experienceId = appBrowseMetadataFromPackage(selected?.titleId).experienceId;
+        dispatch({type: 'descend-hub', hubReady: hubReadiness.isReady(experienceId)});
+      } else {
+        dispatch({type: 'navigate-home', direction: homeDirection, gameCount: shellGames.length, systemCount: SYSTEM_ACTIONS.length});
+      }
       event.stopPropagation?.();
       return;
     }
@@ -208,8 +229,20 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
   // declaration used by this project does not include the Windows extension.
   const windowsKeyCapture = {onKeyDownCapture: handleKeyDown} as any;
   const modalOpen = searchOpen || profileOpen || Boolean(optionsGame) || Boolean(errorMessage);
+  // The recovered plate transition ripples out of the focused item, so hand
+  // the background owner the focused strand card's bounds. HOME's focused
+  // card is 168x168 at (172, 126) in the fixed 1920x1080 design space.
+  const focusedCardRect = state.surface === 'home' && state.focusRegion === 'strand' && selected
+    ? {
+        x: SHELL_METRICS.strand.left,
+        y: SHELL_METRICS.strand.top,
+        width: SHELL_METRICS.strand.focusedSize,
+        height: SHELL_METRICS.strand.focusedSize,
+      }
+    : undefined;
   const persistentBackground = <ShellBackgroundSurface
     artworkPath={selectedShellBackground(selected, state.surface)}
+    focusedRect={focusedCardRect}
     modalOpen={modalOpen}
     surface={state.surface}
   />;
@@ -219,6 +252,7 @@ export function BigPictureShell({games, firmwareShellIcons = {}, settings, onSav
       <RecoveredHomeShell
         clock={formatClock(now)}
         focusRegion={state.focusRegion}
+        verticalPosition={state.verticalPosition}
         games={shellGames}
         libraryIconPath={firmwareShellIcons.library}
         genericGameIconPath={firmwareShellIcons.genericGame}

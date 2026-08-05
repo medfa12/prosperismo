@@ -30,3 +30,7 @@ __pycache__/
 /NativeWavePlate.preview.*
 /tools/FirstWavePlatePreview.exe
 /tools/NativeWavePlatePreview.exe
+
+# macOS Finder metadata.
+.DS_Store
+**/.DS_Store

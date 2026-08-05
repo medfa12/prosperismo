@@ -8,9 +8,18 @@ import {
   UIManager,
   View,
 } from 'react-native';
-import {SHELL_METRICS} from './shellMetrics';
+import type {ShellRect} from './shellHomeMotion';
 import type {ShellSurface} from './shellState';
 import {shellBackgroundPresentation} from './shellBackgroundPresentation';
+import {
+  BACKGROUND_TRANSITION_DEGREE,
+  BACKGROUND_TRANSITION_TYPE,
+  backgroundTransitionDurationMs,
+  backgroundTransitionFlipsPlate,
+  backgroundTransitionOrigin,
+  type BackgroundTransitionDegree,
+  type BackgroundTransitionType,
+} from './shellBackgroundTransition';
 
 type NativeBackgroundComponent = React.ComponentType<{
   particleOverlayEnabled: boolean;
@@ -54,6 +63,21 @@ export interface ShellBackgroundSurfaceProps {
   surface: ShellSurface;
   modalOpen: boolean;
   artworkPath?: string;
+  /**
+   * Bounds of the focused item, in 1920x1080 design space. The recovered
+   * contract ripples out of the focused tile's centre; the screen centre is
+   * only used when nothing is focused. See
+   * docs/sony-shell/bglayer-managed-contract.md.
+   */
+  focusedRect?: ShellRect;
+  /** HOME selection requests degree Normal, which derives 633.333ms. */
+  transitionDegree?: BackgroundTransitionDegree;
+  /**
+   * Presenting a new plate is CustomImageRipple in the firmware. Types that
+   * present a new image flip the double-buffered plate id; Hide and
+   * SystemDefault do not.
+   */
+  transitionType?: BackgroundTransitionType;
 }
 
 /**
@@ -66,6 +90,9 @@ export function ShellBackgroundSurface({
   surface,
   modalOpen,
   artworkPath,
+  focusedRect,
+  transitionDegree = BACKGROUND_TRANSITION_DEGREE.normal,
+  transitionType = BACKGROUND_TRANSITION_TYPE.customImageRipple,
 }: ShellBackgroundSurfaceProps) {
   const presentation = shellBackgroundPresentation(surface, modalOpen);
   const NativeBackground = useMemo(nativeBackgroundComponent, []);
@@ -74,16 +101,31 @@ export function ShellBackgroundSurface({
   const [current, setCurrent] = useState({key: nextKey, source: nextSource});
   const [previous, setPrevious] = useState<{key: string; source: ImageSourcePropType | undefined}>();
   const crossFade = useRef(new Animated.Value(1)).current;
+
+  // The firmware presents a new plate with CustomImageRipple, whose origin is
+  // the focused item's centre. The ripple itself is a native pass we do not
+  // reproduce, so this owner still cross-fades — but it takes its duration
+  // from the recovered degree table rather than a hard-coded constant, and it
+  // publishes the origin so the native surface can consume it once the pass
+  // exists. Keeping the origin computed here means the geometry is exercised
+  // and regression-tested with the shell, not stranded in an unused module.
+  const originRef = useRef(backgroundTransitionOrigin(focusedRect));
+  const plateIdRef = useRef(0);
   useEffect(() => {
     if (current.key === nextKey) {
       return;
+    }
+    originRef.current = backgroundTransitionOrigin(focusedRect);
+    if (backgroundTransitionFlipsPlate(transitionType)) {
+      // prevBgImageId ^= 1: only transitions that present a new image flip it.
+      plateIdRef.current = plateIdRef.current === 0 ? 1 : 0;
     }
     setPrevious(current);
     setCurrent({key: nextKey, source: nextSource});
     crossFade.setValue(0);
     const animation = Animated.timing(crossFade, {
       toValue: 1,
-      duration: SHELL_METRICS.titleBackgroundTransitionMs,
+      duration: backgroundTransitionDurationMs(transitionDegree),
       easing: Easing.linear,
       useNativeDriver: true,
     });
@@ -93,7 +135,10 @@ export function ShellBackgroundSurface({
       }
     });
     return () => animation.stop();
-  }, [crossFade, current, nextKey, nextSource]);
+    // focusedRect is read at transition start only; it must not restart the
+    // animation when the selection moves without changing the plate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crossFade, current, nextKey, nextSource, transitionDegree, transitionType]);
 
   return <View pointerEvents="none" style={styles.owner}>
     <View style={styles.basematFallback} />

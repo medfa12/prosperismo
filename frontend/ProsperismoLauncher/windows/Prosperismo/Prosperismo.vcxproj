@@ -118,6 +118,9 @@
     <ClInclude Include="ProsperismoHostSupport.h" />
     <ClInclude Include="NativeBackgroundFrameProtocol.h" />
     <ClInclude Include="FirstWaveBackground.h" />
+    <ClInclude Include="FirstWaveBlur.h" />
+    <ClInclude Include="FirstWaveParticle.h" />
+    <ClInclude Include="FirstWaveSurface.h" />
     <ClInclude Include="NativeWavePlate.h" />
     <ClInclude Include="ProsperismoFocusRing.h" />
     <ClInclude Include="ProsperismoLocalImage.h" />
@@ -137,6 +140,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="FirstWaveBackground.cpp" />
+    <ClCompile Include="FirstWaveBlur.cpp" />
+    <ClCompile Include="FirstWaveParticle.cpp" />
+    <ClCompile Include="FirstWaveSurface.cpp" />
     <ClCompile Include="NativeWavePlate.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

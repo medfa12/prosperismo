@@ -1,5 +1,6 @@
 import {INITIAL_SHELL_STATE, isShellCardFocused, navigateHomeFocus, reduceShellState, selectedShellBackground} from '../src/bigPicture/shellState';
 import {SHELL_FOCUSED_TILE_SCALE, SHELL_METRICS, shellEaseOutBlast, shellHomeFocusTarget, shellTileBaseX} from '../src/bigPicture/shellMetrics';
+import {homeTileLeft} from '../src/bigPicture/shellHomeMotion';
 
 describe('Sony-grounded shell state', () => {
   it('clamps strand selection to installed games', () => {
@@ -19,9 +20,17 @@ describe('Sony-grounded shell state', () => {
   it('matches the firmware strand packing constants', () => {
     expect(SHELL_FOCUSED_TILE_SCALE).toBeCloseTo(168 / 106, 8);
     expect(shellTileBaseX(2, 2)).toBeCloseTo(203, 8);
-    expect(shellTileBaseX(1, 2)).toBeCloseTo(58, 8);
+    expect(shellTileBaseX(1, 2)).toBeCloseTo(50, 8);
     expect(shellTileBaseX(3, 2)).toBeCloseTo(356, 8);
     expect(SHELL_METRICS.strand.top + SHELL_METRICS.strand.titleTop).toBe(232);
+  });
+
+  it('agrees with the HOME m531 solver for every unfocused tile', () => {
+    for (let index = 0; index < SHELL_METRICS.strand.maxItems; index += 1) {
+      if (index !== 5) {
+        expect(shellTileBaseX(index, 5)).toBe(homeTileLeft(index, 5));
+      }
+    }
   });
 
   it('keeps the selected game while system focus moves independently', () => {

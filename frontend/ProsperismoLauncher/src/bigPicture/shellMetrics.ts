@@ -120,7 +120,7 @@ export function shellTileBaseX(index: number, selectedIndex: number): number {
     return left + scaleOffset;
   }
   if (index < selectedIndex) {
-    return left - itemMargin - itemSize - (selectedIndex - index - 1) * (itemSize + itemMargin);
+    return left - focusedMargin - itemSize - (selectedIndex - index - 1) * (itemSize + itemMargin);
   }
   return left + focusedSize + focusedMargin + (index - selectedIndex - 1) * (itemSize + itemMargin);
 }

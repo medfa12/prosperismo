@@ -45,7 +45,93 @@ It currently provides:
   could detach the RNW visual tree and leave a white client area;
 - independent remembered game selection and top-bar focus;
 - the recovered 106→168 title-card scale, 8/16px strand gaps, scaled card
-  corner geometry, spring movement, caption placement, and eleven-card cap;
+  corner geometry, spring movement, caption placement, and eleven-card cap.
+  Both strand solvers (`homeTileLeft` and the `shellTileBaseX` metrics helper)
+  now agree that tiles on either side of the selection clear it by the 16px
+  focused margin, and a regression test pins them together;
+- the traced FontSizePS tokens at every HOME call site: space labels are
+  SizeLarge bold with the 0.6-opacity normal-weight blur state, system icon
+  labels are SizeXSmall, the clock is SizeLarge tabular-nums right-aligned,
+  and the selected title is SizeNormal inside the 62px metadata strip. All
+  text routes through the native font resolver instead of hardcoded family
+  strings, so the audited Fira Sans → Segoe fallback applies everywhere. The
+  strip's separator/tag row remains structurally absent because every
+  Prosperismo title is a PS5 (`PPR`) package, which the console shows untagged;
+- the space-switcher focus region measures the live label container from
+  layout (authored bounds remain a pre-layout fallback), and the invented
+  focused-label underline has been removed — the focus ring is the only
+  focus treatment, as on the console;
+- the Home-owned side of the hub contract from
+  [ps5-hub-and-cards](ps5-hub-and-cards.md) §1.3–1.5: the m130 vertical axis
+  with the −166px home lift on SPRING_OPTIONS_FAST, the m571 handoff that
+  flies the selected tile into the 80×80 hub-header badge at (48, 48) while
+  non-selected tiles fade on FASTER and the TitleContainer parks beside the
+  badge, the m507 hub-appears one-shot (16.67ms pre-roll, 300ms
+  cubic-bezier(0.25, 0.1, 0.25, 0.8), 850px travel), and the m503 one-shot
+  `focusReady` gate. No hub app module executes yet, so every experience is
+  unready, Down on a tile is swallowed exactly as on a console whose hub has
+  not booted, and the hub frame below the y=128 module boundary renders no
+  invented content. The next faithful step remains the app-module/channel
+  adapter, not placeholder card design;
+- the recovered FirstWave **surface** (the ripples) in both layers:
+  `src/bigPicture/shellWaveField.ts` and the native
+  `windows/Prosperismo/FirstWaveSurface.{h,cpp}`, which sits beside the
+  existing `FirstWaveBackground` plate. A 4x4 bicubic control lattice
+  displaced by a single 3D simplex evaluation, one-sided (the firmware squares
+  the scaled noise), under the recovered ten-second entrance envelope
+  `0.4*e^3 + 0.16`. The native file is platform-header-free and its host test
+  (`FirstWaveSurfaceHostTest.cpp`) builds and passes on macOS/clang, with the
+  probe values matching the TypeScript reference to 1.33e-06. See
+  [firstwave-decoded-passes](firstwave-decoded-passes.md);
+- the recovered FirstWave **blur** in `windows/Prosperismo/FirstWaveBlur.{h,cpp}`:
+  the exact 13-tap separable Gaussian (weights summing to 1.0 at a fitted
+  sigma of 3.8462 texels, offsets exactly +/-k/3840) and its radial mask,
+  including the threshold below which the firmware takes a single unblurred
+  sample. `FirstWaveBlurHostTest.cpp` asserts normalization, symmetry,
+  monotonicity, the fitted sigma, the offset scaling and the mask's
+  plateau/decay/threshold behaviour;
+- the recovered background **particle** maths in
+  `windows/Prosperismo/FirstWaveParticle.{h,cpp}`: the six-vertex billboard
+  expansion and inline corner table, the size lottery (with the firmware's own
+  magic-number reductions, checked against plain modulo), the minimum-screen-size
+  clamp, the folded projection constants, the small points' anisotropic radius /
+  flat-top / power falloff / life fade / seven-entry palette selection, and the
+  large discs' computed defocus width, life fade, alpha and HSV pair.
+  `FirstWaveParticleHostTest.cpp` carries a verified negative control, so the
+  assertions are load-bearing. Deliberately **not** ported: the lighting loop,
+  the gradient projections and anything touching textures, because those are
+  driven by runtime data that is not recovered. See
+  [particle-system](particle-system.md) and [particle-draw](particle-draw.md).
+
+  All three native modules carry no platform headers (`pch.h` is behind
+  `#ifdef _WIN32`), so they build and their host tests pass on macOS/clang. The
+  implementation files are in `Prosperismo.vcxproj`; the `*HostTest.cpp`
+  programs deliberately are not. **The mesh tessellation, OIT resolve, blur and
+  particle passes are recovered as arithmetic but are not yet executed by a
+  renderer** — that remains native-renderer work;
+- the background transition contract (`shellBackgroundTransition.ts`) from
+  [bglayer-managed-contract](bglayer-managed-contract.md): the packed
+  `type | (degree << 16)` word, the degree table that derives HOME's 633.333ms
+  Normal transition, the plate-flip rule, the aliased basemat values, and the
+  normalized ripple origin. The origin is the **focused tile's centre**
+  (`screenX/1920`, `screenY/1080`), with the screen centre used only when
+  nothing is focused — a centre-only ripple is visibly wrong on the console.
+  This is wired, not merely defined: `BigPictureShell` hands
+  `ShellBackgroundSurface` the focused strand card's design-space bounds, the
+  owner takes its cross-fade duration from the degree table instead of a
+  hard-coded constant, and it maintains the double-buffered plate id using the
+  firmware's flip rule. The native pass that actually draws the ripple is not
+  reproduced, so the owner cross-fades in the meantime;
+- the host data plane of that adapter (`shellHubModuleHost.ts`), translated
+  from the integration branch's `ShellHubModuleContract`/`Ps5AppBrowseMetadata`:
+  hubUri → `scheme:path` module/channel identity with the query travelling
+  separately, query-only changes retaining the native slot while remounting
+  the guest context key, per-experience m512 state (one-shot focusReady,
+  validated `onTemplateChange` offsets, opaque background payloads), the
+  4 / 260 ms / 60 000 ms / 300 ms pool constants, the five no-response
+  callback names, and Sony's `cid:scp:`/`cid:local:` AppBrowse key encoders.
+  Home's descend gate is keyed by the encoded experience id, never the raw
+  title id. What remains for a live hub is the executing guest module itself;
 - the native card-focus geometry: a 3px line offset 3px outside the card, with
   the observed cool-to-warm edge treatment, plus a separate translucent card
   shimmer pass. The area remains clear for the first three seconds of Sony's
@@ -100,13 +186,42 @@ It currently provides:
   UI dispatcher; changing the AppWindow presenter on the module thread can
   detach the Win32 React island and leave a responsive white client area.
 
+- **all five Windows natives now degrade cleanly off Windows.**
+  `ProsperismoFocusRing` and `ProsperismoLocalImage` previously called
+  `codegenNativeComponent` at module top level and were imported statically, so
+  importing the home shell was Windows-only. Resolution now goes through
+  `src/bigPicture/nativeShellComponents.ts` using the same
+  `Platform.OS` → `UIManager.hasViewManagerConfig` → lazy `require`-in-`try`
+  pattern `ShellBackgroundSurface` already had, and
+  `__tests__/nativeShellComponents.test.ts` pins it;
+- a **browser preview harness** at `web/` (`npm run preview:web`, Vite +
+  `react-native-web`, port 5273). It exists because there is no
+  `react-native-macos` for the 0.83 line and this host has no Xcode — see
+  [macos-preview](macos-preview.md) for that finding and
+  [web-preview](web-preview.md) for the harness. It is confined to `web/` and
+  devDependencies, is excluded from the app's `tsconfig.json`, and participates
+  in no Windows build. **It is a layout and motion preview only**: the
+  background, focus ring, firmware icons and font resolver are all absent, and
+  its focus outline is a plain-white stand-in that must never appear in a
+  fidelity comparison.
+
 The React Native layer deliberately does **not** claim to execute a guest shell
 application or the still-untranslated PUI focus shaders. It uses the settled
 geometry, colors, timing, and state contracts exposed by the oracle. The native
 surface now executes the translated FirstWave pixel pass, and the optional
 out-of-process renderer executes the recovered particle shader/resources from
-the user's oracle. The remaining FirstWave mesh/OIT/blur/FXAA passes are still a
-recovery boundary and must not be replaced with invented ambient motion.
+the user's oracle. The FirstWave mesh/OIT/blur/FXAA and particle passes are
+**decoded but not rendered**: their arithmetic is ported and host-tested, and no
+renderer executes them yet. That gap must be closed with the recovered maths,
+never with invented ambient motion.
+
+**Do not treat the background's visual balance as settled.** The only candidate
+capture in the local oracle failed provenance
+([reference-video-grading](reference-video-grading.md) §0), so how prominent the
+wave is against the particles on a real console is **not recovered** — see the
+"Recovered background pipeline" map in
+[firstwave-decoded-passes](firstwave-decoded-passes.md). Presentation values
+taken from that clip are better than guesses and are not firmware constants.
 
 ## Recovery checkpoint (2026-08-02)
 
@@ -147,3 +262,39 @@ Run `npm run typecheck`, `npm run lint`, and `npm test -- --runInBand` from
 explicitly supports a worktree that shares a dependency cache through a Windows
 junction, so bundle resolution remains reproducible without duplicating the
 large dependency tree.
+
+## Validation status (2026-08-05)
+
+Measured on the macOS development host. This section is the current-numbers
+anchor; other notes referencing gate results defer to it.
+
+| Gate | Command | Result |
+|---|---|---|
+| Tests | `npx jest --runInBand` | **23 suites, 126 tests, all passing** |
+| Types | `npx tsc --noEmit` | **exit 0**, no diagnostics |
+| Lint (shell) | `npx eslint src/bigPicture __tests__` | **0 errors**, 1 warning |
+| Lint (project) | `npx eslint .` | **0 errors**, 1 warning |
+| Native surface | `clang++ -std=c++20 -O2 -Wall -Wextra` + run | **passes**, warning-free |
+| Native blur | same | **passes**, warning-free |
+| Native particle | same | **passes**, warning-free |
+
+The single lint warning is `react-native/no-inline-styles` at
+`src/bigPicture/RecoveredHomeShell.tsx:564`
+(`{ backgroundColor: 'transparent' }`). It is pre-existing and is a warning, not
+an error.
+
+The three native host tests are built and run standalone — they are **not** in
+`Prosperismo.vcxproj`, by design:
+
+```
+cd frontend/ProsperismoLauncher
+clang++ -std=c++20 -O2 -Wall -Wextra -I windows/Prosperismo \
+    windows/Prosperismo/FirstWave<Surface|Blur|Particle>HostTest.cpp \
+    windows/Prosperismo/FirstWave<Surface|Blur|Particle>.cpp -o /tmp/fw && /tmp/fw
+```
+
+**Not exercised on this host:** the Windows build (`npm run windows`),
+`npm run windows:bundle`, and any on-screen fidelity comparison. This machine
+has no Windows toolchain and no Xcode — see [macos-preview](macos-preview.md)
+§2. The Windows gates and the paired-capture gate above remain outstanding; a
+green table here is **not** a claim of visual acceptance.

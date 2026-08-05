@@ -4,12 +4,15 @@ export type ShellSpace = 'games' | 'media';
 export type ShellSurface = 'home' | 'library' | 'settings';
 export type ShellFocusRegion = 'spaces' | 'strand' | 'library-shortcut' | 'system' | 'content';
 export type ShellDirection = 'left' | 'right' | 'up' | 'down';
+/** NPXS40002 m130 recoil atom `verticalPosition`, default "home". */
+export type ShellVerticalPosition = 'home' | 'hub';
 
 export interface ShellState {
   space: ShellSpace;
   spaceCursor: ShellSpace;
   surface: ShellSurface;
   focusRegion: ShellFocusRegion;
+  verticalPosition: ShellVerticalPosition;
   selectedIndex: number;
   settingsIndex: number;
   systemIndex: number;
@@ -26,13 +29,16 @@ export type ShellAction =
   | {type: 'set-space'; space: ShellSpace}
   | {type: 'select-setting'; index: number}
   | {type: 'select-system'; index: number}
-  | {type: 'navigate-home'; direction: ShellDirection; gameCount: number; systemCount: number};
+  | {type: 'navigate-home'; direction: ShellDirection; gameCount: number; systemCount: number}
+  | {type: 'descend-hub'; hubReady: boolean}
+  | {type: 'ascend-home'};
 
 export const INITIAL_SHELL_STATE: ShellState = {
   space: 'games',
   spaceCursor: 'games',
   surface: 'home',
   focusRegion: 'strand',
+  verticalPosition: 'home',
   selectedIndex: 0,
   settingsIndex: 0,
   systemIndex: 0,
@@ -106,12 +112,21 @@ export function reduceShellState(state: ShellState, action: ShellAction): ShellS
     case 'move': return {...state, selectedIndex: clamp(state.selectedIndex + action.delta, action.gameCount)};
     case 'open-library': return {...state, surface: 'library', focusRegion: 'content'};
     case 'open-settings': return {...state, surface: 'settings', focusRegion: 'content'};
-    case 'home': return {...state, surface: 'home', focusRegion: 'strand'};
+    case 'home': return {...state, surface: 'home', focusRegion: 'strand', verticalPosition: 'home'};
     case 'focus-space': return {...state, spaceCursor: action.space, focusRegion: 'spaces'};
     case 'set-space': return {...state, space: action.space, spaceCursor: action.space, focusRegion: 'spaces'};
     case 'select-setting': return {...state, settingsIndex: Math.max(0, action.index), focusRegion: 'content'};
     case 'select-system': return {...state, systemIndex: Math.max(0, action.index), focusRegion: 'system'};
     case 'navigate-home': return navigateHomeFocus(state, action.direction, action.gameCount, action.systemCount);
+    // m503: Down/X on a tile descends only when the experience's hub app has
+    // fired its one-shot focusReady; otherwise the input is swallowed.
+    case 'descend-hub':
+      return action.hubReady && state.surface === 'home'
+        && state.focusRegion === 'strand' && state.verticalPosition === 'home'
+        ? {...state, verticalPosition: 'hub'}
+        : state;
+    case 'ascend-home':
+      return state.verticalPosition === 'hub' ? {...state, verticalPosition: 'home'} : state;
   }
 }
 
