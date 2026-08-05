@@ -356,8 +356,61 @@ static Program*              g_tls_main_program        = nullptr;
 static thread_local Program* g_tls_cached_main_program = nullptr;
 static thread_local uint8_t* g_tls_cached_main_tcb     = nullptr;
 
+// Guest function-entry tracer. The title has no symbols and no frame pointers, so the only way to
+// watch its control flow is to trap on chosen entry points. SIGTRAP is not wired up here but SIGILL
+// already is, so the trap is a one-byte invalid opcode rather than int3: 0x06 (PUSH ES) does not
+// decode in 64-bit mode. One byte matters, because it lands exactly on the `push rbp` that opens
+// every one of these functions, and that instruction is trivial to emulate on the way out - which
+// avoids needing single-step support to resume.
+constexpr uint8_t GUEST_TRAP_OPCODE = 0x06;
+
+struct GuestBreakpoint {
+	uint64_t addr     = 0;
+	uint8_t  original = 0;
+};
+
+static GuestBreakpoint g_guest_breakpoints[16];
+static uint32_t        g_guest_breakpoint_count = 0;
+
+static void InstallGuestBreakpoints() {
+	const char* spec = std::getenv("KYTY_BP");
+	if (spec == nullptr || spec[0] == '\0') {
+		return;
+	}
+
+	for (const char* p = spec; *p != '\0' && g_guest_breakpoint_count < 16;) {
+		char*      end  = nullptr;
+		const auto addr = std::strtoull(p, &end, 16);
+		if (end == p) {
+			break;
+		}
+		p = (*end == ',' ? end + 1 : end);
+
+		auto* code = reinterpret_cast<uint8_t*>(addr);
+		if (addr == 0) {
+			continue;
+		}
+		if (!Common::VirtualMemory::Protect(addr & ~static_cast<uint64_t>(0xfff), 0x1000,
+		                                    Common::VirtualMemory::Mode::ExecuteReadWrite)) {
+			printf("guest-bp: cannot make 0x%016llx writable\n", static_cast<unsigned long long>(addr));
+			continue;
+		}
+		if (*code != 0x55) {
+			printf("guest-bp: 0x%016llx does not start with push rbp (found 0x%02x), skipped\n",
+			       static_cast<unsigned long long>(addr), static_cast<unsigned>(*code));
+			continue;
+		}
+
+		g_guest_breakpoints[g_guest_breakpoint_count++] = {addr, *code};
+		*code                                           = GUEST_TRAP_OPCODE;
+		printf("guest-bp: armed 0x%016llx\n", static_cast<unsigned long long>(addr));
+	}
+	fflush(stdout);
+}
+
 static KYTY_SYSV_ABI void RunEntry(uint64_t addr, EntryParams* params, atexit_func_t atexit_func,
                                    void* stack_top) {
+	InstallGuestBreakpoints();
 #if defined(__x86_64__) || defined(_M_X64)
 	auto* func = reinterpret_cast<entry_func_t>(addr);
 
@@ -791,9 +844,37 @@ static bool IsDumpableRange(uint64_t addr, uint64_t size) {
 static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exception_info) {
 	const auto* info = &exception_info;
 
-	if (info->type == Common::HostException::ExceptionType::IllegalInstruction &&
-	    Loader::X64InstructionEmulator::TryEmulate(info->native_context)) {
-		return true;
+	if (info->type == Common::HostException::ExceptionType::IllegalInstruction) {
+		for (uint32_t i = 0; i < g_guest_breakpoint_count; i++) {
+			if (info->exception_address != g_guest_breakpoints[i].addr) {
+				continue;
+			}
+			// The trap sits on the entry `push rbp`, so rsp still points at the return address the
+			// call pushed. That is the only cheap way to identify the caller in a binary with no
+			// frame pointers.
+			uint64_t ret_addr = 0;
+			if (info->rsp != 0) {
+				::memcpy(&ret_addr, reinterpret_cast<const void*>(info->rsp), sizeof(ret_addr));
+			}
+			printf("guest-bp hit 0x%016" PRIx64 " ret=%016" PRIx64 " rdi=%016" PRIx64
+			       " rsi=%016" PRIx64 " rdx=%016" PRIx64 " rcx=%016" PRIx64 " rbx=%016" PRIx64 "\n",
+			       info->exception_address, ret_addr, info->rdi, info->rsi, info->rdx, info->rcx,
+			       info->rbx);
+			fflush(stdout);
+#if defined(__APPLE__)
+			// Resume by performing the `push rbp` the trap byte displaced, then stepping over it.
+			auto* uc  = static_cast<ucontext_t*>(info->native_context);
+			auto& ss   = uc->uc_mcontext->__ss;
+			ss.__rsp -= sizeof(uint64_t);
+			*reinterpret_cast<uint64_t*>(ss.__rsp) = ss.__rbp;
+			ss.__rip                               = info->exception_address + 1;
+			return true;
+#endif
+		}
+
+		if (Loader::X64InstructionEmulator::TryEmulate(info->native_context)) {
+			return true;
+		}
 	}
 
 	if (info->type == Common::HostException::ExceptionType::AccessViolation) {
