@@ -282,6 +282,10 @@ const void* Audio::PrepareOutputBuffer(const PortOut& port, const void* data,
 		return data;
 	}
 
+	// 32-bit size expression against a full-width write loop: keep them consistent.
+	if (static_cast<uint64_t>(frames) * channels * bytes_per_sample != src_size) {
+		return data;
+	}
 	buffer->resize(src_size);
 
 	static constexpr uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};

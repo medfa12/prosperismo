@@ -1014,6 +1014,45 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			dump_guest_qwords("vorbis len", info->rcx);
 		}
 
+		// A fault outside the guest address space is a host bug, and EXITing here swallows the
+		// diagnosis: under Guard Malloc the guard-page hit never reaches libgmalloc, which would
+		// otherwise name the offending allocation. Returning false restores the default
+		// disposition so the fault re-raises and the allocator reports it.
+		// KYTY_HOST_FAULT_FATAL=1 keeps the old immediate exit.
+		static const bool host_fault_fatal = [] {
+			const char* v = std::getenv("KYTY_HOST_FAULT_FATAL");
+			return v != nullptr && v[0] != '\0' && v[0] != '0';
+		}();
+		// Guest allocations live far below this: eboot maps at 0x9_0000_0000 and guest buffers sit
+		// around 0x3-0x5_0000_0000. The emulator image itself is at 0x7000_0000_0000, so anything
+		// up there is host memory.
+		const bool guest_address = info->access_violation_vaddr < 0x10000000000ull;
+		if (!guest_address && !host_fault_fatal) {
+			printf("Access violation on a host address [%016" PRIx64
+			       "] - deferring to the allocator\n",
+			       info->access_violation_vaddr);
+			// Walk the frame-pointer chain here: backtrace() cannot pass _sigtramp under Rosetta,
+			// and a Rosetta crash report carries no thread stacks, so this is the only way to see
+			// who touched the freed block. Symbolize offline against image base 0x700000000000.
+			printf("=== host-fault frames (rbp chain), rip=0x%016" PRIx64 " ===\n",
+			       info->exception_address);
+			auto frame = info->rbp;
+			for (int i = 0; i < 24 && frame > 0x1000; i++) {
+				const auto* slots = reinterpret_cast<const uint64_t*>(frame);
+				const auto  next  = slots[0];
+				const auto  ret   = slots[1];
+				if (ret == 0) {
+					break;
+				}
+				printf("  [%02d] 0x%016" PRIx64 "\n", i, ret);
+				if (next <= frame) {
+					break;
+				}
+				frame = next;
+			}
+			fflush(stdout);
+			return false;
+		}
 		EXIT("Access violation: %s [%016" PRIx64 "] %s\n",
 		     Common::EnumName(info->access_violation_type).c_str(), info->access_violation_vaddr,
 		     (info->access_violation_vaddr == g_invalid_memory ? "(Unpatched object)" : ""));

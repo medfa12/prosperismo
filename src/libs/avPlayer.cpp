@@ -405,67 +405,6 @@ struct PacketQueue {
 // H.264 slice parser alone reserves 0x8c38 bytes, so invoking it directly after switching
 // to the guest stack overflows before decoding the first frame. Keep the Sony-visible
 // thread contract intact and marshal only the synchronous host-codec operation to a
-// worker with a native Windows stack.
-class HostCodecRunner {
-public:
-	HostCodecRunner(): thread([this] { ThreadMain(); }) {}
-	~HostCodecRunner() {
-		{
-			std::lock_guard lock(mutex);
-			stopping = true;
-		}
-		ready.notify_one();
-		thread.join();
-	}
-	HostCodecRunner(const HostCodecRunner&)            = delete;
-	HostCodecRunner& operator=(const HostCodecRunner&) = delete;
-
-	int Run(std::function<int()> operation) {
-		// One caller at a time. work/completed/result are a single slot, and ThreadMain unlocks
-		// while it executes, so two concurrent callers (video and audio decode run on different
-		// threads) race: the second overwrites `work`, both wake on the first completion, and the
-		// second returns a result for an operation that has not run yet. It then frees the AVFrame
-		// its lambda captured, and the worker subsequently executes that lambda against freed
-		// memory — the use-after-free seen at av_frame_free, and the likely source of the heap
-		// corruption that has been detonating in unrelated places (Metal compiler, av_malloc,
-		// audio push).
-		std::lock_guard<std::mutex> serialize(call_mutex);
-		std::unique_lock            lock(mutex);
-		work      = std::move(operation);
-		completed = false;
-		ready.notify_one();
-		done.wait(lock, [this] { return completed; });
-		return result;
-	}
-
-private:
-	void ThreadMain() {
-		std::unique_lock lock(mutex);
-		while (true) {
-			ready.wait(lock, [this] { return stopping || static_cast<bool>(work); });
-			if (stopping) {
-				return;
-			}
-			auto operation = std::move(work);
-			lock.unlock();
-			const int operation_result = operation();
-			lock.lock();
-			result    = operation_result;
-			completed = true;
-			done.notify_one();
-		}
-	}
-
-	std::mutex              call_mutex;
-	std::mutex              mutex;
-	std::condition_variable ready;
-	std::condition_variable done;
-	std::function<int()>    work;
-	int                     result    = 0;
-	bool                    completed = false;
-	bool                    stopping  = false;
-	std::thread             thread;
-};
 
 class GuestBuffer {
 public:
@@ -896,6 +835,12 @@ private:
 		if (video_ctx != nullptr) {
 			avcodec_free_context(&video_ctx);
 		}
+		if (video_frame != nullptr) {
+			av_frame_free(&video_frame);
+		}
+		if (audio_frame != nullptr) {
+			av_frame_free(&audio_frame);
+		}
 		if (audio_ctx != nullptr) {
 			avcodec_free_context(&audio_ctx);
 		}
@@ -969,6 +914,16 @@ private:
 				LOGF("AvPlayer: VideoToolbox hardware decode enabled\n");
 			}
 		}
+		// FFmpeg's frame threading hands our AVFrame to internal worker threads that outlive
+		// avcodec_receive_frame, so freeing it on return is a use-after-free: observed as
+		// av_frame_unref faulting on freed memory with a std::thread entry point directly below
+		// it in the frame chain. Decode single-threaded. KYTY_M43_CODEC_THREADS=n overrides.
+		static const int codec_threads = [] {
+			const char* v = std::getenv("KYTY_M43_CODEC_THREADS");
+			return (v != nullptr && v[0] != '\0') ? std::atoi(v) : 1;
+		}();
+		c->thread_count = codec_threads;
+		c->thread_type  = codec_threads > 1 ? c->thread_type : 0;
 		if (avcodec_parameters_to_context(c, s->codecpar) < 0 ||
 		    avcodec_open2(c, dec, nullptr) < 0) {
 			avcodec_free_context(&c);
@@ -1056,17 +1011,21 @@ private:
 		if (video_ctx == nullptr) {
 			return false;
 		}
-		AVFrame* f = av_frame_alloc();
+		// Reuse one frame instead of allocating and freeing per packet. avcodec_receive_frame
+		// unrefs the destination itself, and the worker thread was observed faulting inside
+		// av_frame_unref on a block the calling thread had already freed. A frame that outlives
+		// every decode call removes that lifetime window entirely.
+		if (video_frame == nullptr) {
+			video_frame = av_frame_alloc();
+		}
+		AVFrame* f = video_frame;
 		if (f == nullptr) {
 			return false;
 		}
 		// Already on the worker via DecodeUntil; Run() is not reentrant.
-		auto rc = codec_runner.Run([this, p, f] {
-			const auto send_result = avcodec_send_packet(video_ctx, p);
-			return send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
-		});
+		const auto send_result = avcodec_send_packet(video_ctx, p);
+		const auto rc = send_result < 0 ? send_result : avcodec_receive_frame(video_ctx, f);
 		if (rc < 0) {
-			av_frame_free(&f);
 			return false;
 		}
 		// VideoToolbox hands back an opaque hardware frame; pull it into CPU memory (NV12) so the
@@ -1075,40 +1034,37 @@ private:
 		if (f->format == AV_PIX_FMT_VIDEOTOOLBOX) {
 			sw = av_frame_alloc();
 			if (sw == nullptr ||
-			    codec_runner.Run([sw, f] { return av_hwframe_transfer_data(sw, f, 0); }) < 0) {
+			    av_hwframe_transfer_data(sw, f, 0) < 0) {
 				av_frame_free(&sw);
 				av_frame_free(&f);
 				return false;
 			}
-			sw->pts                 = f->pts;
+			sw->pts                   = f->pts;
 			sw->best_effort_timestamp = f->best_effort_timestamp;
 			PrepareVideo(sw);
 			av_frame_free(&sw);
-			av_frame_free(&f);
 			return true;
 		}
 		PrepareVideo(f);
-		av_frame_free(&f);
 		return true;
 	}
 	bool DecodeAudio(AVPacket* p) {
 		if (audio_ctx == nullptr) {
 			return false;
 		}
-		AVFrame* f = av_frame_alloc();
+		if (audio_frame == nullptr) {
+			audio_frame = av_frame_alloc();
+		}
+		AVFrame* f = audio_frame;
 		if (f == nullptr) {
 			return false;
 		}
-		auto rc = codec_runner.Run([this, p, f] {
-			const auto send_result = avcodec_send_packet(audio_ctx, p);
-			return send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
-		});
+		const auto send_result = avcodec_send_packet(audio_ctx, p);
+		const auto rc = send_result < 0 ? send_result : avcodec_receive_frame(audio_ctx, f);
 		if (rc < 0) {
-			av_frame_free(&f);
 			return false;
 		}
 		PrepareAudio(f);
-		av_frame_free(&f);
 		return true;
 	}
 	uint32_t Width(AVStream* s) const {
@@ -1243,11 +1199,7 @@ private:
 				av_frame_free(&tmp);
 				return;
 			}
-			// 4K colour conversion: large host frames, keep it off the guest stack.
-			codec_runner.Run([this, src, tmp] {
-				return sws_scale(sws, src->data, src->linesize, 0, src->height, tmp->data,
-				                 tmp->linesize);
-			});
+			sws_scale(sws, src->data, src->linesize, 0, src->height, tmp->data, tmp->linesize);
 			nv12 = tmp;
 		}
 		auto* dst = current_video->Get();
@@ -1338,8 +1290,7 @@ private:
 				swr_src_channels = src->ch_layout.nb_channels;
 			}
 			if (swr == nullptr ||
-			    codec_runner.Run([this, tmp, src] { return swr_convert_frame(swr, tmp, src); }) <
-			        0) {
+			    swr_convert_frame(swr, tmp, src) < 0) {
 				av_frame_free(&tmp);
 				return;
 			}
@@ -1376,6 +1327,8 @@ private:
 	AVFormatContext*                         fmt            = nullptr;
 	AVCodecContext*                          video_ctx      = nullptr;
 	AVCodecContext*                          audio_ctx      = nullptr;
+	AVFrame*                                 video_frame    = nullptr;
+	AVFrame*                                 audio_frame    = nullptr;
 	SwsContext*                              sws            = nullptr;
 	int                                      swr_src_format   = -1;
 	int                                      swr_src_rate     = 0;
@@ -1407,7 +1360,6 @@ private:
 	std::chrono::steady_clock::time_point    clock_start {};
 	std::chrono::steady_clock::time_point    pause_time {};
 	std::chrono::steady_clock::duration      paused_extra {};
-	HostCodecRunner                          codec_runner;
 };
 
 struct AvPlayerInternal {

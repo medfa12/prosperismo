@@ -927,7 +927,23 @@ static void ShaderGetStaticInputInfoPS(
 
 	// SPI_PS_IN_CONTROL.NUM_INTERP occupies bits 5:0. Keep the remaining control
 	// flags in the hardware state and extract only the input count here.
-	ps_info.input_num                    = sh.ps_in_control & 0x3fu;
+	// NUM_INTERP is a 6-bit field, so the guest can present 0..63, but both this struct's
+	// interpolator_settings and ShaderRegisters::ps_interpolator_settings hold 32. The copy below
+	// used the raw count and wrote up to 31 dwords past the end. ShaderPixelInputInfo ends with a
+	// ShaderStageRuntime holding two shared_ptrs, which sit exactly where indices ~44-51 land: the
+	// pointer and its control block get overwritten with adjacent register bytes, and destroying
+	// that shared_ptr then frees a bogus block. That is a damaged free list which detonates later
+	// in an unrelated malloc. The register write path only ever fills SPI_PS_INPUT_CNTL_0..31
+	// (pm4Handlers.cpp), so entries past 32 are not even initialised - clamping loses nothing.
+	ps_info.input_num                    = std::min<uint32_t>(sh.ps_in_control & 0x3fu, 32u);
+	if ((sh.ps_in_control & 0x3fu) > 32u) {
+		static uint64_t seen = 0;
+		if ((seen++ % 64) == 0) {
+			printf("ShaderGetStaticInputInfoPS: NUM_INTERP=%u clamped to 32 (ps_in_control=0x%08x, "
+			       "occurrence %llu)\n",
+			       sh.ps_in_control & 0x3fu, sh.ps_in_control, (unsigned long long)seen);
+		}
+	}
 	ps_info.ps_system_input_base         = ShaderCalcPsSystemInputBase(sh);
 	const uint32_t active_inputs         = sh.ps_input_ena & sh.ps_input_addr;
 	ps_info.ps_pos_x                     = (active_inputs & 0x00000100u) != 0;

@@ -235,6 +235,7 @@ VulkanDescriptorSet& DescriptorCache::GetDescriptor(Stage                       
 	std::vector<vk::DescriptorImageInfo>  image_infos;
 	std::vector<vk::WriteDescriptorSet>   writes;
 	buffer_infos.reserve(descriptor_count);
+
 	image_infos.reserve(descriptor_count);
 	writes.reserve(program.bindings.descriptors.size());
 
