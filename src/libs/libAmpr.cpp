@@ -1628,6 +1628,20 @@ static int ReadHostFileToGuest(const std::string& host_path, uint64_t file_offse
 	}
 
 	file.Close();
+
+	// A read that returns fewer bytes than asked for leaves the tail of the guest buffer holding
+	// whatever was there before, and the caller has no way to notice: the command reports success
+	// either way. The caller sizes these reads from the file size we handed it at resolve time, so
+	// a short read means our size and our read disagree, which is worth seeing rather than silently
+	// feeding stale bytes into an asset parser.
+	if (*bytes_read != size) {
+		printf("Ampr: short read, want=%llu got=%llu offset=%llu file_size=%llu path=%s\n",
+		       static_cast<unsigned long long>(size), static_cast<unsigned long long>(*bytes_read),
+		       static_cast<unsigned long long>(file_offset),
+		       static_cast<unsigned long long>(file_size), host_path.c_str());
+		fflush(stdout);
+	}
+
 	return OK;
 }
 
