@@ -1102,6 +1102,18 @@ static int32_t KYTY_SYSV_ABI JsonParserParse(JsonValue* dst, const char* src, si
 	JsonValueInit(&parsed);
 	auto json = nlohmann::json::parse(src, src + size, nullptr, false);
 	if (json.is_discarded() || !JsonValueFromNlohmann(&parsed, json)) {
+		// A silent failure here is indistinguishable from an empty document to the caller, which
+		// then quietly builds an empty resource list and dereferences its front element much later.
+		// Log the offending text so the cause is visible at the point it happens.
+		char preview[161] {};
+		const auto preview_len = std::min<size_t>(size, sizeof(preview) - 1);
+		for (size_t i = 0; i < preview_len; i++) {
+			const auto c = static_cast<unsigned char>(src[i]);
+			preview[i]   = (c >= 0x20 && c < 0x7f ? static_cast<char>(c) : '.');
+		}
+		printf("Json2: parse failed, size=%zu discarded=%d text=\"%s\"\n", size,
+		       static_cast<int>(json.is_discarded()), preview);
+		fflush(stdout);
 		JsonValueClear(&parsed);
 		return JSON_ERROR_PARSE_INVALID_CHAR;
 	}

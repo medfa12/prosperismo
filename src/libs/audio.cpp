@@ -88,6 +88,7 @@ public:
 
 	Id       AudioInOpen(uint32_t type, uint32_t samples_num, uint32_t freq, Format format);
 	bool     AudioInValid(Id handle);
+	bool     AudioInClose(Id handle);
 	uint32_t AudioInInput(Id handle, void* dest);
 
 	static constexpr int OUT_PORTS_MAX = 32;
@@ -605,6 +606,19 @@ bool Audio::AudioInValid(Id handle) {
 	        m_in_ports[handle.GetId()].used);
 }
 
+bool Audio::AudioInClose(Id handle) {
+	Common::LockGuard lock(m_mutex);
+
+	if (handle.GetId() < 0 || handle.GetId() >= IN_PORTS_MAX ||
+	    !m_in_ports[handle.GetId()].used) {
+		return false;
+	}
+
+	m_in_ports[handle.GetId()].used = false;
+
+	return true;
+}
+
 uint32_t Audio::AudioInInput(Id handle, void* dest) {
 	EXIT_NOT_IMPLEMENTED(!AudioInValid(handle));
 	EXIT_NOT_IMPLEMENTED(dest == nullptr);
@@ -854,6 +868,49 @@ int KYTY_SYSV_ABI AudioInOpen(int user_id, uint32_t type, uint32_t index, uint32
 	}
 
 	return id.ToInt();
+}
+
+int KYTY_SYSV_ABI AudioInHqOpen(int user_id, uint32_t type, uint32_t index, uint32_t len,
+                                uint32_t freq, uint32_t param) {
+	PRINT_NAME();
+
+	LOGF("\t user_id = %d\n"
+	     "\t type    = %u\n"
+	     "\t index   = %d\n"
+	     "\t len     = %u\n"
+	     "\t freq    = %u\n"
+	     "\t param   = %u\n",
+	     user_id, type, index, len, freq, param);
+
+	// The HQ variant differs from the plain open only in the capture quality the firmware requests
+	// from the device. There is no host capture device, so this opens the same kind of silent port
+	// the plain open does; unlike the plain open it does not abort on an unfamiliar type, because HQ
+	// callers pass device types we do not model. Refusing the open instead was measured and made no
+	// difference to how far the title gets.
+	Audio::Format format =
+	    (param == 0 ? Audio::Format::Signed16bitMono : Audio::Format::Signed16bitStereo);
+
+	EXIT_IF(g_audio == nullptr);
+
+	auto id = g_audio->AudioInOpen(type, len, freq, format);
+
+	if (!id.IsValid()) {
+		return AUDIO_IN_ERROR_PORT_FULL;
+	}
+
+	return id.ToInt();
+}
+
+int KYTY_SYSV_ABI AudioInClose(int handle) {
+	PRINT_NAME();
+
+	EXIT_IF(g_audio == nullptr);
+
+	if (!g_audio->AudioInClose(Audio::Id(handle))) {
+		return AUDIO_IN_ERROR_INVALID_HANDLE;
+	}
+
+	return OK;
 }
 
 int KYTY_SYSV_ABI AudioInInput(int handle, void* dest) {

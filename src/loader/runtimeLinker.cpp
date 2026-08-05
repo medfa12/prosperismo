@@ -39,8 +39,10 @@
 #else
 #include <dlfcn.h>
 #if defined(__APPLE__)
+#include <fcntl.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
+#include <unistd.h>
 #elif KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 #include <sys/uio.h>
 #include <unistd.h>
@@ -876,6 +878,30 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 	} else {
 		LOGF("code: unavailable\n");
 	}
+	// The on-disk eboot is a SELF container: its inner ELF program headers do not describe where
+	// segment bytes actually sit in the file, so disassembling eboot.bin at a faulting vaddr decodes
+	// unrelated bytes and invents phantom misaligned instructions. Dump the mapped, relocated image
+	// instead - that is the only byte stream that corresponds to the addresses reported here.
+	// KYTY_DUMP_IMAGE=<path> writes it once per run.
+	if (const char* dump_path = std::getenv("KYTY_DUMP_IMAGE");
+	    dump_path != nullptr && dump_path[0] != '\0' && info->exception_address != 0) {
+		static bool dumped = false;
+		if (!dumped) {
+			dumped = true;
+			auto* p = Common::Singleton<Loader::RuntimeLinker>::Instance()->FindProgramByAddr(
+			    info->exception_address);
+			if (p != nullptr && p->base_vaddr != 0 && p->base_size != 0) {
+				if (FILE* f = ::fopen(dump_path, "wb"); f != nullptr) {
+					const auto written =
+					    ::fwrite(reinterpret_cast<const void*>(p->base_vaddr), 1, p->base_size, f);
+					::fclose(f);
+					LOGF("image dump: %s base=%016" PRIx64 " size=%016" PRIx64 " written=%zu\n",
+					     dump_path, p->base_vaddr, p->base_size, written);
+				}
+			}
+		}
+	}
+
 	LOGF("exception: type=%s, av_type=%s, av_addr=%016" PRIx64 ", native_code=%08" PRIx32 "\n",
 	     Common::EnumName(info->type).c_str(),
 	     Common::EnumName(info->access_violation_type).c_str(), info->access_violation_vaddr,
@@ -898,6 +924,35 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 		LOGF("\n");
 	} else {
 		LOGF("stack: unavailable\n");
+	}
+
+	// Title code is built without frame pointers, so an rbp chain walk produces nonsense here. The
+	// only way to recover a guest call path is to dump a wide slice of the stack and filter it
+	// offline for words that are preceded by a real call instruction. Emitted as a single write
+	// because the log is shared with every other guest thread and per-word writes interleave.
+	// Written as raw bytes rather than formatted text: this runs on the faulting thread from a signal
+	// handler, so anything that allocates can deadlock against a heap lock the interrupted code was
+	// already holding. An earlier std::string version of this did exactly that.
+	if (const char* dump_path = std::getenv("KYTY_DUMP_IMAGE");
+	    dump_path != nullptr && dump_path[0] != '\0' && info->rsp != 0) {
+		static bool stack_dumped = false;
+		if (!stack_dumped) {
+			stack_dumped = true;
+			char path[1024] {};
+			::snprintf(path, sizeof(path), "%s.stack", dump_path);
+			if (int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644); fd >= 0) {
+				const uint64_t header[2] = {info->rsp, info->exception_address};
+				(void)::write(fd, header, sizeof(header));
+				// Chunked, and stop at the first short write: the live stack usually has far less
+				// than a page left above rsp, and one oversized write would fault and yield nothing.
+				for (uint64_t off = 0; off < 8192; off += 128) {
+					if (::write(fd, reinterpret_cast<const void*>(info->rsp + off), 128) != 128) {
+						break;
+					}
+				}
+				::close(fd);
+			}
+		}
 	}
 
 	auto dump_guest_code = [](const char* name, uint64_t addr) {
@@ -1027,17 +1082,20 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 		// around 0x3-0x5_0000_0000. The emulator image itself is at 0x7000_0000_0000, so anything
 		// up there is host memory.
 		const bool guest_address = info->access_violation_vaddr < 0x10000000000ull;
-		if (!guest_address && !host_fault_fatal) {
-			printf("Access violation on a host address [%016" PRIx64
-			       "] - deferring to the allocator\n",
-			       info->access_violation_vaddr);
-			// Walk the frame-pointer chain here: backtrace() cannot pass _sigtramp under Rosetta,
-			// and a Rosetta crash report carries no thread stacks, so this is the only way to see
-			// who touched the freed block. Symbolize offline against image base 0x700000000000.
-			printf("=== host-fault frames (rbp chain), rip=0x%016" PRIx64 " ===\n",
+
+		// Walk the frame-pointer chain here: backtrace() cannot pass _sigtramp under Rosetta, and a
+		// Rosetta crash report carries no thread stacks, so this is the only way to see the call
+		// path. Symbolize offline against image base 0x700000000000 for host frames and 0x900000000
+		// for guest ones. This runs for guest faults too: guest code invoked as an HLE callback runs
+		// on a host thread, so the chain names the emulator code that called into the title.
+		const auto dump_frames = [&](const char* what) {
+			printf("=== %s frames (rbp chain), rip=0x%016" PRIx64 " ===\n", what,
 			       info->exception_address);
 			auto frame = info->rbp;
 			for (int i = 0; i < 24 && frame > 0x1000; i++) {
+				if (!IsDumpableRange(frame, 2 * sizeof(uint64_t))) {
+					break;
+				}
 				const auto* slots = reinterpret_cast<const uint64_t*>(frame);
 				const auto  next  = slots[0];
 				const auto  ret   = slots[1];
@@ -1051,8 +1109,17 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 				frame = next;
 			}
 			fflush(stdout);
+		};
+
+		if (!guest_address && !host_fault_fatal) {
+			printf("Access violation on a host address [%016" PRIx64
+			       "] - deferring to the allocator\n",
+			       info->access_violation_vaddr);
+			dump_frames("host-fault");
 			return false;
 		}
+
+		dump_frames("guest-fault");
 		EXIT("Access violation: %s [%016" PRIx64 "] %s\n",
 		     Common::EnumName(info->access_violation_type).c_str(), info->access_violation_vaddr,
 		     (info->access_violation_vaddr == g_invalid_memory ? "(Unpatched object)" : ""));
@@ -1292,6 +1359,20 @@ static void RelocateRecord(uint32_t index, Elf64_Rela* r, Program* program, bool
 	}
 
 	// KYTY_PROFILER_END_BLOCK;
+
+	// Only unresolved imports are logged below, but naming a guest function requires knowing which
+	// HLE calls it makes, which needs the resolved ones too. KYTY_DUMP_IMPORTS=<path> writes the
+	// full slot-address -> symbol table so a disassembly can be annotated offline.
+	if (patched) {
+		if (const char* imports_path = std::getenv("KYTY_DUMP_IMPORTS");
+		    imports_path != nullptr && imports_path[0] != '\0') {
+			static FILE* imports_file = ::fopen(imports_path, "w");
+			if (imports_file != nullptr) {
+				::fprintf(imports_file, "%016" PRIx64 " %s\n", ri.vaddr, ri.name.c_str());
+				::fflush(imports_file);
+			}
+		}
+	}
 
 	if (patched && stubbed_import) {
 		const auto thunk = RegisterStubbedImport(index, program, ri);
