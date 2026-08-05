@@ -1,6 +1,10 @@
 #include "graphics/host_gpu/renderer/cache/gpuResourceManager.h"
 
 #include "common/assert.h"
+
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include "graphics/guest_gpu/command_processor/commandProcessor.h"
 #include "graphics/guest_gpu/graphicsRun.h"
 #include "graphics/host_gpu/renderer/commandScheduler.h"
@@ -15,6 +19,30 @@ GpuResourceManager::~GpuResourceManager() = default;
 
 bool GpuResourceManager::HandleFault(PageFaultAccess access, uint64_t fault_vaddr) noexcept {
 	constexpr uint64_t fault_size = 8;
+
+	// A fault that never clears its page's watcher re-faults on the same instruction forever,
+	// which looks identical to "slow" from the outside. Reporting the repeat count for the
+	// current address separates a livelock from ordinary invalidation churn.
+	static const bool fault_trace = [] {
+		const char* v = std::getenv("KYTY_FAULT_TRACE");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	if (fault_trace) {
+		static std::atomic<uint64_t> fault_count {0};
+		static std::atomic<uint64_t> last_vaddr {0};
+		static std::atomic<uint64_t> same_vaddr {0};
+		const auto                   n    = fault_count.fetch_add(1) + 1;
+		const auto                   prev = last_vaddr.exchange(fault_vaddr);
+		const auto repeats = (prev == fault_vaddr ? same_vaddr.fetch_add(1) + 1 : same_vaddr.exchange(0));
+		if (n % 10000 == 0) {
+			::printf("[fault] n=%llu addr=0x%016llx access=%u same_addr_streak=%llu\n",
+			         static_cast<unsigned long long>(n),
+			         static_cast<unsigned long long>(fault_vaddr),
+			         static_cast<uint32_t>(access), static_cast<unsigned long long>(repeats));
+			::fflush(stdout);
+		}
+	}
+
 	if (!IsMapped(fault_vaddr, fault_size)) {
 		return false;
 	}
@@ -28,6 +56,9 @@ bool GpuResourceManager::HandleFault(PageFaultAccess access, uint64_t fault_vadd
 		cp.BeginReadbackTransaction();
 		{
 			ResourceMutex::FaultScope fault(m_resource_mutex);
+			// Execute faults deliberately stay on the readback path. Routing them through
+			// invalidation instead was measured to stall the guest at frame ~31, far worse than
+			// the single livelocked thread it was meant to rescue.
 			if (access == PageFaultAccess::Write) {
 				m_buffer_cache.InvalidateMemory(fault_vaddr, fault_size);
 				m_texture_cache.InvalidateMemory(fault_vaddr, fault_size);

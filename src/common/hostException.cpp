@@ -3,11 +3,14 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
+#include <memory>
 
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
 #include <windows.h> // IWYU pragma: keep
 #elif defined(__APPLE__)
 #include <csignal>
+#include <execinfo.h>
 #include <sys/ucontext.h>
 #else
 #include <csignal>
@@ -142,6 +145,23 @@ static std::atomic<Handler> g_handler {nullptr};
 static std::atomic_uint32_t g_install_state {0};
 static thread_local bool    g_in_exception_filter = false;
 
+// Each thread needs its own alternate signal stack for SA_ONSTACK to mean anything.
+static thread_local std::unique_ptr<uint8_t[]> g_signal_stack;
+
+void InstallSignalStack() {
+	if (g_signal_stack != nullptr) {
+		return;
+	}
+	constexpr size_t SIZE = 1u << 20u;
+	g_signal_stack        = std::make_unique<uint8_t[]>(SIZE);
+	stack_t ss {};
+	ss.ss_sp    = g_signal_stack.get();
+	ss.ss_size  = SIZE;
+	ss.ss_flags = 0;
+	::sigaltstack(&ss, nullptr);
+}
+
+
 static_assert(decltype(g_handler)::is_always_lock_free);
 static_assert(decltype(g_install_state)::is_always_lock_free);
 
@@ -190,6 +210,25 @@ static void SignalHandler(int sig, siginfo_t* si, void* uctx) {
 		info.type                   = ExceptionType::AccessViolation;
 		info.access_violation_type  = DecodeAccess(mc->__es.__err);
 		info.access_violation_vaddr = reinterpret_cast<uint64_t>(si->si_addr);
+
+		// The x86-64 error code is synthesized for a translated process, so the raw value is
+		// worth seeing before trusting the decode.
+		static const bool trace_err = [] {
+			const char* v = std::getenv("KYTY_FAULT_ERR_TRACE");
+			return v != nullptr && v[0] != '\0' && v[0] != '0';
+		}();
+		if (trace_err) {
+			static uint64_t err_count = 0;
+			if ((++err_count % 10000) == 1) {
+				std::fprintf(stderr,
+				             "[faulterr] n=%llu addr=0x%016llx err=0x%llx si_code=%d rip=0x%llx\n",
+				             static_cast<unsigned long long>(err_count),
+				             static_cast<unsigned long long>(info.access_violation_vaddr),
+				             static_cast<unsigned long long>(mc->__es.__err), si->si_code,
+				             static_cast<unsigned long long>(ss.__rip));
+				std::fflush(stderr);
+			}
+		}
 	}
 
 	info.rax = ss.__rax;
@@ -322,7 +361,12 @@ bool InstallHandler(Handler handler) {
 #elif defined(__APPLE__)
 	struct sigaction sa {};
 	sa.sa_sigaction = SignalHandler;
-	sa.sa_flags     = SA_SIGINFO;
+	// SA_ONSTACK is essential here, not a nicety. Guest code runs on stacks the *game* sizes —
+	// Astro gives one fiber 2 KB — and this handler builds an ExceptionInfo, takes mutexes and
+	// calls into the GPU resource manager. Run on the faulting stack it overruns it and corrupts
+	// whatever sits below, including the kernel-saved context, so the resumed rip can land in the
+	// middle of an instruction.
+	sa.sa_flags     = SA_SIGINFO | SA_ONSTACK;
 	sigemptyset(&sa.sa_mask);
 	// The guest signal-dispatch path (KernelRaiseException) interrupts threads with
 	// SIGUSR1; block it while a fault is being resolved so a stop-the-world request
@@ -331,6 +375,51 @@ bool InstallHandler(Handler handler) {
 
 	// macOS raises SIGBUS for protection faults on some paths and SIGSEGV on others;
 	// SIGILL covers instructions the host cannot execute (routed to the x64 emulator).
+	InstallSignalStack();
+
+	// The process self-aborts with nothing on stderr, nothing in the unified log, and an .ips that
+	// carries no thread backtraces (normal for Rosetta). Catch SIGABRT ourselves purely to print
+	// where it came from, then re-raise so the disposition is unchanged.
+	{
+		struct sigaction abrt {};
+		abrt.sa_sigaction = [](int s, siginfo_t*, void* uctx) {
+			// backtrace() cannot walk past _sigtramp under Rosetta, so follow the frame-pointer
+			// chain out of the interrupted context by hand. Addresses are symbolized offline
+			// against the image base (0x700000000000, zero slide).
+			std::fputs("\n=== SIGABRT frames (rbp chain) ===\n", stderr);
+			auto* uc = static_cast<ucontext_t*>(uctx);
+			if (uc != nullptr && uc->uc_mcontext != nullptr) {
+				const auto& ss = uc->uc_mcontext->__ss;
+				std::fprintf(stderr, "rip=0x%llx rbp=0x%llx rsp=0x%llx\n",
+				             (unsigned long long)ss.__rip, (unsigned long long)ss.__rbp,
+				             (unsigned long long)ss.__rsp);
+				auto frame = ss.__rbp;
+				for (int i = 0; i < 32 && frame > 0x1000; i++) {
+					const auto* slots = reinterpret_cast<const uint64_t*>(frame);
+					const auto  next  = slots[0];
+					const auto  ret   = slots[1];
+					if (ret == 0) {
+						break;
+					}
+					std::fprintf(stderr, "  [%02d] 0x%016llx\n", i, (unsigned long long)ret);
+					if (next <= frame) {
+						break;
+					}
+					frame = next;
+				}
+			}
+			std::fflush(stderr);
+			struct sigaction dfl {};
+			dfl.sa_handler = SIG_DFL;
+			sigemptyset(&dfl.sa_mask);
+			::sigaction(s, &dfl, nullptr);
+			::raise(s);
+		};
+		abrt.sa_flags = SA_SIGINFO | SA_ONSTACK;
+		sigemptyset(&abrt.sa_mask);
+		::sigaction(SIGABRT, &abrt, nullptr);
+	}
+
 	bool ok = sigaction(SIGSEGV, &sa, nullptr) == 0 && sigaction(SIGBUS, &sa, nullptr) == 0 &&
 	          sigaction(SIGILL, &sa, nullptr) == 0;
 	if (!ok) {

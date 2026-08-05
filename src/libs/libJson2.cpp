@@ -727,6 +727,182 @@ static const JsonValue* KYTY_SYSV_ABI JsonValueIndexUInt(const JsonValue* self, 
 	return (index < impl->size() ? (*impl)[static_cast<size_t>(index)] : JsonStaticNullValue());
 }
 
+// The game imports these and the loader was patching every one to a stub, so a guest-constructed
+// Array kept whatever bytes were already in its storage. JsonValueClear then walked that garbage
+// and faulted reading 0xffffffffffffffff. Signatures recovered from the firmware NID map; see
+// ps5oracle/json2_missing_api.md.
+
+static JsonArray* KYTY_SYSV_ABI JsonArrayCtor(JsonArray* self) {
+	PRINT_NAME();
+
+	if (self != nullptr) {
+		self->impl = new std::vector<JsonValue*>;
+	}
+	return self;
+}
+
+static void KYTY_SYSV_ABI JsonArrayDtor(void* self) {
+	PRINT_NAME();
+
+	auto* array = reinterpret_cast<JsonArray*>(self);
+	if (array != nullptr && array->impl != nullptr) {
+		for (auto* value: *array->impl) {
+			JsonValueDelete(value);
+		}
+		delete array->impl;
+		array->impl = nullptr;
+	}
+}
+
+static JsonValue* KYTY_SYSV_ABI JsonValueCopyCtor(JsonValue* self, const JsonValue* src) {
+	PRINT_NAME();
+
+	JsonValueInit(self);
+	JsonValueCopy(self, src);
+	return self;
+}
+
+static JsonValue* KYTY_SYSV_ABI JsonValueArrayCtor(JsonValue* self, const JsonArray* value) {
+	PRINT_NAME();
+
+	JsonValueInit(self);
+	if (self != nullptr) {
+		self->type  = JsonValueTypeArray;
+		self->array = JsonArrayNew();
+		if (value != nullptr && value->impl != nullptr) {
+			for (auto* item: *value->impl) {
+				auto* copy = JsonValueNew();
+				JsonValueCopy(copy, item);
+				copy->parent = self;
+				self->array->impl->push_back(copy);
+			}
+		}
+	}
+	return self;
+}
+
+static JsonValue* KYTY_SYSV_ABI JsonValueUIntCtor(JsonValue* self, uint64_t value) {
+	PRINT_NAME();
+
+	JsonValueInit(self);
+	if (self != nullptr) {
+		self->type     = JsonValueTypeUInteger;
+		self->uinteger = value;
+	}
+	return self;
+}
+
+static void KYTY_SYSV_ABI JsonValueSetArray(JsonValue* self, const JsonArray* value) {
+	PRINT_NAME();
+
+	if (self == nullptr) {
+		return;
+	}
+	JsonValueClear(self);
+	self->type  = JsonValueTypeArray;
+	self->array = JsonArrayNew();
+	if (value != nullptr && value->impl != nullptr) {
+		for (auto* item: *value->impl) {
+			auto* copy = JsonValueNew();
+			JsonValueCopy(copy, item);
+			copy->parent = self;
+			self->array->impl->push_back(copy);
+		}
+	}
+}
+
+static void KYTY_SYSV_ABI JsonValueSetObject(JsonValue* self, const JsonObject* value) {
+	PRINT_NAME();
+
+	if (self == nullptr) {
+		return;
+	}
+	JsonValueClear(self);
+	self->type   = JsonValueTypeObject;
+	self->object = JsonObjectNew();
+	if (value != nullptr && value->impl != nullptr) {
+		for (const auto& item: *value->impl) {
+			auto* copy = JsonValueNew();
+			JsonValueCopy(copy, item.second);
+			copy->parent                      = self;
+			(*self->object->impl)[item.first] = copy;
+		}
+	}
+}
+
+static uint64_t KYTY_SYSV_ABI JsonValueGetUInteger(const JsonValue* self) {
+	PRINT_NAME();
+
+	return self != nullptr ? self->uinteger : 0;
+}
+
+static bool KYTY_SYSV_ABI JsonStringEqualsCString(const JsonString* self, const char* other) {
+	PRINT_NAME();
+
+	if (self == nullptr || self->impl == nullptr || other == nullptr) {
+		return false;
+	}
+	return *self->impl == other;
+}
+
+// sce::Json::Array::iterator is `class iterator { void* m_itimpl; }` (SDK 13.000 json2.h), so the
+// implementation pointer can address the vector storage directly and needs no allocation — which
+// also makes the destructor a genuine no-op rather than a guess. Returned by value, and the class
+// has a user-declared destructor, so it comes back through an sret slot.
+struct JsonArrayIterator {
+	JsonValue** m_itimpl;
+};
+
+static JsonArrayIterator* KYTY_SYSV_ABI JsonArrayBegin(JsonArrayIterator* ret,
+                                                       const JsonArray*   self) {
+	PRINT_NAME();
+
+	if (ret != nullptr) {
+		ret->m_itimpl = (self != nullptr && self->impl != nullptr && !self->impl->empty())
+		                    ? self->impl->data()
+		                    : nullptr;
+	}
+	return ret;
+}
+
+static JsonArrayIterator* KYTY_SYSV_ABI JsonArrayEnd(JsonArrayIterator* ret,
+                                                     const JsonArray*   self) {
+	PRINT_NAME();
+
+	if (ret != nullptr) {
+		ret->m_itimpl = (self != nullptr && self->impl != nullptr && !self->impl->empty())
+		                    ? self->impl->data() + self->impl->size()
+		                    : nullptr;
+	}
+	return ret;
+}
+
+static void KYTY_SYSV_ABI JsonArrayIteratorDtor(JsonArrayIterator* /*self*/) {
+	PRINT_NAME();
+}
+
+static bool KYTY_SYSV_ABI JsonArrayIteratorNotEqual(const JsonArrayIterator* self,
+                                                    const JsonArrayIterator* other) {
+	PRINT_NAME();
+
+	return self == nullptr || other == nullptr ? false : self->m_itimpl != other->m_itimpl;
+}
+
+static JsonArrayIterator* KYTY_SYSV_ABI JsonArrayIteratorInc(JsonArrayIterator* self) {
+	PRINT_NAME();
+
+	if (self != nullptr && self->m_itimpl != nullptr) {
+		self->m_itimpl++;
+	}
+	return self;
+}
+
+static JsonValue* KYTY_SYSV_ABI JsonArrayIteratorDeref(const JsonArrayIterator* self) {
+	PRINT_NAME();
+
+	return (self != nullptr && self->m_itimpl != nullptr) ? *self->m_itimpl : nullptr;
+}
+
 static int32_t KYTY_SYSV_ABI JsonValueSerialize(JsonValue* self, JsonString* dst) {
 	PRINT_NAME();
 
@@ -736,6 +912,45 @@ static int32_t KYTY_SYSV_ABI JsonValueSerialize(JsonValue* self, JsonString* dst
 		JsonSerializeValue(self, impl);
 	}
 	return 0;
+}
+
+// Value::toString(String&) const — same serialization as Value::serialize, which the game already
+// links; only the constness of the receiver differs.
+static int32_t KYTY_SYSV_ABI JsonValueToString(const JsonValue* self, JsonString* dst) {
+	PRINT_NAME();
+
+	auto* impl = JsonStringImpl(dst);
+	if (impl != nullptr) {
+		impl->clear();
+		JsonSerializeValue(const_cast<JsonValue*>(self), impl);
+	}
+	return 0;
+}
+
+// Value::referValue(const String&) — returns a reference to the named member, creating it when
+// absent, so it must never hand back null for a live object.
+static JsonValue* KYTY_SYSV_ABI JsonValueReferValueByString(JsonValue*        self,
+                                                            const JsonString* name) {
+	PRINT_NAME();
+
+	if (self == nullptr) {
+		return nullptr;
+	}
+	if (self->type != JsonValueTypeObject || self->object == nullptr) {
+		JsonValueClear(self);
+		self->type   = JsonValueTypeObject;
+		self->object = JsonObjectNew();
+	}
+	const auto* key = JsonStringImpl(name);
+	if (key == nullptr) {
+		return nullptr;
+	}
+	auto& slot = (*self->object->impl)[*key];
+	if (slot == nullptr) {
+		slot         = JsonValueNew();
+		slot->parent = self;
+	}
+	return slot;
 }
 
 static JsonString* KYTY_SYSV_ABI JsonStringCtor(JsonString* self) {
@@ -958,6 +1173,23 @@ LIB_DEFINE(InitNet_1_Json2) {
 	LIB_FUNC("urOpESTBZmo", LibJson2::JsonObjectAssign);
 	LIB_FUNC("zTwZdI8AZ5Y", LibJson2::JsonValueGetBoolean);
 	LIB_FUNC("R7FDWtcN6f8", LibJson2::JsonValueSerialize);
+	LIB_FUNC("JP-PtKMiI1E", LibJson2::JsonArrayCtor);
+	LIB_FUNC("HJ8GpRT1aiw", LibJson2::JsonArrayDtor);
+	LIB_FUNC("fSb2oQTNrgA", LibJson2::JsonValueCopyCtor);
+	LIB_FUNC("iZeYfOxtMRg", LibJson2::JsonValueArrayCtor);
+	LIB_FUNC("x4AUdbhpRB0", LibJson2::JsonValueUIntCtor);
+	LIB_FUNC("195ad-jAsTU", LibJson2::JsonValueSetArray);
+	LIB_FUNC("dFCphqnd+a4", LibJson2::JsonValueSetObject);
+	LIB_FUNC("sn4HNCtNRzY", LibJson2::JsonValueGetUInteger);
+	LIB_FUNC("VbFjEs--uiA", LibJson2::JsonStringEqualsCString);
+	LIB_FUNC("bcH5EnFE2xY", LibJson2::JsonArrayBegin);
+	LIB_FUNC("WXF2ihRF+B8", LibJson2::JsonArrayEnd);
+	LIB_FUNC("9yLjn46Ypfs", LibJson2::JsonArrayIteratorDtor);
+	LIB_FUNC("5AZPp99ogrc", LibJson2::JsonArrayIteratorNotEqual);
+	LIB_FUNC("w5+VCznos5E", LibJson2::JsonArrayIteratorInc);
+	LIB_FUNC("wcgr5mte7T8", LibJson2::JsonArrayIteratorDeref);
+	LIB_FUNC("Ncel8t2Rrpc", LibJson2::JsonValueToString);
+	LIB_FUNC("wLsJlmgEIaI", LibJson2::JsonValueReferValueByString);
 	LIB_FUNC("oH8aBmLU+fc", LibJson2::JsonObjectClear);
 	LIB_FUNC("bAM9Qwofus0", LibJson2::JsonArrayBack);
 	LIB_FUNC("UeuWT+yNdCQ", LibJson2::JsonValueBoolCtor);

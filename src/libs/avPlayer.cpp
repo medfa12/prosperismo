@@ -24,6 +24,7 @@
 #include <thread>
 
 extern "C" {
+#include <libavutil/hwcontext.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
@@ -420,7 +421,16 @@ public:
 	HostCodecRunner& operator=(const HostCodecRunner&) = delete;
 
 	int Run(std::function<int()> operation) {
-		std::unique_lock lock(mutex);
+		// One caller at a time. work/completed/result are a single slot, and ThreadMain unlocks
+		// while it executes, so two concurrent callers (video and audio decode run on different
+		// threads) race: the second overwrites `work`, both wake on the first completion, and the
+		// second returns a result for an operation that has not run yet. It then frees the AVFrame
+		// its lambda captured, and the worker subsequently executes that lambda against freed
+		// memory — the use-after-free seen at av_frame_free, and the likely source of the heap
+		// corruption that has been detonating in unrelated places (Metal compiler, av_malloc,
+		// audio push).
+		std::lock_guard<std::mutex> serialize(call_mutex);
+		std::unique_lock            lock(mutex);
 		work      = std::move(operation);
 		completed = false;
 		ready.notify_one();
@@ -446,6 +456,7 @@ private:
 		}
 	}
 
+	std::mutex              call_mutex;
 	std::mutex              mutex;
 	std::condition_variable ready;
 	std::condition_variable done;
@@ -622,6 +633,11 @@ public:
 	}
 	int StreamCount() const { return fmt == nullptr ? 0 : static_cast<int>(fmt->nb_streams); }
 	int Enable(uint32_t id) {
+		::printf("[avplayer] Enable(%u) nb_streams=%u supported=%d\n", id,
+		         fmt != nullptr ? fmt->nb_streams : 0,
+		         (fmt != nullptr && id < fmt->nb_streams) ? StreamSupported(static_cast<int>(id))
+		                                                  : -1);
+		::fflush(stdout);
 		if (fmt == nullptr || id >= fmt->nb_streams) {
 			return AVPLAYER_ERROR_OPERATION_FAILED;
 		}
@@ -682,9 +698,15 @@ public:
 		if (video_id) {
 			auto*    video_stream = fmt->streams[video_id.value()];
 			uint32_t video_size   = VideoBufferSize(video_stream);
+			::printf("[avplayer] Start: allocating %d video buffers of %u bytes\n",
+			         max_video_buffers, video_size);
+			::fflush(stdout);
 			for (int i = 0; i < max_video_buffers; i++) {
 				auto buffer = std::make_unique<GuestBuffer>(mem, 0x100, video_size, true);
 				if (!buffer->Valid()) {
+					::printf("[avplayer] Start: video buffer %d of %u bytes FAILED\n", i,
+					         video_size);
+					::fflush(stdout);
 					video_buffers.clear();
 					return AVPLAYER_ERROR_NO_MEMORY;
 				}
@@ -786,7 +808,25 @@ public:
 			}
 			return false;
 		}
+		// PrepareVideo() bails out (no free GuestBuffer, sws/swr failure, hw transfer failure)
+		// without clearing current_video_info, so decode success alone is not enough: we were
+		// handing the game success with data == nullptr. It takes that as a delivered frame, has
+		// nothing to display, and stops asking — the intro then plays as audio over black.
+		if (current_video_info.data == nullptr) {
+			return false;
+		}
 		*out = current_video_info;
+		// The game paces video against its own media clock and discards any frame whose timestamp
+		// is already in the past. Under emulation decoding always lags the wall clock, so every
+		// frame is late and the intro plays as audio over black. Reporting the frame as due right
+		// now keeps it. KYTY_M43_PTS_LIE=1 matches the name Stepz uses for the same workaround.
+		static const bool pts_lie = [] {
+			const char* v = std::getenv("KYTY_M43_PTS_LIE");
+			return v != nullptr && v[0] != '\0' && v[0] != '0';
+		}();
+		if (pts_lie) {
+			out->time_stamp = CurrentTime();
+		}
 		if (deliver_seek_frame) {
 			seek_video_frame_pending = false;
 		}
@@ -823,7 +863,15 @@ public:
 
 private:
 	void Close() {
-		Stop();
+		// Stop() takes the mutex and releases it, after which fmt and the streamer were torn down
+		// unlocked — while PrepareVideo/PrepareAudio still dereference fmt->streams[...] on the
+		// decode path. Hold the lock across the whole teardown.
+		std::lock_guard lock(mutex);
+		bool            was_playing_video = !stopped && video_id.has_value();
+		StopNoLock(true);
+		if (was_playing_video) {
+			::printf("AvPlayer video stopped\n");
+		}
 		if (fmt != nullptr) {
 			avformat_close_input(&fmt);
 		}
@@ -904,6 +952,23 @@ private:
 		if (c == nullptr) {
 			return false;
 		}
+		// Astro's intro (data/prein/video/ps_studio.mp4) is HEVC at 3840x2160. Decoding that in
+		// software under Rosetta is far slower than real time, which is why the game asks for one
+		// frame and gives up. VideoToolbox is compiled into our FFmpeg and outputs NV12 — exactly
+		// what PrepareVideo wants — so use it for the video stream.
+		// KYTY_M43_HW_DECODE=0 forces software.
+		static const bool hw_decode = [] {
+			const char* v = std::getenv("KYTY_M43_HW_DECODE");
+			return v == nullptr || (v[0] != '\0' && v[0] != '0');
+		}();
+		if (hw_decode && s->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+			AVBufferRef* hw = nullptr;
+			if (av_hwdevice_ctx_create(&hw, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0) >=
+			    0) {
+				c->hw_device_ctx = hw;
+				LOGF("AvPlayer: VideoToolbox hardware decode enabled\n");
+			}
+		}
 		if (avcodec_parameters_to_context(c, s->codecpar) < 0 ||
 		    avcodec_open2(c, dec, nullptr) < 0) {
 			avcodec_free_context(&c);
@@ -978,7 +1043,14 @@ private:
 		return false;
 	}
 	bool DecodeVideo(AVPacket* p) {
-		if (video_ctx == nullptr) {
+		// KYTY_M43_NO_VIDEO_DECODE=1 drops video decoding entirely (audio-only intro, which is the
+		// stock behaviour anyway since the game discards late frames). Used to test whether the
+		// AVFrame use-after-free inside FFmpeg is what ends the run.
+		static const bool no_video = [] {
+			const char* v = std::getenv("KYTY_M43_NO_VIDEO_DECODE");
+			return v != nullptr && v[0] != '\0' && v[0] != '0';
+		}();
+		if (no_video || video_ctx == nullptr) {
 			return false;
 		}
 		AVFrame* f = av_frame_alloc();
@@ -992,6 +1064,23 @@ private:
 		if (rc < 0) {
 			av_frame_free(&f);
 			return false;
+		}
+		// VideoToolbox hands back an opaque hardware frame; pull it into CPU memory (NV12) so the
+		// existing conversion path can use it.
+		AVFrame* sw = nullptr;
+		if (f->format == AV_PIX_FMT_VIDEOTOOLBOX) {
+			sw = av_frame_alloc();
+			if (sw == nullptr || av_hwframe_transfer_data(sw, f, 0) < 0) {
+				av_frame_free(&sw);
+				av_frame_free(&f);
+				return false;
+			}
+			sw->pts                 = f->pts;
+			sw->best_effort_timestamp = f->best_effort_timestamp;
+			PrepareVideo(sw);
+			av_frame_free(&sw);
+			av_frame_free(&f);
+			return true;
 		}
 		PrepareVideo(f);
 		av_frame_free(&f);
@@ -1111,6 +1200,12 @@ private:
 		uint32_t pitch         = VideoPitch(s);
 		auto*    current_video = AllocateVideoBuffer();
 		if (current_video == nullptr) {
+			static uint64_t n = 0;
+			if (n++ < 4) {
+				::printf("[avplayer] PrepareVideo: no buffer (pool=%zu, max=%d, %ux%u pitch=%u)\n",
+				         video_buffers.size(), max_video_buffers, Width(s), h, pitch);
+				::fflush(stdout);
+			}
 			return;
 		}
 		AVFrame* nv12 = src;
@@ -1147,7 +1242,11 @@ private:
 			nv12 = tmp;
 		}
 		auto* dst = current_video->Get();
+		::printf("[pv] dst=%p pitch=%u h=%u src=%dx%d fmt=%d nv12_ls=%d/%d\n", (void*)dst, pitch, h,
+		         src->width, src->height, src->format, nv12->linesize[0], nv12->linesize[1]);
+		::fflush(stdout);
 		std::memset(dst, 0, static_cast<size_t>(pitch) * h * 3 / 2);
+		::printf("[pv] memset ok\n"); ::fflush(stdout);
 		for (int y = 0; y < src->height; y++) {
 			std::memcpy(dst + y * pitch, nv12->data[0] + y * nv12->linesize[0], src->width);
 		}
@@ -1168,6 +1267,7 @@ private:
 		current_video_info.details.video.crop_bottom_offset =
 		    static_cast<uint32_t>(src->crop_bottom + (h - src->height));
 		current_video_info.details.video.pitch = pitch;
+		::printf("[pv] complete\n"); ::fflush(stdout);
 		if (tmp) {
 			av_frame_free(&tmp);
 		}
@@ -1203,7 +1303,16 @@ private:
 				av_frame_free(&tmp);
 				return;
 			}
-			if (swr == nullptr) {
+			// The resampler was built once from the first frame and never rebuilt, so a stream
+			// that changes sample format, rate or channel count kept feeding the stale context —
+			// silence or garbage from that point on. Mirror what the video path already does with
+			// sws and rebuild when the input description changes.
+			if (swr == nullptr || swr_src_format != src->format ||
+			    swr_src_rate != src->sample_rate ||
+			    swr_src_channels != src->ch_layout.nb_channels) {
+				if (swr != nullptr) {
+					swr_free(&swr);
+				}
 				SwrContext*     ctx = nullptr;
 				AVChannelLayout out;
 				av_channel_layout_copy(&out, &src->ch_layout);
@@ -1211,8 +1320,13 @@ private:
 				                    &src->ch_layout, static_cast<AVSampleFormat>(src->format),
 				                    src->sample_rate, 0, nullptr);
 				swr = ctx;
-				swr_init(swr);
+				if (swr != nullptr) {
+					swr_init(swr);
+				}
 				av_channel_layout_uninit(&out);
+				swr_src_format   = src->format;
+				swr_src_rate     = src->sample_rate;
+				swr_src_channels = src->ch_layout.nb_channels;
 			}
 			if (swr == nullptr || swr_convert_frame(swr, tmp, src) < 0) {
 				av_frame_free(&tmp);
@@ -1252,6 +1366,9 @@ private:
 	AVCodecContext*                          video_ctx      = nullptr;
 	AVCodecContext*                          audio_ctx      = nullptr;
 	SwsContext*                              sws            = nullptr;
+	int                                      swr_src_format   = -1;
+	int                                      swr_src_rate     = 0;
+	int                                      swr_src_channels = 0;
 	SwrContext*                              swr            = nullptr;
 	int                                      sws_src_width  = 0;
 	int                                      sws_src_height = 0;
@@ -1460,9 +1577,15 @@ int KYTY_SYSV_ABI AvPlayerGetStreamInfo(AvPlayerInternal* h, uint32_t stream_id,
 	if (h == nullptr || info == nullptr) {
 		return AVPLAYER_ERROR_INVALID_PARAMS;
 	}
-	return h->source == nullptr
-	           ? AVPLAYER_ERROR_OPERATION_FAILED
-	           : h->source->Info(stream_id, static_cast<AvPlayerStreamInfo*>(info));
+	const auto rc = h->source == nullptr
+	                    ? AVPLAYER_ERROR_OPERATION_FAILED
+	                    : h->source->Info(stream_id, static_cast<AvPlayerStreamInfo*>(info));
+	// The game inspects streams once each and enables only one; report exactly what we told it.
+	const auto* si = static_cast<const AvPlayerStreamInfo*>(info);
+	::printf("[avplayer] GetStreamInfo id=%u rc=%d type=%u\n", stream_id, rc,
+	         rc == 0 ? si->type : 0xffffffffu);
+	::fflush(stdout);
+	return rc;
 }
 int KYTY_SYSV_ABI AvPlayerGetStreamInfoEx(AvPlayerInternal* h, uint32_t stream_id, void* info) {
 	PRINT_NAME();
@@ -1612,6 +1735,15 @@ Bool KYTY_SYSV_ABI AvPlayerGetVideoDataEx(AvPlayerInternal* h, AvPlayerFrameInfo
 		return 0;
 	}
 	auto ok = h->source->Video(video_info) ? 1 : 0;
+	// Astro calls this exactly once and then never again, so the first answer decides whether the
+	// intro plays at all. Report it.
+	static uint64_t calls = 0;
+	if (calls++ < 8) {
+		::printf("[avplayer] GetVideoDataEx #%llu -> %d ts=%llu data=%p\n",
+		         (unsigned long long)calls, ok, (unsigned long long)video_info->time_stamp,
+		         video_info->data);
+		::fflush(stdout);
+	}
 	pump_warnings(h);
 	return ok;
 }

@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <csetjmp>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -2358,6 +2359,48 @@ static thread_local FiberObject*                  g_thread_return_fiber = nullpt
 static thread_local FiberObject*                  g_starting_fiber      = nullptr;
 static thread_local FiberObject*                  g_pending_idle_fiber  = nullptr;
 static thread_local FiberCpuContext               g_thread_fiber_context {};
+
+// The hand-written save/restore pair below could not be made reliable: it has to guess where its
+// own return address lives, and getting that wrong sends a resumed fiber into its own stack.
+// _setjmp/_longjmp have exactly the semantics needed and are the platform's own tested
+// implementation. SceFiber is a fixed 256 bytes chosen by the guest and a jmp_buf does not fit
+// alongside the other fields, so the buffers live in a side table keyed by fiber.
+struct FiberJmp {
+	jmp_buf buf;
+};
+
+static std::mutex                                  g_fiber_jmp_mutex;
+static std::unordered_map<FiberObject*, FiberJmp*> g_fiber_jmp;
+static thread_local FiberJmp                       g_thread_fiber_jmp {};
+
+static FiberJmp* FiberJmpFor(FiberObject* fiber) {
+	std::lock_guard lock(g_fiber_jmp_mutex);
+	auto&           slot = g_fiber_jmp[fiber];
+	if (slot == nullptr) {
+		slot = new FiberJmp {};
+	}
+	return slot;
+}
+
+static void FiberJmpForget(FiberObject* fiber) {
+	std::lock_guard lock(g_fiber_jmp_mutex);
+	auto            it = g_fiber_jmp.find(fiber);
+	if (it != g_fiber_jmp.end()) {
+		delete it->second;
+		g_fiber_jmp.erase(it);
+	}
+}
+
+// Only starting a fiber still needs assembly: there is no saved context to long-jump to, the
+// guest stack has to be installed before its entry runs.
+[[noreturn]] static void FiberJumpToStack(uint64_t rsp, uint64_t rip) {
+	asm volatile("movq %[rsp], %%rsp\n\t"
+	             "jmpq *%[rip]\n\t"
+	             :
+	             : [rsp] "r"(rsp), [rip] "r"(rip)
+	             : "memory");
+	__builtin_unreachable();
+}
 static std::mutex                                 g_fiber_owner_mutex;
 static std::unordered_map<FiberObject*, uint64_t> g_fiber_owner_thread;
 static std::unordered_map<uint64_t, FiberObject*> g_fiber_current_by_thread;
@@ -2498,6 +2541,17 @@ __attribute__((noinline, returns_twice)) static int FiberSaveContext(FiberCpuCon
 	             "movq %%r13, 40(%%r10)\n\t"
 	             "movq %%r14, 48(%%r10)\n\t"
 	             "movq %%r15, 56(%%r10)\n\t"
+	             // NOTE: this derives the resume address from (%rsp), which assumes rsp still
+	             // points at this function's return address. Any prologue push invalidates that
+	             // and the saved register is restored as rip, sending the fiber into its own
+	             // stack — measured as ~2M repeated execute faults at a single address. The
+	             // label-based replacement (save %rsp, resume at a local label) fixes exactly
+	             // that and drops the fault count to zero, but then exposes a guest call through
+	             // a null pointer (rip=0) immediately after FiberSwitch returns, with no further
+	             // HLE call in between. Left as-is until that second bug is understood, so the
+	             // tree hangs rather than crashing outright. Replacing this pair with
+	             // _setjmp/_longjmp (jmp_buf side-allocated, since SceFiber is a fixed 256 bytes)
+	             // is the likeliest correct fix.
 	             "leaq 8(%%rsp), %%r11\n\t"
 	             "movq %%r11, 64(%%r10)\n\t"
 	             "movq (%%rsp), %%r11\n\t"
@@ -2511,7 +2565,12 @@ __attribute__((noinline, returns_twice)) static int FiberSaveContext(FiberCpuCon
 
 __attribute__((noreturn, noinline)) static void FiberRestoreContext(FiberCpuContext* ctx,
                                                                     uint64_t         ret) {
+	// `ret` must be read before anything is restored. Under "r" the compiler may hand us
+	// rbx/rbp/r12-r15, every one of which is reloaded from ctx below — moving it into rax only
+	// at the end would resume the fiber with a garbage return value. Reading it first makes the
+	// constraint irrelevant, since rax, r10 and r11 are all clobbered and so cannot be chosen.
 	asm volatile("movq %[ctx], %%r10\n\t"
+	             "movq %[ret], %%rax\n\t"
 	             "movq 72(%%r10), %%r11\n\t"
 	             "movq 0(%%r10), %%rbx\n\t"
 	             "movq 8(%%r10), %%rbp\n\t"
@@ -2522,7 +2581,6 @@ __attribute__((noreturn, noinline)) static void FiberRestoreContext(FiberCpuCont
 	             "movq 48(%%r10), %%r14\n\t"
 	             "movq 56(%%r10), %%r15\n\t"
 	             "movq 64(%%r10), %%rsp\n\t"
-	             "movq %[ret], %%rax\n\t"
 	             "jmp *%%r11\n\t"
 	             :
 	             : [ctx] "r"(ctx), [ret] "r"(ret)
@@ -2542,12 +2600,56 @@ static void FiberRestoreContext(FiberCpuContext* ctx, uint64_t ret) {
 }
 #endif
 
+// These traces run on the *guest* fiber stack, whose size the game chooses: Astro's
+// "ThreadToFiber" asks for 2 KB. An fmt-formatted log line needs more than that, so tracing
+// here can overflow the very stack it was added to observe. Off unless explicitly requested.
+static bool FiberTraceEnabled() {
+	static const bool enabled = [] {
+		const char* v = std::getenv("KYTY_FIBER_TRACE");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	return enabled;
+}
+
 [[noreturn]] static void FiberStartTrampoline();
 
+// Our HLE runs on whatever stack the guest gave the fiber, and uses far more of it than Sony's
+// hand-written switch does. Astro asks for 2 KB for "ThreadToFiber" and ~1.8 KB is gone before its
+// own code runs, so the overflow lands in adjacent heap and the guest allocator aborts. Running
+// undersized fibers on a private stack keeps the overrun off the guest heap.
+static void* FiberOversizedStack(FiberObject* fiber, uint64_t* size_out) {
+	// On by default: without it Astro corrupts its own heap and aborts within seconds. Set
+	// KYTY_FIBER_BIG_STACK=0 to use the guest's stack verbatim. This is a workaround for our own
+	// stack appetite, not a fix — the real repair is making the HLE switch path cheap enough to
+	// fit the budget a game actually asks for.
+	static const bool enabled = [] {
+		const char* v = std::getenv("KYTY_FIBER_BIG_STACK");
+		return v == nullptr || (v[0] != '\0' && v[0] != '0');
+	}();
+	constexpr uint64_t MIN_SIZE = 0x8000;
+	constexpr uint64_t BIG_SIZE = 0x80000;
+	if (!enabled || fiber->size_context >= MIN_SIZE) {
+		return nullptr;
+	}
+	static std::mutex                              mutex;
+	static std::unordered_map<FiberObject*, void*> stacks;
+	std::lock_guard                                lock(mutex);
+	auto&                                          slot = stacks[fiber];
+	if (slot == nullptr) {
+		slot = std::calloc(1, BIG_SIZE);
+	}
+	*size_out = BIG_SIZE;
+	return slot;
+}
+
 [[noreturn]] static void FiberStartOnGuestStack(FiberObject* fiber) {
-	FiberCpuContext ctx {};
-	const auto      stack_top = reinterpret_cast<uintptr_t>(fiber->addr_context) +
-	                            static_cast<uintptr_t>(fiber->size_context);
+	auto stack_base = reinterpret_cast<uintptr_t>(fiber->addr_context);
+	auto stack_size = static_cast<uintptr_t>(fiber->size_context);
+	if (uint64_t big = 0; void* p = FiberOversizedStack(fiber, &big)) {
+		stack_base = reinterpret_cast<uintptr_t>(p);
+		stack_size = static_cast<uintptr_t>(big);
+	}
+	const auto stack_top = stack_base + stack_size;
 	auto            rsp       = (stack_top & ~static_cast<uintptr_t>(0x0f));
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
 	rsp -= 4u * sizeof(uint64_t);
@@ -2555,11 +2657,17 @@ static void FiberRestoreContext(FiberCpuContext* ctx, uint64_t ret) {
 	rsp -= sizeof(uint64_t);
 	*reinterpret_cast<uint64_t*>(rsp) = 0;
 
-	ctx.rsp = rsp;
-	ctx.rip = reinterpret_cast<uint64_t>(&FiberStartTrampoline);
+	const auto rip = reinterpret_cast<uint64_t>(&FiberStartTrampoline);
 
 	g_starting_fiber = fiber;
-	FiberRestoreContext(&ctx, 1);
+	if (FiberTraceEnabled()) {
+		LOGF("\t fiber start-on-guest-stack: %s, rsp = 0x%016" PRIx64 ", rip = 0x%016" PRIx64
+	     ", stack = 0x%016" PRIx64 " size = 0x%" PRIx64 "\n",
+	     fiber->name != nullptr ? fiber->name : "?", static_cast<uint64_t>(rsp),
+	     static_cast<uint64_t>(rip), reinterpret_cast<uint64_t>(fiber->addr_context),
+	     static_cast<uint64_t>(fiber->size_context));
+	}
+	FiberJumpToStack(rsp, rip);
 }
 
 [[noreturn]] static void FiberStartTrampoline() {
@@ -2572,7 +2680,16 @@ static void FiberRestoreContext(FiberCpuContext* ctx, uint64_t ret) {
 	FiberCommitDeferredIdle();
 	FiberSetCurrentFiber(fiber);
 
+	if (FiberTraceEnabled()) {
+		LOGF("\t fiber enter: %s, entry = 0x%016" PRIx64 "\n",
+	     fiber->name != nullptr ? fiber->name : "?", reinterpret_cast<uint64_t>(fiber->entry));
+	}
+
 	fiber->entry(fiber->arg_on_initialize, fiber->arg_on_run);
+
+	if (FiberTraceEnabled()) {
+		LOGF("\t fiber leave: %s\n", fiber->name != nullptr ? fiber->name : "?");
+	}
 
 	FiberStoreState(fiber, FIBER_STATE_TERMINATED);
 	FiberSetContextValid(fiber, false);
@@ -2580,7 +2697,7 @@ static void FiberRestoreContext(FiberCpuContext* ctx, uint64_t ret) {
 	g_thread_return_fiber = fiber;
 	FiberSetCurrentFiber(nullptr);
 
-	FiberRestoreContext(&g_thread_fiber_context, 1);
+	_longjmp(g_thread_fiber_jmp.buf, 1);
 }
 
 int32_t KYTY_SYSV_ABI FiberInitialize(FiberObject* fiber, const char* name, FiberEntry entry,
@@ -2624,6 +2741,7 @@ int32_t KYTY_SYSV_ABI FiberInitialize(FiberObject* fiber, const char* name, Fibe
 	fiber->context_end =
 	    (addr_context != nullptr ? static_cast<uint8_t*>(addr_context) + size_context : nullptr);
 	std::memset(&fiber->saved_context, 0, sizeof(fiber->saved_context));
+	FiberJmpForget(fiber);
 	FiberSetContextValid(fiber, false);
 	fiber->magic_end = FIBER_MAGIC_END;
 
@@ -2701,9 +2819,9 @@ int32_t KYTY_SYSV_ABI FiberRun(FiberObject* fiber, uint64_t arg_on_run, uint64_t
 	fiber->arg_on_return  = 0;
 	g_thread_return_fiber = nullptr;
 
-	if (FiberSaveContext(&g_thread_fiber_context) == 0) {
+	if (_setjmp(g_thread_fiber_jmp.buf) == 0) {
 		if (fiber->context_valid) {
-			FiberRestoreContext(&fiber->saved_context, 1);
+			_longjmp(FiberJmpFor(fiber)->buf, 1);
 		}
 		FiberStartOnGuestStack(fiber);
 	}
@@ -2725,9 +2843,12 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 	PRINT_NAME();
 
 	if (!FiberIsValid(fiber)) {
+		LOGF("\t fiber switch: INVALID target 0x%016" PRIx64 "\n",
+		     reinterpret_cast<uint64_t>(fiber));
 		return FIBER_ERROR_INVALID;
 	}
 	if (g_current_fiber == nullptr) {
+		LOGF("\t fiber switch: PERMISSION (no current fiber), target = %s\n", fiber->name);
 		return FIBER_ERROR_PERMISSION;
 	}
 
@@ -2739,6 +2860,9 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 		if (FiberRepairStaleRunningOnThisThread(fiber, observed_state)) {
 			continue;
 		}
+		LOGF("\t fiber switch: STATE error, target = %s, observed_state = %u, owner = 0x%016" PRIx64
+		     "\n",
+		     fiber->name, observed_state, FiberGetOwner(fiber));
 		return FIBER_ERROR_STATE;
 	}
 
@@ -2747,11 +2871,19 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 	fiber->arg_on_run    = arg_on_run;
 	fiber->arg_on_return = 0;
 
-	if (FiberSaveContext(&caller->saved_context) == 0) {
+	const int saved = _setjmp(FiberJmpFor(caller)->buf);
+	// The guest picks the fiber stack size (Astro's "ThreadToFiber" asks for 2 KB) but our HLE
+	// runs on it too, and uses far more stack than Sony's hand-written switch would. Compare the
+	// just-saved rsp against the fiber's own bounds to see whether we have overrun it.
+	if (FiberTraceEnabled()) {
+		LOGF("\t fiber switch: %s -> %s, save_ctx = %d, target_ctx_valid = %d\n",
+	     caller->name, fiber->name, saved, static_cast<int>(fiber->context_valid));
+	}
+	if (saved == 0) {
 		FiberSetContextValid(caller, true);
 		FiberDeferIdle(caller);
 		if (fiber->context_valid) {
-			FiberRestoreContext(&fiber->saved_context, 1);
+			_longjmp(FiberJmpFor(fiber)->buf, 1);
 		}
 		FiberStartOnGuestStack(fiber);
 	}
@@ -2789,11 +2921,11 @@ int32_t KYTY_SYSV_ABI FiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_
 	auto* fiber          = g_current_fiber;
 	fiber->arg_on_return = arg_on_return;
 
-	if (FiberSaveContext(&fiber->saved_context) == 0) {
+	if (_setjmp(FiberJmpFor(fiber)->buf) == 0) {
 		FiberSetContextValid(fiber, true);
 		g_thread_return_fiber = fiber;
 		FiberDeferIdle(fiber);
-		FiberRestoreContext(&g_thread_fiber_context, 1);
+		_longjmp(g_thread_fiber_jmp.buf, 1);
 	}
 
 	FiberCommitDeferredIdle();

@@ -7,6 +7,27 @@
 #include "common/threads.h"
 #include "loader/timer.h" // IWYU pragma: keep
 
+#include <cstdlib>
+
+namespace Kyty::Libs {
+
+// Each LIB_NAME() unit gets its own thread_local enable flag, so PRINT_NAME() tracing is normally
+// visible only for the few units/threads that opt in explicitly. That makes the log misleading when
+// diagnosing: a call site that never enabled tracing looks identical to one that was never reached.
+// Setting KYTY_PRINT_NAME=1 in the environment starts every unit and thread enabled instead.
+inline bool PrintNameDefault() {
+	static const bool enabled = [] {
+		const char* v = std::getenv("KYTY_PRINT_NAME");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	return enabled;
+}
+
+// Defined out of line in libs.cpp; see the comment there for why this must not be inlined.
+void PrintNameImpl(const char* library, const char* module, const char* func);
+
+} // namespace Kyty::Libs
+
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define PRINT_NAME_ENABLED g_print_name
 
@@ -17,7 +38,8 @@
 #define LIB_DEFINE(name) void name(Loader::SymbolDatabase* s)
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define LIB_NAME(l, m)                                                                             \
-	[[maybe_unused]] static thread_local bool PRINT_NAME_ENABLED = false;                          \
+	[[maybe_unused]] static thread_local bool PRINT_NAME_ENABLED =                                  \
+	    ::Kyty::Libs::PrintNameDefault();                                                          \
 	static constexpr char                     g_library[]        = l;                              \
 	static constexpr char                     g_module[]         = m;
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
@@ -57,14 +79,11 @@
 
 // NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define PRINT_NAME()                                                                               \
-	if (PRINT_NAME_ENABLED) {                                                                      \
-		if (Log::GetDirection() != Log::Direction::Silent) {                                       \
-			const auto print_name_time = Loader::Timer::GetTime().ToString("HH24:MI:SS.FFF");      \
-			LOGF_COLOR(Log::Color::Cyan, "[%d][%s] %s::%s::%s()\n",                                \
-			           Common::Thread::GetThreadIdUnique(), print_name_time.c_str(), g_library,    \
-			           g_module, __func__);                                                        \
+	do {                                                                                           \
+		if (PRINT_NAME_ENABLED) {                                                                  \
+			::Kyty::Libs::PrintNameImpl(g_library, g_module, __func__);                            \
 		}                                                                                          \
-	}
+	} while (false)
 
 namespace Loader {
 class SymbolDatabase;

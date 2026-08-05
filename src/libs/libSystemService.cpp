@@ -124,7 +124,24 @@ static int KYTY_SYSV_ABI SystemServiceParamGetInt(int param_id, int* value) {
 		case PARAM_ID_GAME_PARENTAL_LEVEL: v = PARAM_GAME_PARENTAL_OFF; break;
 		case PARAM_ID_SCREEN_READER: v = 0; break;
 		case PARAM_ID_ENTER_BUTTON_ASSIGN: v = PARAM_ENTER_BUTTON_ASSIGN_CROSS; break;
-		default: EXIT("unknown param_id: %d\n", param_id);
+		default:
+			// Undocumented but real. ASTRO's PLAYROOM requests id 400, which appears in no public
+			// SDK header (0.900/1.000 stop at 212) and in no SDK 13.000 document (documented
+			// integer ids end at 213, CLEARLY_SHOW_SWITCH) -- yet 12.40 firmware handles it as a
+			// first-class case. Recovered from libSceSystemService.sprx by resolving the export
+			// NID "fZo48un7LK4" -> thunk 0x6480 -> reloc slot 0x44088 -> 0x6ca0 -> dispatch
+			// 0x9770: the id range 1..0x12c goes through a jump table, then 0x190 (400) is
+			// compared explicitly and branches to its own handler at 0x48da, immediately before
+			// 0x3e8 (1000, ENTER_BUTTON_ASSIGN). That handler loads 1 as the default and stores
+			// it into the caller's buffer when the backing setting cannot be read -- which is
+			// always the case here, since there is no ShellCore or settings database. So 1 is
+			// what real hardware reports on the fallback path, and 0 (reported earlier) was the
+			// opposite. Aborting the title over an unknown setting is worse than answering it.
+			LOGF_COLOR(Log::Color::Yellow,
+			           "\t undocumented system parameter id %d, reporting firmware fallback 1\n",
+			           param_id);
+			v = 1;
+			break;
 	}
 
 	LOGF(" %d = %d\n", param_id, v);

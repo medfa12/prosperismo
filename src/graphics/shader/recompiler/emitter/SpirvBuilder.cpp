@@ -106,11 +106,21 @@ void Builder::AddType(std::initializer_list<uint32_t> words) {
 	AppendInstructionWords(m_types, words.begin(), words.size());
 }
 
+// SPIR-V OpLabel. Declared locally so the builder keeps no dependency on the emitter's opcode
+// header; the value is fixed by the specification.
+static constexpr uint32_t SpirvOpLabel = 248;
+
 void Builder::AddFunction(std::initializer_list<uint32_t> words) {
+	if (words.size() != 0 && *words.begin() == SpirvOpLabel) {
+		m_block_epoch++;
+	}
 	AppendInstructionWords(m_functions, words.begin(), words.size());
 }
 
 void Builder::AddFunction(const std::vector<uint32_t>& words) {
+	if (!words.empty() && words[0] == SpirvOpLabel) {
+		m_block_epoch++;
+	}
 	AppendInstructionWords(m_functions, words.data(), words.size());
 }
 

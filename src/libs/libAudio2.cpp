@@ -12,6 +12,9 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <exception>
+#include <typeinfo>
+#include <cstdio>
 #include <vector>
 
 namespace Libs::Audio {

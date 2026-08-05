@@ -4,6 +4,24 @@
 #include "libs/errno.h"
 #include "loader/symbolDatabase.h"
 
+namespace Kyty::Libs {
+
+// Kept out of line so the std::string and fmt buffers this needs live in *this* frame instead of
+// being reserved in every HLE function that writes PRINT_NAME(). Inline, they cost roughly a
+// kilobyte of stack per call even with tracing off — which the guest cannot afford when it runs
+// an HLE call on a small fiber stack (Astro gives "ThreadToFiber" 2 KB, and the switch alone was
+// consuming 1888 of it).
+void PrintNameImpl(const char* library, const char* module, const char* func) {
+	if (Log::GetDirection() == Log::Direction::Silent) {
+		return;
+	}
+	const auto print_name_time = Loader::Timer::GetTime().ToString("HH24:MI:SS.FFF");
+	LOGF_COLOR(Log::Color::Cyan, "[%d][%s] %s::%s::%s()\n", Common::Thread::GetThreadIdUnique(),
+	           print_name_time.c_str(), library, module, func);
+}
+
+} // namespace Kyty::Libs
+
 namespace Libs {
 
 namespace LibcInternal {

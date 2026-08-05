@@ -1,5 +1,7 @@
 #include "graphics/host_gpu/renderer/cache/bufferCache.h"
 
+#include "graphics/host_gpu/hostMemory.h"
+
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/profiler.h"
@@ -68,6 +70,13 @@ bool BufferCache::PageOverlaps(uint64_t left, uint64_t left_size, uint64_t right
 
 void BufferCache::Upload(CommandBuffer& command, Buffer& destination, uint64_t destination_offset,
                          const void* source, uint64_t size) {
+	// The source is a raw guest address. A shader whose descriptor was anchored to a neighbouring
+	// allocation can name a range the guest never mapped, and this copy would fault reading it —
+	// the shader-side robust bounds check does not cover the host's own upload. Skip unmapped
+	// spans and leave the destination as it stands.
+	if (!HostMemoryRangeIsReadable(reinterpret_cast<uint64_t>(source), size)) {
+		return;
+	}
 	auto* bytes = static_cast<const uint8_t*>(source);
 	while (size != 0) {
 		const auto chunk        = std::min(size, m_staging_buffer.Size());

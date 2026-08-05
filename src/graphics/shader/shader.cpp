@@ -32,6 +32,9 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <map>
+#include <system_error>
+#include <sstream>
 #include <vector>
 
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
@@ -180,6 +183,119 @@ static bool SpirvDisassemble(const uint32_t* src_binary, size_t src_binary_size,
 
 		*dst_disassembly = disassembly.c_str();
 	}
+	return true;
+}
+
+// The optimizer header was included and spirv-tools-opt linked, but nothing ever ran it — which is
+// why --shader-optimization-type appeared to do nothing. Our emitter re-unpacks a descriptor at
+// every access (measured: 23,684 OpLoad and 20,927 OpBitwiseAnd in one 516k-word compute module),
+// and that redundancy is precisely what CSE and load-store elimination remove. Apple's Metal
+// compiler aborts the process outright on the unoptimized modules, so this runs on any module big
+// enough to be at risk rather than only when the user asks.
+// spirv-opt dominates cold-start: the largest Astro compute module is half a million words and the
+// whole set is re-optimized on every boot, which is most of the "first minutes are shader-heavy"
+// cost. Optimization is a pure function of the input module, so cache it on disk keyed by a hash of
+// the input. Set KYTY_SHADER_CACHE_DIR to relocate; empty disables.
+static std::string SpirvCacheDir() {
+	static const std::string dir = [] {
+		const char* v = std::getenv("KYTY_SHADER_CACHE_DIR");
+		return std::string(v != nullptr ? v : "_shader_cache");
+	}();
+	return dir;
+}
+
+static uint64_t SpirvHash(const std::vector<uint32_t>& spirv) {
+	uint64_t h = 1469598103934665603ULL; // FNV-1a
+	for (const auto w: spirv) {
+		h ^= w;
+		h *= 1099511628211ULL;
+	}
+	return h;
+}
+
+static bool SpirvCacheLoad(uint64_t key, std::vector<uint32_t>& out) {
+	if (SpirvCacheDir().empty()) {
+		return false;
+	}
+	const auto path = fmt::format("{}/opt_{:016x}.spv", SpirvCacheDir(), key);
+	auto*      f    = std::fopen(path.c_str(), "rb");
+	if (f == nullptr) {
+		return false;
+	}
+	std::fseek(f, 0, SEEK_END);
+	const auto bytes = static_cast<size_t>(std::ftell(f));
+	std::fseek(f, 0, SEEK_SET);
+	if (bytes == 0 || (bytes % sizeof(uint32_t)) != 0) {
+		std::fclose(f);
+		return false;
+	}
+	out.resize(bytes / sizeof(uint32_t));
+	const auto read = std::fread(out.data(), 1, bytes, f);
+	std::fclose(f);
+	if (read != bytes) {
+		out.clear();
+		return false;
+	}
+	return true;
+}
+
+static void SpirvCacheStore(uint64_t key, const std::vector<uint32_t>& data) {
+	if (SpirvCacheDir().empty() || data.empty()) {
+		return;
+	}
+	std::error_code ec;
+	std::filesystem::create_directories(SpirvCacheDir(), ec);
+	const auto tmp = fmt::format("{}/opt_{:016x}.tmp", SpirvCacheDir(), key);
+	auto*      f   = std::fopen(tmp.c_str(), "wb");
+	if (f == nullptr) {
+		return;
+	}
+	const auto bytes   = data.size() * sizeof(uint32_t);
+	const auto written = std::fwrite(data.data(), 1, bytes, f);
+	std::fclose(f);
+	if (written != bytes) {
+		std::remove(tmp.c_str());
+		return;
+	}
+	// Rename into place so a killed run cannot leave a half-written entry behind.
+	std::rename(tmp.c_str(), fmt::format("{}/opt_{:016x}.spv", SpirvCacheDir(), key).c_str());
+}
+
+static bool SpirvOptimizeBinary(const char* label, uint64_t shader_hash,
+                                std::vector<uint32_t>& spirv) {
+	const auto cache_key = SpirvHash(spirv);
+	if (std::vector<uint32_t> cached; SpirvCacheLoad(cache_key, cached)) {
+		spirv = std::move(cached);
+		return true;
+	}
+	spvtools::Optimizer optimizer(SPV_ENV_VULKAN_1_3);
+	std::string         messages;
+	optimizer.SetMessageConsumer([&messages](spv_message_level_t, const char*,
+	                                         const spv_position_t&, const char* message) {
+		if (message != nullptr) {
+			messages += message;
+			messages += '\n';
+		}
+	});
+	optimizer.RegisterPerformancePasses();
+	optimizer.RegisterSizePasses();
+
+	std::vector<uint32_t> optimized;
+	const auto            before = spirv.size();
+	if (!optimizer.Run(spirv.data(), spirv.size(), &optimized) || optimized.empty()) {
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "%s SPIR-V optimization failed hash=0x%016" PRIx64 ": %s\n", label, shader_hash,
+		           messages.c_str());
+		return false;
+	}
+	// Measured: a second optimizer run returns byte-identical sizes, so one pass is already a
+	// fixed point. Re-running it only costs time on the half-million-word modules.
+	LOGF_COLOR(Log::Color::BrightGreen,
+	           "%s SPIR-V optimized hash=0x%016" PRIx64 " words %llu -> %llu\n", label, shader_hash,
+	           static_cast<unsigned long long>(before),
+	           static_cast<unsigned long long>(optimized.size()));
+	SpirvCacheStore(cache_key, optimized);
+	spirv = std::move(optimized);
 	return true;
 }
 
@@ -1519,15 +1635,141 @@ bool ShaderCompileSpirvCS(const HW::ComputeShaderInfo& regs, const HW::ShaderReg
 
 	ShaderRecompiler::CompileResult result;
 	std::string                     error;
+	// A compute shader the recompiler cannot handle is a reason to drop that dispatch, not to
+	// kill the emulator: this path already reports failure to its caller. Set
+	// KYTY_SHADER_FATAL=1 to restore the hard exit when investigating one of these.
+	static const bool shader_fatal = [] {
+		const char* v = std::getenv("KYTY_SHADER_FATAL");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
 	if (!ShaderRecompiler::TryRecompile(code, options, result, &error)) {
-		ExitShaderRecompilerFailure("ShaderRecompiler CS", options.shader_hash, error.c_str());
+		if (shader_fatal) {
+			ExitShaderRecompilerFailure("ShaderRecompiler CS", options.shader_hash, error.c_str());
+		}
+		LOGF_COLOR(Log::Color::BrightRed, "ShaderRecompiler CS unsupported, dispatch skipped "
+		           "hash=0x%016" PRIx64 ": %s\n", options.shader_hash, error.c_str());
+		return false;
 	}
 	DumpShaderRecompilerOriginal("cs", options.shader_hash, code, result.decoded_dump);
 	if (!SpirvValidateBinary("ShaderRecompiler CS", options.shader_hash, result.spirv)) {
 		DumpShaderRecompilerSpirv("cs", options.shader_hash, result.spirv);
-		ExitShaderRecompilerFailure("ShaderRecompiler CS", options.shader_hash,
-		                            "SPIR-V validation failed");
+		if (shader_fatal) {
+			ExitShaderRecompilerFailure("ShaderRecompiler CS", options.shader_hash,
+			                            "SPIR-V validation failed");
+		}
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "ShaderRecompiler CS SPIR-V invalid, dispatch skipped hash=0x%016" PRIx64 "\n",
+		           options.shader_hash);
+		return false;
 	}
+	// A runaway compute shader takes the whole process with it: Apple's Metal compiler aborts
+	// (SIGABRT, no diagnostic) on the ~51k-line MSL one of Astro's shaders expands into. Dropping
+	// that dispatch loses one effect; letting it through loses the run. The ceiling sits far above
+	// anything normal — log everything close to it so a real shader never trips this silently.
+	constexpr size_t SPIRV_WARN_WORDS = 8192;
+	// Measured: skipping every oversized shader collapses the run to ~55 frames at 1.7 fps, so the
+	// game genuinely needs them. Only the largest reliably kills Apple's compiler, so the ceiling
+	// sits just under it and lets the 79k–315k word shaders through.
+	// Skipping oversized shaders is NOT viable: the game needs them. Measured — skip all five and
+	// the run collapses to ~55 frames at 1.7 fps; skip only the 516k-word one and it is ~85 at
+	// 2.4 fps; let them all through and it reaches ~131 at 15-18 fps before Apple's compiler
+	// aborts. So the ceiling is disabled and the over-generation itself is the bug to fix; the
+	// warning above still reports sizes.
+	// Every skip threshold tried makes things worse and none prevents the abort: 32768 -> ~55
+	// frames @1.7fps, 400000 -> ~85 @2.4fps, 100000 -> ~78 @0.36fps and Metal still aborts.
+	// Disabled; the warning above still reports sizes.
+	constexpr size_t SPIRV_MAX_WORDS  = SIZE_MAX;
+	if (result.spirv.size() >= SPIRV_WARN_WORDS) {
+		// Histogram the module so "genuine mega-kernel" can be told apart from "verbose emitter":
+		// a real shader is dominated by arithmetic, a verbose one by repeated access boilerplate.
+		std::map<uint32_t, std::pair<uint32_t, uint32_t>> histogram; // opcode -> {count, words}
+		for (size_t i = 5; i + 1 <= result.spirv.size();) {
+			const auto word  = result.spirv[i];
+			const auto count = word >> 16u;
+			const auto op    = word & 0xffffu;
+			if (count == 0) {
+				break;
+			}
+			auto& entry = histogram[op];
+			entry.first++;
+			entry.second += count;
+			i += count;
+		}
+		std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t>>> ranked(histogram.begin(),
+		                                                                      histogram.end());
+		std::sort(ranked.begin(), ranked.end(),
+		          [](const auto& a, const auto& b) { return a.second.second > b.second.second; });
+		std::string top;
+		for (size_t i = 0; i < ranked.size() && i < 8; i++) {
+			top += fmt::format("{}op{}={}w/{}n", i == 0 ? "" : " ", ranked[i].first,
+			                   ranked[i].second.second, ranked[i].second.first);
+		}
+		// Guest ISA instruction count vs emitted SPIR-V: this is what distinguishes "the guest
+		// shader is genuinely enormous" from "we over-emit". A ratio near 1:4 is normal.
+		size_t guest_insts = 0;
+		for (const auto& block: result.program.blocks) {
+			guest_insts += block.instructions.size();
+		}
+		size_t spirv_insts = 0;
+		for (size_t i = 5; i + 1 <= result.spirv.size();) {
+			const auto count = result.spirv[i] >> 16u;
+			if (count == 0) {
+				break;
+			}
+			spirv_insts++;
+			i += count;
+		}
+		LOGF_COLOR(Log::Color::BrightYellow,
+		           "ShaderRecompiler CS large SPIR-V hash=0x%016" PRIx64
+		           " words=%llu guest_isa=%llu spirv_insts=%llu ratio=%.1f dispatcher=%d cfg=%d"
+		           " blocks=%llu [%s]\n",
+		           options.shader_hash, static_cast<unsigned long long>(result.spirv.size()),
+		           static_cast<unsigned long long>(guest_insts),
+		           static_cast<unsigned long long>(spirv_insts),
+		           guest_insts == 0 ? 0.0
+		                            : static_cast<double>(spirv_insts) /
+		                                  static_cast<double>(guest_insts),
+		           static_cast<int>(result.program.dispatcher_fallback),
+		           static_cast<int>(result.program.cfg_failure_kind),
+		           static_cast<unsigned long long>(result.program.blocks.size()), top.c_str());
+	}
+	// Only the large modules: measured, optimizing every module is a regression (frame ~116 vs
+	// ~191), so the cost outweighs the benefit below this size.
+	if (result.spirv.size() >= SPIRV_WARN_WORDS) {
+		SpirvOptimizeBinary("ShaderRecompiler CS", options.shader_hash, result.spirv);
+	}
+	// KYTY_SHADER_SKIP_HASH=0x...,0x... drops specific compute shaders by hash. Size thresholds are
+	// too blunt — they cut working shaders while the one that actually kills Metal varies — so this
+	// exists to test whether a single identified shader is load-bearing.
+	static const std::vector<uint64_t> skip_hashes = [] {
+		std::vector<uint64_t> out;
+		const char*           v = std::getenv("KYTY_SHADER_SKIP_HASH");
+		if (v != nullptr) {
+			std::string      text(v);
+			std::stringstream ss(text);
+			std::string       item;
+			while (std::getline(ss, item, ',')) {
+				if (!item.empty()) {
+					out.push_back(std::strtoull(item.c_str(), nullptr, 0));
+				}
+			}
+		}
+		return out;
+	}();
+	if (std::find(skip_hashes.begin(), skip_hashes.end(), options.shader_hash) !=
+	    skip_hashes.end()) {
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "ShaderRecompiler CS skipped by hash 0x%016" PRIx64 "\n", options.shader_hash);
+		return false;
+	}
+	if (result.spirv.size() > SPIRV_MAX_WORDS && !shader_fatal) {
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "ShaderRecompiler CS oversized, dispatch skipped hash=0x%016" PRIx64
+		           " words=%llu\n",
+		           options.shader_hash, static_cast<unsigned long long>(result.spirv.size()));
+		return false;
+	}
+
 	input_info.stage.program =
 	    std::make_shared<const ShaderRecompiler::IR::Program>(std::move(result.program));
 	input_info.stage.resources =

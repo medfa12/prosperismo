@@ -21,10 +21,15 @@
 #include "libs/libs.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <list>
 #include <thread>
 #include <vector>
+
+static std::atomic<uint64_t> g_flip_submitted {0};
+static std::atomic<uint64_t> g_flip_completed {0};
+
 
 namespace Libs::Graphics {
 struct GraphicContext;
@@ -844,6 +849,7 @@ void VideoOutDriver::Impl::PresentThread(std::stop_token token) {
 
 bool FlipQueue::Reserve(VideoOutConfig& cfg, int index, int64_t flip_arg, FlipRequestSource source,
                         uint64_t& request_id) {
+	g_flip_submitted.fetch_add(1);
 	Common::LockGuard lock(m_mutex);
 
 	if (m_requests.size() + m_cpu_requests.size() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) {
@@ -1023,6 +1029,10 @@ void FlipQueue::Prepare(uint64_t request_id, Graphics::CommandBuffer& buffer) {
 }
 
 void FlipQueue::Complete(uint64_t request_id) {
+	// Counted against submissions: if completions lag submissions the GPU EOP that retires a flip
+	// is not arriving, which head-of-line blocks the queue and parks the command processor in
+	// FlipQueue::Wait.
+	g_flip_completed.fetch_add(1);
 	m_mutex.Lock();
 	auto request = std::find_if(m_requests.begin(), m_requests.end(),
 	                            [request_id](const auto& r) { return r.id == request_id; });
@@ -1069,8 +1079,33 @@ void FlipQueue::Wait(VideoOutConfig& cfg, int index) {
 		return std::any_of(m_requests.begin(), m_requests.end(), matches) ||
 		       std::any_of(m_cpu_requests.begin(), m_cpu_requests.end(), matches);
 	};
+	// Sony requires this wait before re-rendering a display buffer (VideoOut-Overview, "Appendix A:
+	// Tips for Synchronizing Rendering and Video Output"), and it runs on the GPU command
+	// processor. With no timeout, a flip that never completes wedges the CP forever: presentation
+	// freezes while guest threads keep running — the shape of the stall we keep hitting. Report it
+	// instead of hanging silently, and give up after a grace period so the run can continue.
+	// Each stall costs this much wall clock on the command processor, and they recur, so keep the
+	// grace period short: long enough that a merely-late flip still completes normally, short
+	// enough that a dropped one does not dominate the run.
+	constexpr uint32_t WAIT_SLICE_MICROS = 25000;
+	constexpr uint32_t WAIT_MAX_SLICES   = 8; // 200 ms
+	uint32_t           slices            = 0;
 	while (has_request()) {
-		m_done_cond_var.Wait(&m_mutex);
+		m_done_cond_var.WaitFor(&m_mutex, WAIT_SLICE_MICROS);
+		if (!has_request()) {
+			break;
+		}
+		if (++slices >= WAIT_MAX_SLICES) {
+			static uint64_t reported = 0;
+			if ((reported++ % 32) == 0) {
+				printf("FlipQueue::Wait: flip for index %d never completed after %u ms "
+				       "(occurrence %" PRIu64 ", submitted=%" PRIu64 " completed=%" PRIu64
+				       "); continuing\n",
+				       index, (WAIT_SLICE_MICROS / 1000) * WAIT_MAX_SLICES, reported,
+				       g_flip_submitted.load(), g_flip_completed.load());
+			}
+			break;
+		}
 	}
 }
 

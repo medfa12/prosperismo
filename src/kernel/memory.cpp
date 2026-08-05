@@ -3650,7 +3650,18 @@ bool ProtectGuestMemory(uint64_t vaddr, uint64_t size, VirtualMemory::Mode mode,
 		*old_mode = static_cast<VirtualMemory::Mode>(
 		    ranges.front().protection & (PROT_CPU_READ | PROT_CPU_WRITE | PROT_CPU_EXEC));
 	}
-	if (!g_guest_address_space->Protect(aligned_addr, aligned_size, mode)) {
+	// Clamp the host protection the same way SetProgramMemoryProtection() does. The guest-mode
+	// protection is what the tracker records and what guest faults are evaluated against, but the
+	// host mapping must stay writable: the relocation path protects the pltgot read-only, and a
+	// read-only host page turns every relocation write into a fault the GPU fault handler reports
+	// as "resolved" without changing protection, which spins forever. NoAccess is preserved so
+	// guard pages still trap.
+	const auto host_mode = (mode == VirtualMemory::Mode::NoAccess)
+	                           ? VirtualMemory::Mode::NoAccess
+	                           : (VirtualMemory::IsExecute(mode)
+	                                  ? VirtualMemory::Mode::ExecuteReadWrite
+	                                  : VirtualMemory::Mode::ReadWrite);
+	if (!g_guest_address_space->Protect(aligned_addr, aligned_size, host_mode)) {
 		return false;
 	}
 	g_virtual_ranges->Protect(aligned_addr, aligned_size, ProgramProtection(mode));

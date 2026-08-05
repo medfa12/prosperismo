@@ -58,12 +58,23 @@ public:
 #elif KYTY_PLATFORM == KYTY_PLATFORM_LINUX
 #if defined(__APPLE__)
 		{
-			char shm_name[64];
-			snprintf(shm_name, sizeof(shm_name), "/prosperismo-dm-%d-%llx", static_cast<int>(getpid()),
-			         static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(this)));
-			m_fd = shm_open(shm_name, O_RDWR | O_CREAT | O_EXCL, 0600);
-			if (m_fd >= 0) {
-				shm_unlink(shm_name);
+			// macOS limits POSIX shared-memory names to PSHMNAMLEN (31) characters, including the
+			// leading slash. Anything longer fails with ENAMETOOLONG, so the name is kept short
+			// rather than descriptive. A counter disambiguates concurrent stores in one process;
+			// O_EXCL can still collide with a stale name, so retry a bounded number of times.
+			static std::atomic<uint32_t> shm_counter {0};
+			char shm_name[32];
+			for (int attempt = 0; attempt < 64; attempt++) {
+				snprintf(shm_name, sizeof(shm_name), "/pdm%x.%x", static_cast<unsigned>(getpid()),
+				         static_cast<unsigned>(shm_counter.fetch_add(1)));
+				m_fd = shm_open(shm_name, O_RDWR | O_CREAT | O_EXCL, 0600);
+				if (m_fd >= 0) {
+					shm_unlink(shm_name);
+					break;
+				}
+				if (errno != EEXIST) {
+					break;
+				}
 			}
 		}
 #else

@@ -166,7 +166,27 @@ void Buffer::CopyFrom(CommandBuffer& command, const Buffer& source, uint64_t sou
                       vk::AccessFlags destination_after) {
 	if (size == 0 || source_offset > source.m_size || size > source.m_size - source_offset ||
 	    destination_offset > m_size || size > m_size - destination_offset) {
-		EXIT("Buffer: invalid copy range\n");
+		// Buffer::Offset() is an unchecked `address - m_cpu_address`, so a vaddr below the
+		// buffer base underflows and lands here as a huge source offset (observed:
+		// 0xfffffffffffff300, i.e. -0xd00). Killing the process for one bad copy loses an
+		// otherwise-live run; drop the copy and keep going so the next wall is reachable.
+		// KYTY_COPY_RANGE_FATAL=1 restores the hard exit when hunting the caller.
+		static const bool copy_fatal = [] {
+			const char* v = std::getenv("KYTY_COPY_RANGE_FATAL");
+			return v != nullptr && v[0] != '\0' && v[0] != '0';
+		}();
+		if (copy_fatal) {
+			EXIT("Buffer: invalid copy range: src_off=0x%" PRIx64 " dst_off=0x%" PRIx64
+			     " size=0x%" PRIx64 " src_size=0x%" PRIx64 " dst_size=0x%" PRIx64 "\n",
+			     source_offset, destination_offset, size, source.m_size, m_size);
+		}
+		static uint64_t skipped = 0;
+		if ((skipped++ % 64) == 0) {
+			printf("Buffer: invalid copy range skipped (%" PRIu64 "): src_off=0x%" PRIx64
+			       " dst_off=0x%" PRIx64 " size=0x%" PRIx64 "\n",
+			       skipped, source_offset, destination_offset, size);
+		}
+		return;
 	}
 	if (source.Handle() == Handle() && source_offset < destination_offset + size &&
 	    destination_offset < source_offset + size) {

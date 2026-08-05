@@ -1476,7 +1476,11 @@ void CommandProcessor::WriteAtEndOfPipe(uint32_t cache_policy, uint32_t event_wr
 							case 0x2d:
 							case 0x2f:
 							case 0x30:
-								if (event_index == 0x00 && !with_interrupt) {
+								// write64() already routes to the interrupt-raising variant when
+								// with_interrupt is set, so excluding it here only rejected an EOP
+								// write the code can service — and that write is what signals the
+								// EopEq queue the guest is blocked on.
+								if (event_index == 0x00) {
 									write64(false);
 									return;
 								}
@@ -1555,7 +1559,11 @@ void CommandProcessor::WriteAtEndOfPipe(uint32_t cache_policy, uint32_t event_wr
 		default: break;
 	}
 
-	EXIT("unknown event type\n");
+	EXIT("unknown event type: event_write_dest=0x%02" PRIx32 " eop_event_type=0x%02" PRIx32
+	     " event_index=0x%02" PRIx32 " cache_action=0x%02" PRIx32 " cache_policy=0x%02" PRIx32
+	     " with_interrupt=%d dst=0x%016" PRIx64 "\n",
+	     event_write_dest, eop_event_type, event_index, cache_action, cache_policy,
+	     static_cast<int>(with_interrupt), reinterpret_cast<uint64_t>(dst_gpu_addr));
 }
 
 void CommandProcessor::WriteAtEndOfPipe32(uint32_t cache_policy, uint32_t event_write_dest,

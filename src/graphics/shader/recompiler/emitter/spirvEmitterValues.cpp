@@ -356,7 +356,13 @@ uint32_t EmitMaskSummaryZeroBool(EmitterState& state, IR::RegisterFile file, boo
 }
 
 uint32_t EmitExecActiveBool(EmitterState& state) {
-	return EmitMaskZeroBool(state, IR::RegisterFile::Exec, false);
+	if (state.exec_active_id != 0 && state.exec_active_epoch == state.builder.BlockEpoch()) {
+		return state.exec_active_id;
+	}
+	const auto id           = EmitMaskZeroBool(state, IR::RegisterFile::Exec, false);
+	state.exec_active_id    = id;
+	state.exec_active_epoch = state.builder.BlockEpoch();
+	return id;
 }
 
 uint32_t EmitConditionBool(EmitterState& state, const IR::Operand& operand) {
