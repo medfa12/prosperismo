@@ -23,19 +23,7 @@ int KYTY_SYSV_ABI CommonDialogInitialize() {
 
 } // namespace CommonDialog
 
-namespace ImeDialog {
-
-LIB_NAME("ImeDialog", "ImeDialog");
-
-constexpr int IME_STATUS_NONE = 0;
-
-int KYTY_SYSV_ABI ImeDialogGetStatus() {
-	PRINT_NAME();
-
-	return IME_STATUS_NONE;
-}
-
-} // namespace ImeDialog
+// ImeDialog now lives in imeDialog.cpp, which implements the whole surface.
 
 namespace LoginDialog {
 
