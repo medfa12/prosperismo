@@ -883,11 +883,95 @@ LIB_DEFINE(InitLibcInternal_1) {
 
 LIB_USING(LibC);
 
+// Plain libc forwards. These were imported by titles (Astro imports 144 such symbols) but never
+// registered, so the loader patched each to a stub. Semantics match the host exactly and the guest
+// ABI is SysV, which is also the host ABI here, so forwarding is correct rather than approximate.
+// Deliberately excluded: malloc/free/realloc and friends. The guest may hand those pointers to the
+// GPU, so they must come from guest address space, not the host heap - implement them against the
+// guest allocator, not like this.
+namespace LibCMath {
+
+static KYTY_SYSV_ABI float  acosf_(float x) { return ::acosf(x); }
+static KYTY_SYSV_ABI float  asinf_(float x) { return ::asinf(x); }
+static KYTY_SYSV_ABI float  atanf_(float x) { return ::atanf(x); }
+static KYTY_SYSV_ABI float  atan2f_(float y, float x) { return ::atan2f(y, x); }
+static KYTY_SYSV_ABI float  tanf_(float x) { return ::tanf(x); }
+static KYTY_SYSV_ABI float  expf_(float x) { return ::expf(x); }
+static KYTY_SYSV_ABI double exp2_(double x) { return ::exp2(x); }
+static KYTY_SYSV_ABI float  exp2f_(float x) { return ::exp2f(x); }
+static KYTY_SYSV_ABI float  logf_(float x) { return ::logf(x); }
+static KYTY_SYSV_ABI float  log10f_(float x) { return ::log10f(x); }
+static KYTY_SYSV_ABI float  logbf_(float x) { return ::logbf(x); }
+static KYTY_SYSV_ABI double pow_(double x, double y) { return ::pow(x, y); }
+static KYTY_SYSV_ABI float  powf_(float x, float y) { return ::powf(x, y); }
+static KYTY_SYSV_ABI float  fmodf_(float x, float y) { return ::fmodf(x, y); }
+static KYTY_SYSV_ABI float  ldexpf_(float x, int e) { return ::ldexpf(x, e); }
+static KYTY_SYSV_ABI float  scalbnf_(float x, int e) { return ::scalbnf(x, e); }
+static KYTY_SYSV_ABI float  roundf_(float x) { return ::roundf(x); }
+static KYTY_SYSV_ABI int    isfinitef_(float x) { return static_cast<int>(std::isfinite(x)); }
+static KYTY_SYSV_ABI int    isinff_(float x) { return static_cast<int>(std::isinf(x)); }
+static KYTY_SYSV_ABI int    isnanf_(float x) { return static_cast<int>(std::isnan(x)); }
+
+} // namespace LibCMath
+
+namespace LibCStr {
+
+static KYTY_SYSV_ABI char*  strcpy_(char* d, const char* s2) { return ::strcpy(d, s2); }
+static KYTY_SYSV_ABI char*  strncat_(char* d, const char* s2, size_t n) { return ::strncat(d, s2, n); }
+static KYTY_SYSV_ABI size_t strnlen_(const char* s2, size_t n) { return ::strnlen(s2, n); }
+static KYTY_SYSV_ABI char*  strnstr_(const char* h, const char* n, size_t len) { return ::strnstr(h, n, len); }
+static KYTY_SYSV_ABI char*  strtok_(char* s2, const char* d) { return ::strtok(s2, d); }
+static KYTY_SYSV_ABI char*  strerror_(int e) { return ::strerror(e); }
+static KYTY_SYSV_ABI void*  memchr_(const void* s2, int c, size_t n) { return const_cast<void*>(::memchr(s2, c, n)); }
+static KYTY_SYSV_ABI double atof_(const char* s2) { return ::atof(s2); }
+static KYTY_SYSV_ABI double strtod_(const char* s2, char** e) { return ::strtod(s2, e); }
+static KYTY_SYSV_ABI long long strtoll_(const char* s2, char** e, int b) { return ::strtoll(s2, e, b); }
+static KYTY_SYSV_ABI intmax_t strtoimax_(const char* s2, char** e, int b) { return ::strtoimax(s2, e, b); }
+static KYTY_SYSV_ABI uintmax_t strtoumax_(const char* s2, char** e, int b) { return ::strtoumax(s2, e, b); }
+static KYTY_SYSV_ABI size_t wcstombs_(char* d, const wchar_t* s2, size_t n) { return ::wcstombs(d, s2, n); }
+static KYTY_SYSV_ABI int    rand_() { return ::rand(); }
+
+} // namespace LibCStr
+
 LIB_DEFINE(InitLibC_1) {
 	LibcInternal::InitLibcInternal_1(s);
 
 	LIB_OBJECT("P330P3dFF68", &LibC::g_need_flag);
 
+	LIB_FUNC("QI-x0SL8jhw", LibCMath::acosf_);
+	LIB_FUNC("GZWjF-YIFFk", LibCMath::asinf_);
+	LIB_FUNC("weDug8QD-lE", LibCMath::atanf_);
+	LIB_FUNC("EH-x713A99c", LibCMath::atan2f_);
+	LIB_FUNC("ZE6RNL+eLbk", LibCMath::tanf_);
+	LIB_FUNC("8zsu04XNsZ4", LibCMath::expf_);
+	LIB_FUNC("dnaeGXbjP6E", LibCMath::exp2_);
+	LIB_FUNC("wuAQt-j+p4o", LibCMath::exp2f_);
+	LIB_FUNC("RQXLbdT2lc4", LibCMath::logf_);
+	LIB_FUNC("lhpd6Wk6ccs", LibCMath::log10f_);
+	LIB_FUNC("RWqyr1OKuw4", LibCMath::logbf_);
+	LIB_FUNC("9LCjpWyQ5Zc", LibCMath::pow_);
+	LIB_FUNC("1D0H2KNjshE", LibCMath::powf_);
+	LIB_FUNC("88Vv-AzHVj8", LibCMath::fmodf_);
+	LIB_FUNC("kn0yiYeExgA", LibCMath::ldexpf_);
+	LIB_FUNC("9fs1btfLoUs", LibCMath::scalbnf_);
+	LIB_FUNC("DDHG1a6+3q0", LibCMath::roundf_);
+	LIB_FUNC("Q8pvJimUWis", LibCMath::isfinitef_);
+	LIB_FUNC("rDMyAf1Jhug", LibCMath::isinff_);
+	LIB_FUNC("lA94ZgT+vMM", LibCMath::isnanf_);
+	LIB_FUNC("kiZSXIWd9vg", LibCStr::strcpy_);
+	LIB_FUNC("kHg45qPC6f0", LibCStr::strncat_);
+	LIB_FUNC("5jNubw4vlAA", LibCStr::strnlen_);
+	LIB_FUNC("Xnrfb2-WhVw", LibCStr::strnstr_);
+	LIB_FUNC("oVkZ8W8-Q8A", LibCStr::strtok_);
+	LIB_FUNC("RIa6GnWp+iU", LibCStr::strerror_);
+	LIB_FUNC("8u8lPzUEq+U", LibCStr::memchr_);
+	LIB_FUNC("SRI6S9B+-a4", LibCStr::atof_);
+	LIB_FUNC("2vDqwBlpF-o", LibCStr::strtod_);
+	LIB_FUNC("VOBg+iNwB-4", LibCStr::strtoll_);
+	LIB_FUNC("q5MWYCDfu3c", LibCStr::strtoimax_);
+	LIB_FUNC("QNyUWGXmXNc", LibCStr::strtoumax_);
+	LIB_FUNC("v7S7LhP2OJc", LibCStr::wcstombs_);
+	LIB_FUNC("cpCOXWMgha0", LibCStr::rand_);
 	LIB_FUNC("uMei1W9uyNo", LibC::exit);
 	LIB_FUNC("L1SBTkC+Cvw", LibC::abort);
 	LIB_FUNC("9BcDykPmo1I", LibC::libc_error);
