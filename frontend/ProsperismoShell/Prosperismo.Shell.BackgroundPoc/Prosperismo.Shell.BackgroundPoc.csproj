@@ -1,0 +1,22 @@
+<!--
+Copyright (C) 2026 Prosperismo Project
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Proof of concept: decode the PS5 background shader out of a real firmware
+    eboot, translate it to SPIR-V, and execute it on macOS through MoltenVK.
+    Proves the animated background is reproducible on this host from oracle
+    data rather than from a reimplementation.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>BackgroundPoc</AssemblyName>
+    <RootNamespace>Prosperismo.Shell.BackgroundPoc</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Prosperismo.Shell.Runtime\Prosperismo.Shell.Runtime.csproj" />
+  </ItemGroup>
+</Project>

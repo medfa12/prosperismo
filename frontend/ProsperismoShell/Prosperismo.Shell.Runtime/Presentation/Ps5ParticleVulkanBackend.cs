@@ -621,8 +621,31 @@ public static class Ps5ParticleDrawProbe
                 SType = StructureType.InstanceCreateInfo,
                 PApplicationInfo = &appInfo,
             };
-            Check(vk.CreateInstance(in instanceInfo, null, out var instance), "vkCreateInstance");
+
+            // macOS has no native Vulkan driver: it runs on MoltenVK, which
+            // presents itself as a *portability* implementation. Without the
+            // enumeration extension and its instance flag the loader reports no
+            // conformant driver and vkCreateInstance fails with
+            // ErrorIncompatibleDriver, even though MoltenVK is installed.
+            nint portabilityExtension = 0;
+            byte** extensionNames = stackalloc byte*[1];
+            if (OperatingSystem.IsMacOS())
+            {
+                portabilityExtension = SilkMarshal.StringToPtr("VK_KHR_portability_enumeration");
+                extensionNames[0] = (byte*)portabilityExtension;
+                instanceInfo.EnabledExtensionCount = 1;
+                instanceInfo.PpEnabledExtensionNames = extensionNames;
+                instanceInfo.Flags = InstanceCreateFlags.EnumeratePortabilityBitKhr;
+            }
+
+            var instanceResult = vk.CreateInstance(in instanceInfo, null, out var instance);
             SilkMarshal.Free((nint)appName);
+            if (portabilityExtension != 0)
+            {
+                SilkMarshal.Free(portabilityExtension);
+            }
+
+            Check(instanceResult, "vkCreateInstance");
 
             uint physicalCount = 0;
             Check(vk.EnumeratePhysicalDevices(instance, &physicalCount, null), "vkEnumeratePhysicalDevices(count)");

@@ -34,13 +34,25 @@ public static class Ps5NativeRippleCompiler
     public static bool TryCompile(
         string ebootPath,
         out Ps5NativeRippleProgram program,
+        out string error) =>
+        TryCompile(ebootPath, FirmwareElfOffset, FirmwareElfLength, out program, out error);
+
+    /// <summary>
+    /// As above, with the firmware slice supplied. The baked offset belongs to
+    /// one firmware build; other versions place the shader elsewhere.
+    /// </summary>
+    public static bool TryCompile(
+        string ebootPath,
+        long elfOffset,
+        int elfLength,
+        out Ps5NativeRippleProgram program,
         out string error)
     {
         program = default!;
         error = string.Empty;
         try
         {
-            var shaderText = ReadShaderText(ebootPath, FirmwareElfOffset, FirmwareElfLength);
+            var shaderText = ReadShaderText(ebootPath, elfOffset, elfLength);
             var memory = new RippleMemory();
             memory.AddRegion(ProgramAddress, shaderText);
             var c0 = new byte[40];
