@@ -145,3 +145,47 @@ were reachable all along.
 Tools: [`pup_decompress.py`](../../tools/shell-recovery/pup_decompress.py) walks
 the chunks and counts targets; [`pup_extract.py`](../../tools/shell-recovery/pup_extract.py)
 carves files across chunk seams.
+
+## Second correction: the PUP has two layers, and one of them IS encrypted
+
+An earlier revision of this document swung from "the PUP is encrypted" to "no
+encryption is present." **Both statements were wrong**, because the PUP has two
+independent layers and each answers the question differently:
+
+| Layer | Protection | Reachable offline? |
+|---|---|---|
+| PUP container | zlib compression, chunked | **yes** |
+| Files inside (`eboot.bin`, `*.sprx`) | **SELF — signed and encrypted per file** | **no** |
+| Resources inside RCO containers (PNG, TTF, APNG) | none | **yes** |
+
+### The test that settles it
+
+The project holds a decrypted 3.00 `NPXS40087/eboot.bin` from `fwdb`. If the
+PUP's copy of that same file were plaintext, its bytes would appear in the
+decompressed output. Twelve probes were used — nine long byte runs sampled
+across the file, plus distinctive strings.
+
+**1 of 12 found**, and that one (`Sce.Vsh.ShellUI`) is a path in the install
+manifest, not executable content. No byte-level probe matched anywhere in 897 MB.
+
+The conclusion is unambiguous: the executables inside the PUP are SELF-encrypted
+and are not recoverable from it offline.
+
+### Why the magic counts looked encouraging but were not
+
+Scanning the raw PUP finds 672 PNGs, 182 TTFs and 90 JPEGs but only 9 ELF
+headers. That asymmetry is the signature of exactly this split — **resources are
+stored in the clear**, while executables are SELF-wrapped and therefore expose
+no ELF magic to find.
+
+### What this does and does not cost
+
+It costs nothing for the current work. The shell eboots in `ps5oracle/fwdb/`
+(3.00, 12.40, 13.00, 13.20) are **already decrypted from other sources**, so the
+scene-renderer code is in hand regardless of what the PUP will not give up. The
+PUP's value was always its resources, and those came out.
+
+It does mean the four `.gnf` textures cannot be blamed on encryption: as
+resources they would be in the clear, and only one GNF magic exists in the whole
+PUP — an all-zero placeholder. They are genuinely not in 3.00, which is
+consistent with 3.0x predating the scene architecture entirely.
