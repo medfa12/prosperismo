@@ -403,7 +403,8 @@ static void InstallGuestBreakpoints() {
 		const bool push_rbp = (code[0] == 0x55);
 		const bool load_eax = (code[0] == 0x8b && code[1] == 0x87);
 		const bool cmp_rdi  = (code[0] == 0x83 && code[1] == 0xbf);
-		if (!push_rbp && !load_eax && !cmp_rdi) {
+		const bool cmp_rdib = (code[0] == 0x80 && code[1] == 0xbf);
+		if (!push_rbp && !load_eax && !cmp_rdi && !cmp_rdib) {
 			printf("guest-bp: 0x%016llx has an unsupported entry form (found 0x%02x), skipped\n",
 			       static_cast<unsigned long long>(addr), static_cast<unsigned>(code[0]));
 			continue;
@@ -892,7 +893,9 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			// Resume by performing whatever the trap byte displaced, then stepping over it.
 			auto* uc = static_cast<ucontext_t*>(info->native_context);
 			auto& ss = uc->uc_mcontext->__ss;
-			if (g_guest_breakpoints[i].original == 0x83) {
+			if (g_guest_breakpoints[i].original == 0x83 ||
+			    g_guest_breakpoints[i].original == 0x80) {
+				const bool byte_form = (g_guest_breakpoints[i].original == 0x80);
 				// cmp dword ptr [rdi+disp32], imm8 (83 bf <disp32> <imm8>). The displaced byte is
 				// the 0x83, so disp32 sits at +2 and the imm8 at +6. Perform the compare and set
 				// the flags the following conditional branch reads, then step over all 7 bytes.
@@ -903,7 +906,13 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 				    static_cast<int32_t>(*reinterpret_cast<const int8_t*>(
 				        info->exception_address + 6));
 				int32_t lhs = 0;
-				::memcpy(&lhs, reinterpret_cast<const void*>(info->rdi + disp), sizeof(lhs));
+				if (byte_form) {
+					uint8_t b = 0;
+					::memcpy(&b, reinterpret_cast<const void*>(info->rdi + disp), sizeof(b));
+					lhs = b;
+				} else {
+					::memcpy(&lhs, reinterpret_cast<const void*>(info->rdi + disp), sizeof(lhs));
+				}
 				const int64_t  wide   = static_cast<int64_t>(lhs) - static_cast<int64_t>(imm);
 				const uint32_t result = static_cast<uint32_t>(wide);
 				uint64_t       flags  = ss.__rflags & ~0x8d5ull; // CF PF AF ZF SF OF
@@ -921,7 +930,8 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 				}
 				ss.__rflags = flags;
 				ss.__rip    = info->exception_address + 7;
-				printf("guest-bp   cmp [rdi+0x%x] = %d (vs %d)\n", disp, lhs, imm);
+				printf("guest-bp   cmp%s [rdi+0x%x] = %d (vs %d)\n", byte_form ? "b" : "", disp,
+				       lhs, imm);
 				fflush(stdout);
 			} else if (g_guest_breakpoints[i].original == 0x55) {
 				ss.__rsp -= sizeof(uint64_t);
