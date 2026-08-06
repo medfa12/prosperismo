@@ -402,7 +402,8 @@ static void InstallGuestBreakpoints() {
 		//                                                state field - the value is logged)
 		const bool push_rbp = (code[0] == 0x55);
 		const bool load_eax = (code[0] == 0x8b && code[1] == 0x87);
-		if (!push_rbp && !load_eax) {
+		const bool cmp_rdi  = (code[0] == 0x83 && code[1] == 0xbf);
+		if (!push_rbp && !load_eax && !cmp_rdi) {
 			printf("guest-bp: 0x%016llx has an unsupported entry form (found 0x%02x), skipped\n",
 			       static_cast<unsigned long long>(addr), static_cast<unsigned>(code[0]));
 			continue;
@@ -891,7 +892,38 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			// Resume by performing whatever the trap byte displaced, then stepping over it.
 			auto* uc = static_cast<ucontext_t*>(info->native_context);
 			auto& ss = uc->uc_mcontext->__ss;
-			if (g_guest_breakpoints[i].original == 0x55) {
+			if (g_guest_breakpoints[i].original == 0x83) {
+				// cmp dword ptr [rdi+disp32], imm8 (83 bf <disp32> <imm8>). The displaced byte is
+				// the 0x83, so disp32 sits at +2 and the imm8 at +6. Perform the compare and set
+				// the flags the following conditional branch reads, then step over all 7 bytes.
+				int32_t disp = 0;
+				::memcpy(&disp, reinterpret_cast<const void*>(info->exception_address + 2),
+				         sizeof(disp));
+				const auto imm =
+				    static_cast<int32_t>(*reinterpret_cast<const int8_t*>(
+				        info->exception_address + 6));
+				int32_t lhs = 0;
+				::memcpy(&lhs, reinterpret_cast<const void*>(info->rdi + disp), sizeof(lhs));
+				const int64_t  wide   = static_cast<int64_t>(lhs) - static_cast<int64_t>(imm);
+				const uint32_t result = static_cast<uint32_t>(wide);
+				uint64_t       flags  = ss.__rflags & ~0x8d5ull; // CF PF AF ZF SF OF
+				if (result == 0) {
+					flags |= 0x40ull; // ZF
+				}
+				if ((result & 0x80000000u) != 0) {
+					flags |= 0x80ull; // SF
+				}
+				if (static_cast<uint32_t>(lhs) < static_cast<uint32_t>(imm)) {
+					flags |= 0x1ull; // CF
+				}
+				if (wide < INT32_MIN || wide > INT32_MAX) {
+					flags |= 0x800ull; // OF
+				}
+				ss.__rflags = flags;
+				ss.__rip    = info->exception_address + 7;
+				printf("guest-bp   cmp [rdi+0x%x] = %d (vs %d)\n", disp, lhs, imm);
+				fflush(stdout);
+			} else if (g_guest_breakpoints[i].original == 0x55) {
 				ss.__rsp -= sizeof(uint64_t);
 				*reinterpret_cast<uint64_t*>(ss.__rsp) = ss.__rbp;
 				ss.__rip                               = info->exception_address + 1;
