@@ -560,9 +560,11 @@ if (WIN32)
 	target_link_libraries(kyty_emulator iphlpapi)
 	target_link_libraries(kyty_emulator setupapi)
 	target_link_libraries(kyty_emulator ws2_32)
-endif()
-if (KYTY_CLANG_CL)
+	# onecore supplies VirtualAlloc2 / MapViewOfFile3 / UnmapViewOfFile2 and bcrypt supplies
+	# BCryptGenRandom. These were previously linked only under clang-cl, so the MinGW build failed
+	# to link with undefined references to all six.
 	target_link_libraries(kyty_emulator onecore)
+	target_link_libraries(kyty_emulator bcrypt)
 endif()
 if (CLANG AND NOT KYTY_CLANG_CL)
 	target_link_libraries(kyty_emulator pthread)

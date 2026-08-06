@@ -136,6 +136,11 @@ static LONG WINAPI ExceptionFilter(PEXCEPTION_POINTERS exception) {
 	return handler(info) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Windows delivers faults through SEH on the faulting thread's own stack, so there is no
+// alternate signal stack to install and nothing for callers to do. Defined rather than
+// omitted so the shared call site in InstallHandler links on every platform.
+void InstallSignalStack() {}
+
 #elif defined(__APPLE__)
 
 static std::atomic<Handler> g_handler {nullptr};
