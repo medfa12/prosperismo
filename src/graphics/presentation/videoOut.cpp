@@ -1000,6 +1000,36 @@ void FlipQueue::Prepare(uint64_t request_id, Graphics::CommandBuffer& buffer) {
 		}
 		return;
 	}
+	// Sample the guest surface so "is the screen actually black?" is answerable from the emulator
+	// rather than from the user's eyes. Reports once, after enough flips that the title has had a
+	// chance to draw something. Reading a few scattered rows is enough to distinguish a cleared
+	// surface from real image content.
+	if (!special && source_info.data.address != 0) {
+		static uint32_t sampled_flips = 0;
+		static bool     reported      = false;
+		if (!reported && ++sampled_flips == 120) {
+			reported                 = true;
+			const auto*    pixels    = reinterpret_cast<const uint8_t*>(source_info.data.address);
+			const uint64_t span      = std::min<uint64_t>(source_info.data.size, 8u * 1024u * 1024u);
+			uint64_t       nonzero   = 0;
+			uint64_t       inspected = 0;
+			for (uint64_t off = 0; off + 64 <= span; off += 65536) {
+				for (uint32_t i = 0; i < 64; i++, inspected++) {
+					if (pixels[off + i] != 0) {
+						nonzero++;
+					}
+				}
+			}
+			printf("VideoOut: flip %u surface %ux%u - %llu/%llu sampled bytes non-zero (%.1f%%)\n",
+			       sampled_flips, source_info.extent.width, source_info.extent.height,
+			       static_cast<unsigned long long>(nonzero),
+			       static_cast<unsigned long long>(inspected),
+			       inspected == 0 ? 0.0 : 100.0 * static_cast<double>(nonzero) /
+			                                  static_cast<double>(inspected));
+			fflush(stdout);
+		}
+	}
+
 	Graphics::Presenter::Frame* frame = nullptr;
 	if (special) {
 		frame = &m_presenter.PrepareBlankFrame(width, height, index == VIDEO_OUT_BUFFER_INDEX_BLACK,
