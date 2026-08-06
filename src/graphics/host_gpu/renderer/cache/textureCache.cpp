@@ -476,7 +476,7 @@ ImageId TextureCache::GetNullImage(const ImageDesc& desc) {
 	info.pixel_format    = desc.info.pixel_format;
 	info.guest_format    = desc.info.guest_format;
 	info.type            = Prospero::ImageType::kColor2D;
-	info.extent          = {1, 1, 1};
+	info.extent          = vk::Extent3D{1, 1, 1};
 	info.resources       = {1, 1};
 	info.pitch           = 1;
 	info.bytes_per_block = std::max(desc.info.bytes_per_block, 1u);
@@ -1008,7 +1008,7 @@ void TextureCache::UploadImage(Image& image, const ImageDesc& desc, Buffer& sour
 		copy.bufferRowLength   = info.pitch;
 		copy.bufferImageHeight = info.extent.height;
 		copy.imageSubresource  = {vk::ImageAspectFlagBits::eDepth, 0, layer, 1};
-		copy.imageExtent       = {info.extent.width, info.extent.height, 1};
+		copy.imageExtent       = vk::Extent3D{info.extent.width, info.extent.height, 1};
 		if (static_cast<Prospero::TileMode>(info.tile_mode) != Prospero::TileMode::kLinear) {
 			tiles.push_back({block.family, block.bytes_per_element, offset, full_slice_size, offset,
 			                 full_slice_size, 0, info.extent.width, info.extent.height, 1,
@@ -1514,7 +1514,7 @@ void TextureCache::DownloadDepth(Image& image, Buffer& destination, uint64_t des
 		copy.bufferRowLength   = info.pitch;
 		copy.bufferImageHeight = info.extent.height;
 		copy.imageSubresource  = {vk::ImageAspectFlagBits::eDepth, 0, layer, 1};
-		copy.imageExtent       = {info.extent.width, info.extent.height, 1};
+		copy.imageExtent       = vk::Extent3D{info.extent.width, info.extent.height, 1};
 	}
 	if (transfer_bytes == info.bytes_per_block) {
 		if (!info.IsTiled()) {

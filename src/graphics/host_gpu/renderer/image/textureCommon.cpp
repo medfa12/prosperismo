@@ -426,7 +426,7 @@ std::vector<vk::BufferImageCopy> TextureBuildImageCopies(const TextureUploadLayo
 			region.imageSubresource = {vk::ImageAspectFlagBits::eColor, i, array_texture ? z : 0,
 			                           1};
 			region.imageOffset.z    = volume_texture ? static_cast<int>(z) : 0;
-			region.imageExtent      = {mip_width, mip_height, 1};
+			region.imageExtent      = vk::Extent3D{mip_width, mip_height, 1};
 			const bool linear =
 			    static_cast<Prospero::TileMode>(layout.tile) == Prospero::TileMode::kLinear;
 			if (linear) {

@@ -301,7 +301,7 @@ void CommandBuffer::BeginRendering(const RenderState& state) const {
 
 	vk::RenderingInfo rendering {};
 	rendering.sType                = vk::StructureType::eRenderingInfo;
-	rendering.renderArea.extent    = {state.width, state.height};
+	rendering.renderArea.extent    = vk::Extent2D{state.width, state.height};
 	rendering.layerCount           = state.num_layers;
 	rendering.colorAttachmentCount = state.num_color_attachments;
 	rendering.pColorAttachments    = colors.data();

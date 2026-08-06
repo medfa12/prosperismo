@@ -61,7 +61,7 @@ void RenderExecutor::ResolveRenderColorTarget(uint64_t submit_id, RenderCommandB
 		r.image_id           = {};
 		r.image_view         = nullptr;
 		r.format             = vk::Format::eUndefined;
-		r.extent             = {};
+		r.extent             = vk::Extent2D{};
 		r.base_mip_level     = 0;
 		r.base_array_layer   = 0;
 		r.buffer_size        = 0;
@@ -281,7 +281,7 @@ void RenderExecutor::ResolveRenderColorTarget(uint64_t submit_id, RenderCommandB
 	desc.info.pixel_format = target_format.format;
 	desc.info.guest_format = transfer_format;
 	desc.info.type         = volume ? Prospero::ImageType::kColor3D : Prospero::ImageType::kColor2D;
-	desc.info.extent       = {width, height, depth};
+	desc.info.extent       = vk::Extent3D{width, height, depth};
 	desc.info.resources    = {levels, volume ? 1u : view.image_layers};
 	desc.info.pitch        = pitch;
 	desc.info.bytes_per_block = bytes_per_element;

@@ -231,7 +231,7 @@ void Presenter::Frame::Configure(GraphicContext& graphics, vk::Extent2D extent, 
 		dst.memory = {};
 	}
 
-	dst.extent     = {extent.width, extent.height, 1};
+	dst.extent     = vk::Extent3D{extent.width, extent.height, 1};
 	dst.format     = format;
 	dst.layers     = 1;
 	dst.mip_levels = 1;
@@ -242,7 +242,7 @@ void Presenter::Frame::Configure(GraphicContext& graphics, vk::Extent2D extent, 
 	vk::ImageCreateInfo create {};
 	create.sType         = vk::StructureType::eImageCreateInfo;
 	create.imageType     = vk::ImageType::e2D;
-	create.extent        = {dst.extent.width, dst.extent.height, 1};
+	create.extent        = vk::Extent3D{dst.extent.width, dst.extent.height, 1};
 	create.mipLevels     = 1;
 	create.arrayLayers   = 1;
 	create.format        = dst.format;
@@ -301,7 +301,7 @@ void Presenter::Frame::CopyFrom(CommandBuffer& command_buffer, Image& source) {
 	vk::ImageCopy copy {};
 	copy.srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, source.backing.layers};
 	copy.dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, image.layers};
-	copy.extent         = {std::min(source.backing.extent.width, image.extent.width),
+	copy.extent         = vk::Extent3D{std::min(source.backing.extent.width, image.extent.width),
 	                       std::min(source.backing.extent.height, image.extent.height), 1};
 	EXIT_IF(copy.srcSubresource.layerCount != copy.dstSubresource.layerCount);
 	command.copyImage(source.backing.image, vk::ImageLayout::eTransferSrcOptimal, image.image,

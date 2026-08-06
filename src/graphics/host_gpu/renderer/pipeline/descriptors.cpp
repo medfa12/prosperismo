@@ -512,7 +512,7 @@ static TextureCache::ImageDesc NullTextureDesc(const ShaderRecompiler::IR::Image
 	desc.info.pixel_format    = spec.format;
 	desc.info.guest_format    = spec.guest_format;
 	desc.info.type            = Prospero::ImageType::kColor2D;
-	desc.info.extent          = {1, 1, 1};
+	desc.info.extent          = vk::Extent3D{1, 1, 1};
 	desc.info.resources       = {1, 1};
 	desc.info.bytes_per_block = 4;
 	desc.info.samples         = 1;
@@ -730,7 +730,7 @@ RenderExecutor::ResolveTexture(const ShaderRecompiler::IR::ImageResource&   reso
 	desc.info.pixel_format = pixel_format;
 	desc.info.guest_format = format;
 	desc.info.type         = TextureBaseType(type);
-	desc.info.extent       = {width, height, volume ? depth : 1u};
+	desc.info.extent       = vk::Extent3D{width, height, volume ? depth : 1u};
 	desc.info.resources    = {levels, image_layers};
 	desc.info.pitch        = pitch;
 	desc.info.bytes_per_block =
