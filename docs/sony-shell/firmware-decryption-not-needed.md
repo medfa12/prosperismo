@@ -79,38 +79,69 @@ geometry is constructed in code, those four files are textures over geometry we
 can already recover — which makes the outstanding gap cosmetic rather than
 structural.
 
-## Addendum: the 3.00 recovery PUP, tested
+## Addendum: the 3.00 recovery PUP — CORRECTED
 
-`300REC.7z` unpacks to `PS5UPDATE1.PUP.dec` (902 MB) and `PS5UPDATE2.PUP.dec`
-(147 MB). Both carry the PS5 PUP magic `0xEEF51454`. The `.dec` suffix is
-misleading: only the outer container is clear.
+**An earlier version of this section claimed the recovery PUP payload was
+encrypted. That was wrong.** The payload is *compressed*, and it decompresses
+without any key.
 
-Measured on the payload:
+The error was methodological and worth recording so it is not repeated:
+entropy was measured (99.956% of 4 KB windows above 7.0 bits/byte) and read as
+evidence of encryption. But **compressed data is incompressible too**, so
+entropy cannot distinguish the two. The only sound test is to attempt
+decompression, which was not done before drawing the conclusion.
 
-| Test | Result | Meaning |
-|---|---|---|
-| Entropy, 4 KB windows, whole file | 99.956% above 7.0 | encrypted |
-| Plaintext regions | 74 regions, **393 KB of 902 MB** | header + entry table + padding only |
-| Literal search (`vsh_asset`, `.gnf`, `PlayStation`) | **0 hits** | no filenames survive |
-| 16 B block duplicates | 3,087 / 4,194,304 (0.07%), all zero-padding in the clear regions | not ECB — no plaintext structure leaks |
-| Repeating-key XOR, strides 16/256/512/4096, n=65536 each | max byte freq 0.45–0.46% vs 0.391% random | **flat — not XOR** |
+Two details made the compression easy to miss, neither of which excuses
+skipping the test:
 
-The only readable content is the PUP header at `0x0` and an entry table at
-`0xC42000` holding device IDs (`C0050001`, `C0050002`, `C0050100`, `C0058100`).
+- The chunks use CMF `0x48` — deflate with a 4 KB window — instead of the
+  near-universal `0x78`. Scanning for `78 9c` / `78 da` zlib magic finds
+  nothing.
+- The segment table's field pairs read naturally as offset/size, but they are
+  **compressed size / uncompressed size**: entry 2 is `0x85120 → 0x17C581`, a
+  2.9× ratio, and entries where the two are equal are simply stored.
 
-### Why a known-plaintext pair does not help here
+### What the payload actually is
 
-The idea — supply matching encrypted and decrypted copies of content we already
-hold, and solve for the key — is valid against XOR and stream ciphers, where
-`keystream = C ⊕ P` falls out immediately. The stride test above rules that out:
-byte frequencies are flat at every period tested, so there is no repeating
-keystream to recover.
+`PS5UPDATE1.PUP.dec` is a run of independently zlib-compressed chunks, each
+expanding to exactly 512 KB, laid end to end. Walking all 902 MB yields
+**2,025 streams and 897 MB of output**, containing:
 
-What remains is an AES-class block cipher in a chaining or tweaked mode (no
-block reuse across 4.2 M blocks). Resistance to known-plaintext attack is the
-defining property of such a cipher; the best published attack on full AES-128 is
-~2^126, which is brute force with extra steps. Pairs give no advantage.
+| Content | Evidence |
+|---|---|
+| exFAT filesystems | `eb 76 90 45 58 46 41 54` headers, x4 |
+| An install manifest | full `/system_ex/...` path list |
+| GNF textures | `GNF ` magic, `version=0xC0104` |
+| XML and JSON metadata | e.g. `{"BdFirmIn…` |
 
-This is therefore not a matter of finding the right key list. Offline PUP
-decryption is not available at any firmware version, which is why the scene
-obtains content by running a payload on a jailbroken console instead.
+`PS5UPDATE2.PUP.dec` yields 153 streams / 40 MB and two exFAT headers, but no
+shell assets.
+
+### A path correction this turned up
+
+The manifest lists where the shell's resources actually live, and one is not
+where this project assumed:
+
+```
+/system_ex/vsh_asset/Sce.PlayStation.PUI.rco
+/system_ex/vsh_asset/Sce.PlayStation.PUI_UI3.rco
+/system_ex/app/NPXS40087/psm/Application/resource/Sce.Vsh.ShellUI.BGLayer.rco
+/system_ex/app/NPXS40087/psm/Application/resource/Sce.Vsh.ShellUI.Base.rco
+```
+
+`Sce.Vsh.ShellUI.BGLayer.rco` and `.Base.rco` are under the **application's
+own `resource/` directory**, not `vsh_asset`. Any resolver probing only
+`vsh_asset` for them will always miss.
+
+### What still stands
+
+The parts of this document above the addendum are unaffected: the shell eboots
+on disk are already plaintext, 3.0x genuinely lacks the scene architecture
+(`sequence_scene_builder` and `CreateLightShaftModel` appear only from 12.40),
+and the published psdevwiki keys still do not decrypt anything. What changes is
+that **the recovery PUP was never encrypted to begin with**, so its contents
+were reachable all along.
+
+Tools: [`pup_decompress.py`](../../tools/shell-recovery/pup_decompress.py) walks
+the chunks and counts targets; [`pup_extract.py`](../../tools/shell-recovery/pup_extract.py)
+carves files across chunk seams.
