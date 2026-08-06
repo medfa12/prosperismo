@@ -215,6 +215,19 @@ void KYTY_SYSV_ABI pthread_exit(void* value);
 LibKernel::Pthread KYTY_SYSV_ABI pthread_self();
 int KYTY_SYSV_ABI                pthread_rename_np(LibKernel::Pthread thread, const char* name);
 int KYTY_SYSV_ABI                pthread_setcancelstate(int state, int* old_state);
+// The Windows pthread shims define several of these entry points as object-like macros expanding to
+// ENOTSUP (see 3rdparty/winpthread/include/pthread.h:174-178). A macro ignores namespaces, so it
+// rewrites our declarations below into numeric constants and the header fails to compile with
+// "expected unqualified-id before numeric constant". These are guest ABI functions we implement
+// ourselves, so drop the shim macros before declaring them.
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#undef pthread_attr_getguardsize
+#undef pthread_attr_setguardsize
+#undef pthread_mutex_getprioceiling
+#undef pthread_mutex_setprioceiling
+#undef pthread_getcpuclockid
+#endif
+
 int KYTY_SYSV_ABI                pthread_setprio(LibKernel::Pthread thread, int prio);
 int KYTY_SYSV_ABI                pthread_getschedparam(LibKernel::Pthread thread, int* policy,
                                                        LibKernel::KernelSchedParam* param);
