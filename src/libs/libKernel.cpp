@@ -2369,6 +2369,17 @@ struct FiberJmp {
 	jmp_buf buf;
 };
 
+// glibc/Darwin expose _setjmp/_longjmp, which save and restore the register context WITHOUT
+// touching the signal mask - exactly what a fiber switch wants. The MinGW runtime has no
+// _longjmp, and its _setjmp takes a second frame argument, so on Windows use the plain pair.
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+#define KYTY_FIBER_SETJMP(buf)       setjmp(buf)
+#define KYTY_FIBER_LONGJMP(buf, val) longjmp((buf), (val))
+#else
+#define KYTY_FIBER_SETJMP(buf)       _setjmp(buf)
+#define KYTY_FIBER_LONGJMP(buf, val) _longjmp((buf), (val))
+#endif
+
 static std::mutex                                  g_fiber_jmp_mutex;
 static std::unordered_map<FiberObject*, FiberJmp*> g_fiber_jmp;
 static thread_local FiberJmp                       g_thread_fiber_jmp {};
@@ -2697,7 +2708,7 @@ static void* FiberOversizedStack(FiberObject* fiber, uint64_t* size_out) {
 	g_thread_return_fiber = fiber;
 	FiberSetCurrentFiber(nullptr);
 
-	_longjmp(g_thread_fiber_jmp.buf, 1);
+	KYTY_FIBER_LONGJMP(g_thread_fiber_jmp.buf, 1);
 }
 
 int32_t KYTY_SYSV_ABI FiberInitialize(FiberObject* fiber, const char* name, FiberEntry entry,
@@ -2819,9 +2830,9 @@ int32_t KYTY_SYSV_ABI FiberRun(FiberObject* fiber, uint64_t arg_on_run, uint64_t
 	fiber->arg_on_return  = 0;
 	g_thread_return_fiber = nullptr;
 
-	if (_setjmp(g_thread_fiber_jmp.buf) == 0) {
+	if (KYTY_FIBER_SETJMP(g_thread_fiber_jmp.buf) == 0) {
 		if (fiber->context_valid) {
-			_longjmp(FiberJmpFor(fiber)->buf, 1);
+			KYTY_FIBER_LONGJMP(FiberJmpFor(fiber)->buf, 1);
 		}
 		FiberStartOnGuestStack(fiber);
 	}
@@ -2880,7 +2891,7 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 	fiber->arg_on_run    = arg_on_run;
 	fiber->arg_on_return = 0;
 
-	const int saved = _setjmp(FiberJmpFor(caller)->buf);
+	const int saved = KYTY_FIBER_SETJMP(FiberJmpFor(caller)->buf);
 	// The guest picks the fiber stack size (Astro's "ThreadToFiber" asks for 2 KB) but our HLE
 	// runs on it too, and uses far more stack than Sony's hand-written switch would. Compare the
 	// just-saved rsp against the fiber's own bounds to see whether we have overrun it.
@@ -2901,7 +2912,7 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 		FiberSetContextValid(caller, true);
 		FiberDeferIdle(caller);
 		if (fiber->context_valid) {
-			_longjmp(FiberJmpFor(fiber)->buf, 1);
+			KYTY_FIBER_LONGJMP(FiberJmpFor(fiber)->buf, 1);
 		}
 		FiberStartOnGuestStack(fiber);
 	}
@@ -2939,11 +2950,11 @@ int32_t KYTY_SYSV_ABI FiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_
 	auto* fiber          = g_current_fiber;
 	fiber->arg_on_return = arg_on_return;
 
-	if (_setjmp(FiberJmpFor(fiber)->buf) == 0) {
+	if (KYTY_FIBER_SETJMP(FiberJmpFor(fiber)->buf) == 0) {
 		FiberSetContextValid(fiber, true);
 		g_thread_return_fiber = fiber;
 		FiberDeferIdle(fiber);
-		_longjmp(g_thread_fiber_jmp.buf, 1);
+		KYTY_FIBER_LONGJMP(g_thread_fiber_jmp.buf, 1);
 	}
 
 	FiberCommitDeferredIdle();

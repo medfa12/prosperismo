@@ -1128,6 +1128,7 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 	// Written as raw bytes rather than formatted text: this runs on the faulting thread from a signal
 	// handler, so anything that allocates can deadlock against a heap lock the interrupted code was
 	// already holding. An earlier std::string version of this did exactly that.
+#if KYTY_PLATFORM != KYTY_PLATFORM_WINDOWS
 	if (const char* dump_path = std::getenv("KYTY_DUMP_IMAGE");
 	    dump_path != nullptr && dump_path[0] != '\0' && info->rsp != 0) {
 		static bool stack_dumped = false;
@@ -1189,6 +1190,7 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			}
 		}
 	}
+#endif
 
 	auto dump_guest_code = [](const char* name, uint64_t addr) {
 		auto* p = Common::Singleton<Loader::RuntimeLinker>::Instance()->FindProgramByAddr(addr);
