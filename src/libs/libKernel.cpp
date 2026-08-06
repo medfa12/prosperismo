@@ -2876,8 +2876,13 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 	// runs on it too, and uses far more stack than Sony's hand-written switch would. Compare the
 	// just-saved rsp against the fiber's own bounds to see whether we have overrun it.
 	if (FiberTraceEnabled()) {
-		LOGF("\t fiber switch: %s -> %s, save_ctx = %d, target_ctx_valid = %d\n",
-	     caller->name, fiber->name, saved, static_cast<int>(fiber->context_valid));
+		// The guest reaches us through its PLT, so our immediate return address is the guest call
+		// site that yielded. For a fiber that never gets resumed, that address is the only way to
+		// find which guest call it is parked in.
+		LOGF("\t fiber switch: %s -> %s, save_ctx = %d, target_ctx_valid = %d, from = 0x%016" PRIx64
+		     "\n",
+		     caller->name, fiber->name, saved, static_cast<int>(fiber->context_valid),
+		     reinterpret_cast<uint64_t>(__builtin_return_address(0)));
 	}
 	if (saved == 0) {
 		FiberSetContextValid(caller, true);
