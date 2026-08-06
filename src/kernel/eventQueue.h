@@ -72,6 +72,10 @@ int KYTY_SYSV_ABI KernelAddUserEventEdge(KernelEqueue eq, int id);
 int KYTY_SYSV_ABI KernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
 int KYTY_SYSV_ABI KernelTriggerUserEventForAll(int id, void* udata);
 int KYTY_SYSV_ABI KernelDeleteUserEvent(KernelEqueue eq, int id);
+int KYTY_SYSV_ABI KernelAddReadEvent(KernelEqueue eq, int fd, size_t size, void* udata);
+int KYTY_SYSV_ABI KernelDeleteReadEvent(KernelEqueue eq, int fd);
+int KYTY_SYSV_ABI KernelAddWriteEvent(KernelEqueue eq, int fd, size_t size, void* udata);
+int KYTY_SYSV_ABI KernelDeleteWriteEvent(KernelEqueue eq, int fd);
 int KYTY_SYSV_ABI KernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts,
                                         void* udata);
 int KYTY_SYSV_ABI KernelDeleteHRTimerEvent(KernelEqueue eq, int id);

@@ -511,6 +511,76 @@ int KYTY_SYSV_ABI KernelDeleteUserEvent(KernelEqueue eq, int id) {
 	return KernelDeleteEvent(eq, static_cast<uintptr_t>(id), KERNEL_EVFILT_USER);
 }
 
+// Read/write readiness events on a file descriptor. Minecraft (PPSA17221) registers these and was
+// hitting an unresolved stub. Our file I/O is synchronous, so a descriptor is always ready the
+// moment it is registered: report it triggered immediately rather than leaving the caller waiting
+// for a readiness edge that our backend will never produce.
+static void FdReadyTriggerFunc(KernelEqueueEvent* event, void* trigger_data) {
+	EXIT_IF(event == nullptr);
+	event->triggered  = true;
+	event->event.data = reinterpret_cast<intptr_t>(trigger_data);
+}
+
+static void FdReadyResetFunc(KernelEqueueEvent* event) {
+	EXIT_IF(event == nullptr);
+	event->triggered = false;
+}
+
+static int KernelAddFdEvent(KernelEqueue eq, int fd, size_t size, void* udata, int16_t filter) {
+	KernelEqueueEvent event {};
+	event.event.ident         = static_cast<uintptr_t>(fd);
+	event.event.filter        = filter;
+	event.event.flags         = EV_ADD;
+	event.event.fflags        = 0;
+	event.event.data          = static_cast<intptr_t>(size);
+	event.event.udata         = udata;
+	event.filter.trigger_func = FdReadyTriggerFunc;
+	event.filter.reset_func   = FdReadyResetFunc;
+
+	const auto result = KernelAddEvent(eq, event);
+	if (result != OK) {
+		return result;
+	}
+
+	// Synchronous backend: the descriptor is ready as soon as it is registered.
+	(void)KernelTriggerEvent(eq, static_cast<uintptr_t>(fd), filter, udata);
+	return OK;
+}
+
+int KYTY_SYSV_ABI KernelAddReadEvent(KernelEqueue eq, int fd, size_t size, void* udata) {
+	PRINT_NAME();
+
+	LOGF("\t read event add: eq = 0x%016" PRIx64 ", fd = %d, size = %zu\n",
+	     static_cast<uint64_t>(eq), fd, size);
+
+	return KernelAddFdEvent(eq, fd, size, udata, KERNEL_EVFILT_READ);
+}
+
+int KYTY_SYSV_ABI KernelDeleteReadEvent(KernelEqueue eq, int fd) {
+	PRINT_NAME();
+
+	LOGF("\t read event delete: eq = 0x%016" PRIx64 ", fd = %d\n", static_cast<uint64_t>(eq), fd);
+
+	return KernelDeleteEvent(eq, static_cast<uintptr_t>(fd), KERNEL_EVFILT_READ);
+}
+
+int KYTY_SYSV_ABI KernelAddWriteEvent(KernelEqueue eq, int fd, size_t size, void* udata) {
+	PRINT_NAME();
+
+	LOGF("\t write event add: eq = 0x%016" PRIx64 ", fd = %d, size = %zu\n",
+	     static_cast<uint64_t>(eq), fd, size);
+
+	return KernelAddFdEvent(eq, fd, size, udata, KERNEL_EVFILT_WRITE);
+}
+
+int KYTY_SYSV_ABI KernelDeleteWriteEvent(KernelEqueue eq, int fd) {
+	PRINT_NAME();
+
+	LOGF("\t write event delete: eq = 0x%016" PRIx64 ", fd = %d\n", static_cast<uint64_t>(eq), fd);
+
+	return KernelDeleteEvent(eq, static_cast<uintptr_t>(fd), KERNEL_EVFILT_WRITE);
+}
+
 int KYTY_SYSV_ABI KernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTimespec* ts,
                                         void* udata) {
 	if (ts == nullptr) {
