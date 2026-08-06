@@ -113,6 +113,9 @@ public enum ShellLightRenderMode
     /// <summary>First-run boot animation.</summary>
     InitialBoot = 71,
 
+    /// <summary>Shutdown.</summary>
+    Shutdown = 72,
+
     /// <summary>Flat black; nothing renders.</summary>
     Black = 78,
 
@@ -188,8 +191,11 @@ public enum ShellGlobalBackgroundState
     /// <summary>Flat black.</summary>
     Black = 1,
 
-    /// <summary>Cold-boot animation, 6 s. Also called BootAnimation.</summary>
+    /// <summary>Cold-boot animation, 6 s.</summary>
     ColdBootAnimation = 2,
+
+    /// <summary>Firmware alias of <see cref="ColdBootAnimation"/>.</summary>
+    BootAnimation = ColdBootAnimation,
 
     /// <summary>Warm-boot animation, 3 s.</summary>
     WarmBootAnimation = 3,
@@ -221,8 +227,14 @@ public enum ShellGlobalBackgroundState
     /// <summary>Shutdown.</summary>
     Shutdown = 12,
 
+    /// <summary>
+    /// Shutdown animation. Absent from 3.00, which is why this enum previously
+    /// skipped it and placed the fade-out one lower.
+    /// </summary>
+    ShutdownAnimation = 13,
+
     /// <summary>Shutdown fade-out, 3 s.</summary>
-    FadeOutShutdownAnimation = 13,
+    FadeOutShutdownAnimation = 14,
 }
 
 /// <summary>
