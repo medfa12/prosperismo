@@ -870,23 +870,39 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			// title's state machines take the machine in rdi and keep the state id in a field far
 			// beyond what a register dump shows, so reading it at entry is the only way to see the
 			// state sequence.
-			static const int64_t peek_offset = [] {
+			// KYTY_BP_PEEK accepts a comma-separated list of hex offsets, so one run can show every
+			// field a predicate reads instead of needing one run per field.
+			struct PeekList {
+				int64_t  off[8] = {};
+				uint32_t count  = 0;
+			};
+			static const PeekList peeks = [] {
+				PeekList    list;
 				const char* v = std::getenv("KYTY_BP_PEEK");
-				return (v != nullptr && v[0] != '\0' ? std::strtoll(v, nullptr, 16) : -1);
+				for (const char* p = v; p != nullptr && *p != '\0' && list.count < 8;) {
+					char*      end = nullptr;
+					const auto off = std::strtoll(p, &end, 16);
+					if (end == p) {
+						break;
+					}
+					list.off[list.count++] = off;
+					p                      = (*end == ',' ? end + 1 : end);
+				}
+				return list;
 			}();
-			uint32_t peeked = 0;
-			bool     has_peek = false;
-			if (peek_offset >= 0 && info->rdi > 0x10000ull && info->rdi < 0x10000000000ull) {
-				::memcpy(&peeked, reinterpret_cast<const void*>(info->rdi + peek_offset),
-				         sizeof(peeked));
-				has_peek = true;
-			}
+			const bool has_peek =
+			    peeks.count > 0 && info->rdi > 0x10000ull && info->rdi < 0x10000000000ull;
 			printf("guest-bp hit 0x%016" PRIx64 " ret=%016" PRIx64 " rdi=%016" PRIx64
 			       " rsi=%016" PRIx64 " rdx=%016" PRIx64 " rcx=%016" PRIx64 " rbx=%016" PRIx64,
 			       info->exception_address, ret_addr, info->rdi, info->rsi, info->rdx, info->rcx,
 			       info->rbx);
 			if (has_peek) {
-				printf(" peek[+0x%llx]=%u", static_cast<unsigned long long>(peek_offset), peeked);
+				for (uint32_t p = 0; p < peeks.count; p++) {
+					uint32_t value = 0;
+					::memcpy(&value, reinterpret_cast<const void*>(info->rdi + peeks.off[p]),
+					         sizeof(value));
+					printf(" [+0x%llx]=%u", static_cast<unsigned long long>(peeks.off[p]), value);
+				}
 			}
 			printf("\n");
 			fflush(stdout);
