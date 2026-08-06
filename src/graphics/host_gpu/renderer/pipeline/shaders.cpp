@@ -685,7 +685,7 @@ void CreatePipelineInternal(
 	viewport.maxDepth = static_params.viewport_scale[2] + static_params.viewport_offset[2];
 
 	vk::Rect2D scissor {};
-	scissor.offset = {static_params.scissor_ltrb[0], static_params.scissor_ltrb[1]};
+	scissor.offset = vk::Offset2D{static_params.scissor_ltrb[0], static_params.scissor_ltrb[1]};
 	scissor.extent = vk::Extent2D{
 	    static_cast<uint32_t>(static_params.scissor_ltrb[2] - static_params.scissor_ltrb[0]),
 	    static_cast<uint32_t>(static_params.scissor_ltrb[3] - static_params.scissor_ltrb[1])};

@@ -323,7 +323,7 @@ static PipelineDynamicParameters BuildGraphicsDynamicParams(const RenderCommandB
 	if (color_count > 0 && colors[0].image_id) {
 		framebuffer_extent = colors[0].extent;
 	} else if (depth.image_id) {
-		framebuffer_extent = {depth.width, depth.height};
+		framebuffer_extent = vk::Extent2D{depth.width, depth.height};
 	}
 
 	const auto final_scissor = calc_final_scissor(vp, ctx.GetScanModeControl(), framebuffer_extent);
@@ -367,7 +367,7 @@ static void SetDynamicParams(const RenderCommandBuffer& buffer, vk::CommandBuffe
 	vk_buffer.setViewport(0, 1, &viewport);
 
 	vk::Rect2D scissor {};
-	scissor.offset = {dynamic_params.scissor_ltrb[0], dynamic_params.scissor_ltrb[1]};
+	scissor.offset = vk::Offset2D{dynamic_params.scissor_ltrb[0], dynamic_params.scissor_ltrb[1]};
 	scissor.extent = vk::Extent2D{
 	    static_cast<uint32_t>(dynamic_params.scissor_ltrb[2] - dynamic_params.scissor_ltrb[0]),
 	    static_cast<uint32_t>(dynamic_params.scissor_ltrb[3] - dynamic_params.scissor_ltrb[1])};
