@@ -151,3 +151,60 @@ starting from the one anchor that is verified: the driver at `0xE2700`, whose
 
 That anchor is solid and re-derivable. The scripted approach that found it is
 not sufficient to finish from it.
+
+## Ghidra: installed, and what it did and did not settle
+
+Ghidra 12.1.2 (homebrew-core, with OpenJDK 21) now analyses the 12.40 eboot.
+Scripts live in [`tools/shell-recovery/ghidra/`](../../tools/shell-recovery/ghidra/).
+Headless invocation, with `JAVA_HOME` set because `openjdk@21` is keg-only:
+
+```
+JAVA_HOME=/opt/homebrew/opt/openjdk@21 \
+/opt/homebrew/Cellar/ghidra/12.1.2/libexec/support/analyzeHeadless \
+  <project-dir> ebootproj -process NPXS40087-eboot.bin -noanalysis \
+  -scriptPath tools/shell-recovery/ghidra -postScript <Script>.java
+```
+
+Full analysis of the 21 MB image takes roughly 20 minutes; re-running a script
+against the saved project is seconds.
+
+### What the decompiler confirmed
+
+`FindParticleResources.java` follows `simulateParticles`' arguments backwards
+through real data flow. It independently reproduces the driver's shape —
+`INT_ADD(RDI, 0x5a0)` for the singleton base, phi nodes across the eight-system
+loop — which corroborates the map above from a second, type-aware tool.
+
+### What it did not settle
+
+The trace **stalls at the loads**. Ghidra reports the ctx as `unaff_RDI`, having
+not recovered the function signature, and the systems arrive from memory reads
+whose defining stores are elsewhere in the program. Following them is a
+whole-program store-to-load problem, not a local one.
+
+Two structural searches were then run and both came back negative:
+
+- `FindResourcesCsCtor.java` looks for the shape of a field-by-field
+  constructor: many distinct float literals stored into offsets below `0xF8` of
+  one base. Across every function in the image this yields **two** candidates,
+  `FUN_000bf7c0` and `FUN_0009b5e0`, whose constants (`0.0001`, `0.9999`,
+  `0.00333`; `1080`, `0.342`, `0.75`) are interpolation and viewport values.
+  Neither is a particle block.
+- A `.rodata` sweep for a `0xF8` template that could be copied wholesale —
+  the hypothesis that the block is memcpy'd rather than assigned field by field.
+  95 non-overlapping candidates survive a plausibility filter, and inspection
+  shows they are monotonic ramp tables and generic constant pools.
+
+So the constants are not a field-by-field constructor in the text, and not an
+obvious contiguous template in `.rodata`. The remaining likelihood is that they
+are assembled from several smaller groups, or written through a vtable-dispatched
+initialiser that neither search models.
+
+### Honest status
+
+Ghidra removes the tool limitation that stopped the previous attempt, and it
+corroborated the map. It has **not** produced the constants. The next attempt
+should use Ghidra interactively — define the ctx structure at `0xE2700`, let the
+decompiler propagate the type, and read the initialiser off the resulting
+class — rather than another scripted pattern search, which has now failed five
+times in five different shapes.
