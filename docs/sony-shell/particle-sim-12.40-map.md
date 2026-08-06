@@ -117,3 +117,37 @@ object's slots at `+0x1A0..+0x1D8` (the eight-system array) are populated. The
 clears at `0xEFEE3` and `0xF6550` write zero into a `+0x1a0` field and are
 candidates for being in the owning class, but this has not been confirmed
 either, and confirming it means checking the base register, not the offset.
+
+## Third collision, and what it says about the method
+
+`0xEF8ED` fills `[rbx + 0x1a0]`, `+0x1a8`, `+0x1c0`, `+0x1c8` — the same offsets
+as the eight-system array — and is **also not it**. Each registration passes a
+name string, and reading them settles it:
+
+| Slot | Size | Name |
+|---|---|---|
+| `+0x1a0` | `0x28` | `TransRippleCb` |
+| `+0x1b0` | `0x18` | `TransSlideInCb` |
+| `+0x1c0` | `0x10` | `TransSplashCb` |
+| `+0x1c8` | `0x59` | `TransDefaultCb` |
+
+These are background **transition** constant buffers. The object is the
+transition state, not the particle context.
+
+### The method is the problem
+
+Three candidate sites were found by matching a struct offset (`0x5e0` twice,
+`0x1a0` once) and all three belonged to unrelated objects that happen to have a
+field at that offset. In a 13 MB C++ binary with many similarly-shaped classes,
+offsets like `0x1a0` and `0x5e0` collide constantly, and a scripted
+disassembler pass has no type information with which to tell the objects apart.
+
+Continuing to grep by offset will keep producing false positives. What the
+remaining work needs is **type-aware analysis** — recovering the context class's
+layout and vtable in a tool that tracks structures across calls (Ghidra or IDA),
+starting from the one anchor that is verified: the driver at `0xE2700`, whose
+`ctx` arrives as its own `rdi` and whose fields at `+0x6e8`, `+0x708`, `+0x70c`,
+`+0x710`, `+0x721` and `+0x98` are all confirmed by use.
+
+That anchor is solid and re-derivable. The scripted approach that found it is
+not sufficient to finish from it.
