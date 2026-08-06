@@ -184,7 +184,23 @@ static uint64_t KernelGetInitialTsc() {
 static uint64_t KernelGetElapsedTsc() {
 	const auto initial_tsc = KernelGetInitialTsc();
 	const auto current_tsc = KernelReadTscNative();
-	return current_tsc >= initial_tsc ? current_tsc - initial_tsc : 0;
+	const auto elapsed     = (current_tsc >= initial_tsc ? current_tsc - initial_tsc : 0);
+
+	// KYTY_TIME_SCALE=<n> makes the guest perceive wall-clock time passing n times slower. This is a
+	// DIAGNOSTIC, not a fix: we run this title one to two orders of magnitude slower than hardware,
+	// so any guest logic that gives up after a wall-clock deadline fires here when it never would on
+	// a console. If scaling time lets boot progress, the blocker is a deadline rather than a missing
+	// event, and that distinction is not otherwise observable.
+	static const uint64_t scale = [] {
+		const char* v = std::getenv("KYTY_TIME_SCALE");
+		if (v == nullptr || v[0] == '\0') {
+			return uint64_t {1};
+		}
+		const auto parsed = std::strtoull(v, nullptr, 10);
+		return parsed == 0 ? uint64_t {1} : parsed;
+	}();
+
+	return scale == 1 ? elapsed : elapsed / scale;
 }
 
 static uint64_t KernelGetProcessTimeUsNative() {
