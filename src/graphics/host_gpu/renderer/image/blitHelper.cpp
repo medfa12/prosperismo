@@ -195,7 +195,7 @@ void BlitHelper::ReinterpretColorAsMsDepth(Image& source, Image& destination) {
 
 	vk::RenderingInfo rendering {};
 	rendering.sType             = vk::StructureType::eRenderingInfo;
-	rendering.renderArea.extent = {destination_info.extent.width, destination_info.extent.height};
+	rendering.renderArea.extent = vk::Extent2D{destination_info.extent.width, destination_info.extent.height};
 	rendering.layerCount        = 1;
 	rendering.pDepthAttachment  = &depth_attachment;
 	command.beginRendering(&rendering);

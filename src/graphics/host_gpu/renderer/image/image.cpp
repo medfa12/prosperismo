@@ -343,18 +343,18 @@ void Image::CopyImage(Image& source) {
 		copy.dstSubresource = {destination_aspect, level, 0, 1};
 		if (source.backing.image_type == backing.image_type) {
 			if (source.backing.image_type == vk::ImageType::e3D) {
-				copy.extent = {width, height, depth};
+				copy.extent = vk::Extent3D{width, height, depth};
 			} else {
 				copy.srcSubresource.layerCount = std::min(source_layers, destination_layers);
 				copy.dstSubresource.layerCount = copy.srcSubresource.layerCount;
-				copy.extent                    = {width, height, 1};
+				copy.extent                    = vk::Extent3D{width, height, 1};
 			}
 		} else if (source.backing.image_type == vk::ImageType::e2D) {
 			copy.srcSubresource.layerCount = source_layers;
-			copy.extent                    = {width, height, source_layers};
+			copy.extent                    = vk::Extent3D{width, height, source_layers};
 		} else {
 			copy.dstSubresource.layerCount = destination_layers;
-			copy.extent                    = {width, height, destination_layers};
+			copy.extent                    = vk::Extent3D{width, height, destination_layers};
 		}
 		copies.push_back(copy);
 	}
@@ -505,7 +505,7 @@ void Image::CopyImageWithBuffer(Image& source, Buffer& buffer) {
 				                                     source.backing.image_type == vk::ImageType::e3D
 				                                         ? static_cast<int32_t>(slice)
 				                                         : 0};
-				source_copy.imageExtent           = {width, copy_height, 1};
+				source_copy.imageExtent           = vk::Extent3D{width, copy_height, 1};
 				auto destination_copy             = source_copy;
 				destination_copy.imageSubresource = {
 				    destination_aspect, level,
@@ -552,7 +552,7 @@ void Image::CopyMip(Image& source, uint32_t mip, uint32_t layer) {
 		auto& copy          = copies[copy_count++];
 		copy.srcSubresource = {aspect, 0, 0, source_layers};
 		copy.dstSubresource = {aspect, mip, layer, destination_layers};
-		copy.extent         = {width, height, depth};
+		copy.extent         = vk::Extent3D{width, height, depth};
 	}
 	auto command = m_scheduler->Current().Handle();
 	Transit(vk::ImageLayout::eTransferDstOptimal, vk::AccessFlagBits2::eTransferWrite, {}, command);

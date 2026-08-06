@@ -686,7 +686,7 @@ void CreatePipelineInternal(
 
 	vk::Rect2D scissor {};
 	scissor.offset = {static_params.scissor_ltrb[0], static_params.scissor_ltrb[1]};
-	scissor.extent = {
+	scissor.extent = vk::Extent2D{
 	    static_cast<uint32_t>(static_params.scissor_ltrb[2] - static_params.scissor_ltrb[0]),
 	    static_cast<uint32_t>(static_params.scissor_ltrb[3] - static_params.scissor_ltrb[1])};
 

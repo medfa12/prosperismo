@@ -368,7 +368,7 @@ static void SetDynamicParams(const RenderCommandBuffer& buffer, vk::CommandBuffe
 
 	vk::Rect2D scissor {};
 	scissor.offset = {dynamic_params.scissor_ltrb[0], dynamic_params.scissor_ltrb[1]};
-	scissor.extent = {
+	scissor.extent = vk::Extent2D{
 	    static_cast<uint32_t>(dynamic_params.scissor_ltrb[2] - dynamic_params.scissor_ltrb[0]),
 	    static_cast<uint32_t>(dynamic_params.scissor_ltrb[3] - dynamic_params.scissor_ltrb[1])};
 	vk_buffer.setScissor(0, 1, &scissor);
