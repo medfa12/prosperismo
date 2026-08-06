@@ -497,7 +497,7 @@ void Swapchain::Create() {
 		view.image                           = m_images[i];
 		view.viewType                        = vk::ImageViewType::e2D;
 		view.format                          = m_format;
-		view.components                      = {};
+		view.components                      = vk::ComponentMapping{};
 		view.subresourceRange.aspectMask     = vk::ImageAspectFlagBits::eColor;
 		view.subresourceRange.baseArrayLayer = 0;
 		view.subresourceRange.baseMipLevel   = 0;
@@ -561,7 +561,7 @@ void Swapchain::Destroy() {
 
 	m_handle      = nullptr;
 	m_format      = vk::Format::eUndefined;
-	m_extent      = {};
+	m_extent      = vk::Extent2D{};
 	m_image_index = static_cast<uint32_t>(-1);
 	m_frame_index = 0;
 	m_images.clear();

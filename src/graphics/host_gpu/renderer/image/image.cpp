@@ -501,10 +501,10 @@ void Image::CopyImageWithBuffer(Image& source, Buffer& buffer) {
 				source_copy.imageSubresource = {
 				    source_aspect, level,
 				    source.backing.image_type == vk::ImageType::e3D ? 0u : slice, 1};
-				source_copy.imageOffset           = {0, static_cast<int32_t>(y),
-				                                     source.backing.image_type == vk::ImageType::e3D
-				                                         ? static_cast<int32_t>(slice)
-				                                         : 0};
+				source_copy.imageOffset           = vk::Offset3D{
+                    0, static_cast<int32_t>(y),
+                    source.backing.image_type == vk::ImageType::e3D ? static_cast<int32_t>(slice)
+                                                                    : 0};
 				source_copy.imageExtent           = vk::Extent3D{width, copy_height, 1};
 				auto destination_copy             = source_copy;
 				destination_copy.imageSubresource = {
