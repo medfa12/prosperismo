@@ -54,6 +54,7 @@ private:
 	Status          m_status          = Status::Set;
 	int             m_waiting_threads = 0;
 	std::string     m_name;
+	bool            m_reported_long_wait = false;
 	bool            m_single_thread = false;
 	uint64_t        m_bits          = 0;
 	int             m_open_references = 1;
@@ -157,7 +158,22 @@ KernelEventFlagPrivate::Result KernelEventFlagPrivate::Wait(uint64_t bits, WaitM
 		m_waiting_threads++;
 
 		if (infinitely) {
-			m_cond_var.Wait(&m_mutex);
+			// Sliced rather than a bare Wait so an indefinite wait can report itself. The predicate
+			// is re-tested by the enclosing loop either way, so this is semantically identical - but
+			// a flag whose bits are never set is otherwise completely silent, and that is exactly
+			// the shape of a stalled boot.
+			constexpr uint32_t WAIT_SLICE_MICROS  = 1000000;
+			constexpr double   REPORT_AFTER_SECS  = 5.0;
+			m_cond_var.WaitFor(&m_mutex, WAIT_SLICE_MICROS);
+			if (!m_reported_long_wait && t.GetTimeS() > REPORT_AFTER_SECS) {
+				m_reported_long_wait = true;
+				printf("eventflag: \"%s\" waited %.1fs unsatisfied, want=0x%016llx mode=%s "
+				       "have=0x%016llx\n",
+				       m_name.c_str(), t.GetTimeS(), static_cast<unsigned long long>(bits),
+				       wait_mode == WaitMode::And ? "AND" : "OR",
+				       static_cast<unsigned long long>(m_bits));
+				fflush(stdout);
+			}
 		} else {
 			m_cond_var.WaitFor(&m_mutex, micros - elapsed);
 		}
