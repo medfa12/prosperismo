@@ -399,6 +399,20 @@ bool Audio::QueueSdlAudio(PortOut* port, const void* data, bool blocking) {
 		}
 	}
 
+	// Report actual audio reaching the host device once, so "is there sound?" is answerable
+	// without guessing from HLE call counts.
+	{
+		static uint64_t queued_total = 0;
+		static bool     announced    = false;
+		queued_total += queue_size;
+		if (!announced && queued_total > 0) {
+			announced = true;
+			printf("AudioOut: first %u bytes queued to the host device (audio IS reaching SDL)\n",
+			       static_cast<unsigned>(queue_size));
+			fflush(stdout);
+		}
+	}
+
 	if (SDL_QueueAudio(port->audio_device, queue_data, queue_size) < 0) {
 		LOGF("AudioOut: SDL_QueueAudio failed: %s\n", SDL_GetError());
 		return false;
