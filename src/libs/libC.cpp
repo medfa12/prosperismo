@@ -919,7 +919,35 @@ namespace LibCStr {
 static KYTY_SYSV_ABI char*  strcpy_(char* d, const char* s2) { return ::strcpy(d, s2); }
 static KYTY_SYSV_ABI char*  strncat_(char* d, const char* s2, size_t n) { return ::strncat(d, s2, n); }
 static KYTY_SYSV_ABI size_t strnlen_(const char* s2, size_t n) { return ::strnlen(s2, n); }
-static KYTY_SYSV_ABI char*  strnstr_(const char* h, const char* n, size_t len) { return ::strnstr(h, n, len); }
+// strnstr is a BSD extension present on Darwin but not in the MinGW runtime. Provide the same
+// behaviour there: locate the first occurrence of the needle within at most len bytes of the
+// haystack, never reading past that bound, and treat an empty needle as matching at position 0.
+#if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
+static const char* KytyStrnstr(const char* haystack, const char* needle, size_t len) {
+	const auto needle_len = ::strnlen(needle, len);
+	if (needle_len == 0) {
+		return haystack;
+	}
+	if (needle_len > len) {
+		return nullptr;
+	}
+	for (size_t i = 0; i + needle_len <= len; i++) {
+		if (haystack[i] == '\0') {
+			return nullptr;
+		}
+		if (::strncmp(haystack + i, needle, needle_len) == 0) {
+			return haystack + i;
+		}
+	}
+	return nullptr;
+}
+#else
+static const char* KytyStrnstr(const char* haystack, const char* needle, size_t len) {
+	return ::strnstr(haystack, needle, len);
+}
+#endif
+
+static KYTY_SYSV_ABI char*  strnstr_(const char* h, const char* n, size_t len) { return const_cast<char*>(KytyStrnstr(h, n, len)); }
 static KYTY_SYSV_ABI char*  strtok_(char* s2, const char* d) { return ::strtok(s2, d); }
 static KYTY_SYSV_ABI char*  strerror_(int e) { return ::strerror(e); }
 static KYTY_SYSV_ABI void*  memchr_(const void* s2, int c, size_t n) { return const_cast<void*>(::memchr(s2, c, n)); }
