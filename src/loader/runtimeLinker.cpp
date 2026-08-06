@@ -395,13 +395,20 @@ static void InstallGuestBreakpoints() {
 			printf("guest-bp: cannot make 0x%016llx writable\n", static_cast<unsigned long long>(addr));
 			continue;
 		}
-		if (*code != 0x55) {
-			printf("guest-bp: 0x%016llx does not start with push rbp (found 0x%02x), skipped\n",
-			       static_cast<unsigned long long>(addr), static_cast<unsigned>(*code));
+		// Two entry forms are supported, because both are trivial to perform on the way out and
+		// between them they cover ordinary functions and the jump-table dispatchers worth watching:
+		//   55                  push rbp
+		//   8b 87 <disp32>      mov eax, [rdi+disp32]   (a state-machine dispatcher reading its
+		//                                                state field - the value is logged)
+		const bool push_rbp = (code[0] == 0x55);
+		const bool load_eax = (code[0] == 0x8b && code[1] == 0x87);
+		if (!push_rbp && !load_eax) {
+			printf("guest-bp: 0x%016llx has an unsupported entry form (found 0x%02x), skipped\n",
+			       static_cast<unsigned long long>(addr), static_cast<unsigned>(code[0]));
 			continue;
 		}
 
-		g_guest_breakpoints[g_guest_breakpoint_count++] = {addr, *code};
+		g_guest_breakpoints[g_guest_breakpoint_count++] = {addr, code[0]};
 		*code                                           = GUEST_TRAP_OPCODE;
 		printf("guest-bp: armed 0x%016llx\n", static_cast<unsigned long long>(addr));
 	}
@@ -856,18 +863,51 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			if (info->rsp != 0) {
 				::memcpy(&ret_addr, reinterpret_cast<const void*>(info->rsp), sizeof(ret_addr));
 			}
+			// KYTY_BP_PEEK=<hex offset> also reports the dword at rdi+offset. Handlers of this
+			// title's state machines take the machine in rdi and keep the state id in a field far
+			// beyond what a register dump shows, so reading it at entry is the only way to see the
+			// state sequence.
+			static const int64_t peek_offset = [] {
+				const char* v = std::getenv("KYTY_BP_PEEK");
+				return (v != nullptr && v[0] != '\0' ? std::strtoll(v, nullptr, 16) : -1);
+			}();
+			uint32_t peeked = 0;
+			bool     has_peek = false;
+			if (peek_offset >= 0 && info->rdi > 0x10000ull && info->rdi < 0x10000000000ull) {
+				::memcpy(&peeked, reinterpret_cast<const void*>(info->rdi + peek_offset),
+				         sizeof(peeked));
+				has_peek = true;
+			}
 			printf("guest-bp hit 0x%016" PRIx64 " ret=%016" PRIx64 " rdi=%016" PRIx64
-			       " rsi=%016" PRIx64 " rdx=%016" PRIx64 " rcx=%016" PRIx64 " rbx=%016" PRIx64 "\n",
+			       " rsi=%016" PRIx64 " rdx=%016" PRIx64 " rcx=%016" PRIx64 " rbx=%016" PRIx64,
 			       info->exception_address, ret_addr, info->rdi, info->rsi, info->rdx, info->rcx,
 			       info->rbx);
+			if (has_peek) {
+				printf(" peek[+0x%llx]=%u", static_cast<unsigned long long>(peek_offset), peeked);
+			}
+			printf("\n");
 			fflush(stdout);
 #if defined(__APPLE__)
-			// Resume by performing the `push rbp` the trap byte displaced, then stepping over it.
-			auto* uc  = static_cast<ucontext_t*>(info->native_context);
-			auto& ss   = uc->uc_mcontext->__ss;
-			ss.__rsp -= sizeof(uint64_t);
-			*reinterpret_cast<uint64_t*>(ss.__rsp) = ss.__rbp;
-			ss.__rip                               = info->exception_address + 1;
+			// Resume by performing whatever the trap byte displaced, then stepping over it.
+			auto* uc = static_cast<ucontext_t*>(info->native_context);
+			auto& ss = uc->uc_mcontext->__ss;
+			if (g_guest_breakpoints[i].original == 0x55) {
+				ss.__rsp -= sizeof(uint64_t);
+				*reinterpret_cast<uint64_t*>(ss.__rsp) = ss.__rbp;
+				ss.__rip                               = info->exception_address + 1;
+			} else {
+				// mov eax, [rdi+disp32]: the displaced byte is the 0x8b, so the disp32 still sits at
+				// +2. Perform the load and report it - for a dispatcher this is the state id.
+				int32_t disp = 0;
+				::memcpy(&disp, reinterpret_cast<const void*>(info->exception_address + 2),
+				         sizeof(disp));
+				uint32_t value = 0;
+				::memcpy(&value, reinterpret_cast<const void*>(info->rdi + disp), sizeof(value));
+				ss.__rax = value;
+				ss.__rip = info->exception_address + 6;
+				printf("guest-bp   state [rdi+0x%x] = %u\n", disp, value);
+				fflush(stdout);
+			}
 			return true;
 #endif
 		}
