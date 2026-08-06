@@ -77,9 +77,23 @@ Frame count alone suggested the longest animation (3.10 s) would be
 the 1.40 s clip, and `Ripple_Entry` is longer than both at 2.00 s. Worth
 recording as a concrete case where the plausible-looking inference was wrong.
 
-## What these are NOT
+## What these are
 
-**They are not confirmed to be home-shell assets.** Three points against it:
+**The boot screen's PS-button ripple.** Identified by the project owner from the
+console itself: these form around the PlayStation button icon on the boot
+screen. That reading fits the asset shapes — `Agent_Core` / `Agent_Glow` /
+`Agent_Gold` are the logo's layers, and the `Ripple_*` clips are the rings
+emanating from it, with `Ripple_Base` a static plate beneath.
+
+**They are not the animated background.** The room with light shafts is a
+separate subsystem entirely; see
+[`background-is-a-3d-scene.md`](background-is-a-3d-scene.md). Anyone arriving
+here looking for the ambient background should start there instead.
+
+## Why the binary evidence pointed elsewhere
+
+The static analysis below did *not* reach the boot-screen conclusion, and it is
+worth recording why, because the same trap will recur. Three points against it:
 
 - None of the ten names appears in `NPXS40087/eboot.bin`, `BGLayer.dll.sprx` or
   `Sce.PlayStation.PUI_UI3.rco` at any firmware version on disk.
@@ -92,13 +106,12 @@ recording as a concrete case where the plausible-looking inference was wrong.
   ripple block and the certificate strings could belong to different resources
   that the carve merged.
 
-Calling these "PS5 shell ripple animations" was an over-claim. What is
-established is that they are genuine firmware assets with a self-declared state
-machine; **which subsystem drives them is not.**
-
-`Agent_*` alongside `Ripple_Agent`, `Ripple_Loud` and `Ripple_Medium` suggests
-something audio-reactive with an "agent" concept, but that is inference from
-naming and is not evidence.
+Every one of those observations is accurate, and the conclusion drawn from them
+- that the owning subsystem was unknown - was still less useful than one look at
+the running console. The boot screen is drawn before the shell's own binaries
+are the ones running, which is consistent with the names being absent from
+`NPXS40087`. Symbol absence bounds where something is *not* referenced; it does
+not identify what draws it.
 
 ## Before building on this
 
