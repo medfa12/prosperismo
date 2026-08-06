@@ -625,6 +625,7 @@ public:
 		stopped = false;
 		paused  = false;
 		eof     = false;
+		read_failures = 0;
 		if (!video_id && !audio_id) {
 			AutoEnable();
 		}
@@ -947,7 +948,8 @@ private:
 		                                      fmt->streams[sid]->time_base)
 		                       : static_cast<int64_t>(ms) * 1000;
 		avformat_seek_file(fmt, sid, INT64_MIN, ts, INT64_MAX, 0);
-		eof = false;
+		eof           = false;
+		read_failures = 0;
 		if (video_ctx != nullptr) {
 			avcodec_flush_buffers(video_ctx);
 		}
@@ -983,9 +985,25 @@ private:
 						start_time_ms = 0;
 						continue;
 					}
+					// Only a real end of stream ends the source. Every negative return used to set
+					// eof, which is wrong for transient failures: these reads go through our
+					// AVIOContext callbacks, which perform guest file I/O, so one hiccup there
+					// permanently marked the source finished, Active() began reporting false, and
+					// the title stopped playback early. A bounded retry keeps a genuinely broken
+					// stream from spinning forever.
+					if (rc != AVERROR_EOF) {
+						if (++read_failures < MAX_CONSECUTIVE_READ_FAILURES) {
+							continue;
+						}
+						printf("AvPlayer: giving up after %d consecutive av_read_frame failures, "
+						       "last rc=%d (%s)\n",
+						       read_failures, rc, fferr(rc).c_str());
+						fflush(stdout);
+					}
 					eof = true;
 					return false;
 				}
+				read_failures = 0;
 				if (video_id && p->stream_index == video_id.value() && wanted != p->stream_index) {
 					video_packets.Push(p);
 					continue;
@@ -1350,6 +1368,8 @@ private:
 	mutable std::mutex                       mutex;
 	bool                                     stopped                  = true;
 	bool                                     paused                   = false;
+	static constexpr int                     MAX_CONSECUTIVE_READ_FAILURES = 8;
+	int                                      read_failures                 = 0;
 	bool                                     eof                      = true;
 	bool                                     seek_video_frame_pending = false;
 	bool                                     loop                     = false;
