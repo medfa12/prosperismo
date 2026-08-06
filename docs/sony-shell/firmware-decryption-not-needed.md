@@ -78,3 +78,39 @@ And per [`background-is-a-3d-scene.md`](background-is-a-3d-scene.md), if the
 geometry is constructed in code, those four files are textures over geometry we
 can already recover — which makes the outstanding gap cosmetic rather than
 structural.
+
+## Addendum: the 3.00 recovery PUP, tested
+
+`300REC.7z` unpacks to `PS5UPDATE1.PUP.dec` (902 MB) and `PS5UPDATE2.PUP.dec`
+(147 MB). Both carry the PS5 PUP magic `0xEEF51454`. The `.dec` suffix is
+misleading: only the outer container is clear.
+
+Measured on the payload:
+
+| Test | Result | Meaning |
+|---|---|---|
+| Entropy, 4 KB windows, whole file | 99.956% above 7.0 | encrypted |
+| Plaintext regions | 74 regions, **393 KB of 902 MB** | header + entry table + padding only |
+| Literal search (`vsh_asset`, `.gnf`, `PlayStation`) | **0 hits** | no filenames survive |
+| 16 B block duplicates | 3,087 / 4,194,304 (0.07%), all zero-padding in the clear regions | not ECB — no plaintext structure leaks |
+| Repeating-key XOR, strides 16/256/512/4096, n=65536 each | max byte freq 0.45–0.46% vs 0.391% random | **flat — not XOR** |
+
+The only readable content is the PUP header at `0x0` and an entry table at
+`0xC42000` holding device IDs (`C0050001`, `C0050002`, `C0050100`, `C0058100`).
+
+### Why a known-plaintext pair does not help here
+
+The idea — supply matching encrypted and decrypted copies of content we already
+hold, and solve for the key — is valid against XOR and stream ciphers, where
+`keystream = C ⊕ P` falls out immediately. The stride test above rules that out:
+byte frequencies are flat at every period tested, so there is no repeating
+keystream to recover.
+
+What remains is an AES-class block cipher in a chaining or tweaked mode (no
+block reuse across 4.2 M blocks). Resistance to known-plaintext attack is the
+defining property of such a cipher; the best published attack on full AES-128 is
+~2^126, which is brute force with extra steps. Pairs give no advantage.
+
+This is therefore not a matter of finding the right key list. Offline PUP
+decryption is not available at any firmware version, which is why the scene
+obtains content by running a payload on a jailbroken console instead.
