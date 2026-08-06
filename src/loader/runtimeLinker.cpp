@@ -404,7 +404,8 @@ static void InstallGuestBreakpoints() {
 		const bool load_eax = (code[0] == 0x8b && code[1] == 0x87);
 		const bool cmp_rdi  = (code[0] == 0x83 && code[1] == 0xbf);
 		const bool cmp_rdib = (code[0] == 0x80 && code[1] == 0xbf);
-		if (!push_rbp && !load_eax && !cmp_rdi && !cmp_rdib) {
+		const bool call_ind = (code[0] == 0xff && code[1] == 0x90);
+		if (!push_rbp && !load_eax && !cmp_rdi && !cmp_rdib && !call_ind) {
 			printf("guest-bp: 0x%016llx has an unsupported entry form (found 0x%02x), skipped\n",
 			       static_cast<unsigned long long>(addr), static_cast<unsigned>(code[0]));
 			continue;
@@ -893,7 +894,22 @@ static bool KytyExceptionHandler(const Common::HostException::ExceptionInfo& exc
 			// Resume by performing whatever the trap byte displaced, then stepping over it.
 			auto* uc = static_cast<ucontext_t*>(info->native_context);
 			auto& ss = uc->uc_mcontext->__ss;
-			if (g_guest_breakpoints[i].original == 0x83 ||
+			if (g_guest_breakpoints[i].original == 0xff) {
+				// call qword ptr [rax+disp32] (ff 90 <disp32>). Trapping the call site itself is the
+				// only way to see an indirect target: perform the call by pushing the return address
+				// and jumping to it, and report the resolved callee.
+				int32_t disp = 0;
+				::memcpy(&disp, reinterpret_cast<const void*>(info->exception_address + 2),
+				         sizeof(disp));
+				uint64_t target = 0;
+				::memcpy(&target, reinterpret_cast<const void*>(info->rax + disp), sizeof(target));
+				ss.__rsp -= sizeof(uint64_t);
+				*reinterpret_cast<uint64_t*>(ss.__rsp) = info->exception_address + 6;
+				ss.__rip                               = target;
+				printf("guest-bp   indirect call [rax+0x%x] -> 0x%016llx\n", disp,
+				       static_cast<unsigned long long>(target));
+				fflush(stdout);
+			} else if (g_guest_breakpoints[i].original == 0x83 ||
 			    g_guest_breakpoints[i].original == 0x80) {
 				const bool byte_form = (g_guest_breakpoints[i].original == 0x80);
 				// cmp dword ptr [rdi+disp32], imm8 (83 bf <disp32> <imm8>). The displaced byte is
