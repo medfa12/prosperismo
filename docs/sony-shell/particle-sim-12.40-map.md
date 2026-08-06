@@ -73,3 +73,47 @@ repeated:
 
 The next step is to follow `r12` at `0xF8F24` and `rbx` at `0xF9DC6` back to
 their definitions rather than scanning by pattern.
+
+## Ruled out: the `+0x5E0` store at `0xF8F24` is not the particle system
+
+The registration sites named above were followed and **do not lead to the
+particle constants**. Recorded so the path is not walked again.
+
+`0xF8F24` stores into `[r12 + 0x5e0]` after allocating `0x28` bytes — 40, not
+the `0xF8` a `ResourcesCs` needs. That was the first sign the identification was
+wrong. Following it further:
+
+```
+0xF8EF0   mov  edi, 0x28        ; allocate 40 bytes
+0xF8EF5   call 0xCFDD80         ; operator new
+0xF8EFD   call 0x150EA0         ; -> returns global [0x1380CC0]
+0xF8F05   call 0x150EC0         ; -> returns global [0x1380CC8]
+0xF8F1F   call 0x14E390         ; construct
+0xF8F24   mov  [r12 + 0x5e0], rbx
+```
+
+`0x14E390` is a **span constructor**, not a particle constructor: it zeroes
+`[rdi..rdi+0x18]` then writes `[rdi+0x18] = start` and `[rdi+0x20] = start+size`.
+A begin/end pair.
+
+The two globals it spans are written by `0x14FF10`, which reads `0x1380CB0` /
+`0x1380CB8`, calls `0xCFF680` and `0xCFF690` for a base and a size, then passes
+them to `0xD00700` alongside the constants `0x2000000` (32 MB) and `0x3FFFFFF`
+(64 MB). That is **direct-memory pool setup for the GPU allocator**, and the
+object at `+0x5E0` is an allocator handle over that pool.
+
+### Why the identification was wrong
+
+The driver at `0xE2700` reads its singletons from `ctx + inst*80 + 0x5E0`, where
+`ctx` is its own first argument. The store at `0xF8F24` uses `r12`, which is a
+**different object** that merely has a field at the same offset. The two were
+matched on the constant `0x5e0` alone.
+
+### The correct next step
+
+Do not search by offset constant. Start from the driver's `ctx` — the value in
+`rdi` at `0xE2700`, reached from its caller at `0xE3177` — and find where *that*
+object's slots at `+0x1A0..+0x1D8` (the eight-system array) are populated. The
+clears at `0xEFEE3` and `0xF6550` write zero into a `+0x1a0` field and are
+candidates for being in the owning class, but this has not been confirmed
+either, and confirming it means checking the base register, not the offset.
