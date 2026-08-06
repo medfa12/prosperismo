@@ -2860,6 +2860,15 @@ int32_t KYTY_SYSV_ABI FiberSwitch(FiberObject* fiber, uint64_t arg_on_run,
 		if (FiberRepairStaleRunningOnThisThread(fiber, observed_state)) {
 			continue;
 		}
+		// Loud, not just LOGF. This title's coroutine layer calls sceFiberSwitch and does not check
+		// the return code, so a FIBER_ERROR_STATE here is swallowed silently and the fiber is simply
+		// never resumed again - which looks exactly like a hung game with no diagnostic anywhere.
+		// FiberWaitAndEnterRunning gives up after a bounded wait, so this is reachable whenever the
+		// target is genuinely busy for longer than that.
+		printf("FiberSwitch: STATE error, target = %s, observed_state = %u, owner = 0x%016" PRIx64
+		       " - the guest does not check this return code, so this fiber will never be resumed\n",
+		       fiber->name, observed_state, FiberGetOwner(fiber));
+		fflush(stdout);
 		LOGF("\t fiber switch: STATE error, target = %s, observed_state = %u, owner = 0x%016" PRIx64
 		     "\n",
 		     fiber->name, observed_state, FiberGetOwner(fiber));
