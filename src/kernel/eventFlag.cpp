@@ -448,6 +448,19 @@ int KYTY_SYSV_ABI KernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern) {
 		return KERNEL_ERROR_ESRCH;
 	}
 
+	// KYTY_EVENTFLAG_TRACE=1 names every flag actually signalled. Pairing this with the
+	// unsatisfied-wait report above distinguishes "nobody ever signals this flag" from
+	// "it is signalled but the waiter wants bits that are never set together".
+	static const bool trace = [] {
+		const char* v = std::getenv("KYTY_EVENTFLAG_TRACE");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	if (trace) {
+		printf("eventflag set: \"%s\" bits=0x%016llx\n", ef->Name().c_str(),
+		       static_cast<unsigned long long>(bit_pattern));
+		fflush(stdout);
+	}
+
 	ef->Set(bit_pattern);
 
 	return OK;
