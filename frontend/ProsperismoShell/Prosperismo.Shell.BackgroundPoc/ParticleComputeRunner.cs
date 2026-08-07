@@ -658,12 +658,15 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
     /// one guest allocation through separate descriptor slots — particle_vv
     /// latches <c>renLife</c> into the record and particle_p reads it back, so
     /// giving each stage its own copy loses the write.</param>
+    /// <param name="Additive">False for the base plate, which replaces the
+    /// clear; true for the particle groups, which accumulate over it.</param>
     internal readonly record struct ParticleDraw(
         byte[] VertexSpirv,
         byte[] FragmentSpirv,
         byte[][] Buffers,
         uint VertexCount,
-        int[]? BufferAlias = null);
+        int[]? BufferAlias = null,
+        bool Additive = true);
 
     /// <summary>
     /// Renders every particle group of one frame into a single image.
@@ -940,7 +943,8 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
             };
             var blendAttachment = new PipelineColorBlendAttachmentState
             {
-                BlendEnable = Environment.GetEnvironmentVariable("DEBUG_NOBLEND") != "1",
+                BlendEnable = draw.Additive &&
+                    Environment.GetEnvironmentVariable("DEBUG_NOBLEND") != "1",
                 SrcColorBlendFactor = BlendFactor.One,
                 DstColorBlendFactor = BlendFactor.One,
                 ColorBlendOp = BlendOp.Add,

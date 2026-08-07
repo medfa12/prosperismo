@@ -42,6 +42,9 @@ internal static class ParticleDrawProbe
     private const int ParticleVsLength = 0x700;
     private const int ParticlePsOffset = 0x1201500;
     private const int ParticlePsLength = 0x800;
+    private const int PlatePsOffset = 0x11F9300;
+    private const int PlatePsLength = 0x230;
+    private const ulong PlateConstantsAddress = 0x0800_0000;
 
     private readonly record struct Group(int Kind, int Index, byte[] Compute, byte[] Draw);
 
@@ -49,6 +52,26 @@ internal static class ParticleDrawProbe
         string eboot, string framesDirectory, string outputDirectory, uint width, uint height, float fps)
     {
         var image = File.ReadAllBytes(eboot);
+
+        // The plate is the layer the particles sit on: fw_background_p, fed the
+        // constant buffer the firmware's own builder produces. Optional so the
+        // particle field can still be rendered alone.
+        var plateConstantsPath = Environment.GetEnvironmentVariable("PLATE_CONSTANTS");
+        var fullscreenVsPath = Environment.GetEnvironmentVariable("FULLSCREEN_VS");
+        ParticleComputeRunner.ParticleDraw? plate = null;
+        if (!string.IsNullOrEmpty(plateConstantsPath) && !string.IsNullOrEmpty(fullscreenVsPath) &&
+            File.Exists(plateConstantsPath) && File.Exists(fullscreenVsPath))
+        {
+            if (!BuildPlate(image, plateConstantsPath, fullscreenVsPath, out var built, out var plateError))
+            {
+                Console.Error.WriteLine($"plate: {plateError}");
+                return 1;
+            }
+
+            plate = built;
+            Console.WriteLine($"plate   : fw_background_p from {Path.GetFileName(plateConstantsPath)}");
+        }
+
         Directory.CreateDirectory(outputDirectory);
 
         var frameFiles = Directory.GetFiles(framesDirectory, "*.bin").OrderBy(x => x).ToArray();
@@ -72,6 +95,11 @@ internal static class ParticleDrawProbe
         {
             var (time, groups) = ReadFrame(frameFiles[frame]);
             var draws = new List<ParticleComputeRunner.ParticleDraw>();
+            if (plate is { } basePlate)
+            {
+                draws.Add(basePlate);
+            }
+
             var drawn = 0;
 
             foreach (var group in groups)
@@ -116,7 +144,7 @@ internal static class ParticleDrawProbe
             // so an unlatched record shades to exactly black. The latch is a
             // guest-memory write: fold it back into the bank or every frame
             // stays dark.
-            for (var d = 0; d < after.Length; d++)
+            for (var d = plate is null ? 0 : 1; d < after.Length; d++)
             {
                 for (var b = 0; b < after[d].Length; b++)
                 {
@@ -191,7 +219,7 @@ internal static class ParticleDrawProbe
             }
 
             Console.WriteLine(
-                $"  frame {frame:D5} t={time,7:F3} groups={draws.Count} particles={drawn,5} " +
+                $"  frame {frame:D5} t={time,7:F3} groups={draws.Count - (plate is null ? 0 : 1)} particles={drawn,5} " +
                 $"lit={lit,9:N0} touched={touched,9:N0}");
         }
 
@@ -542,6 +570,76 @@ internal static class ParticleDrawProbe
         draw = new ParticleComputeRunner.ParticleDraw(
             vertexSpirv, fragmentSpirv, buffers, count * 6, alias);
         error = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Translates <c>fw_background_p</c> as the frame's base layer.
+    ///
+    /// <para>It reads <c>FragCoord</c> out of v2/v3, so the pixel-input
+    /// registers have to name PERSP_CENTER plus POS_X_FLOAT and POS_Y_FLOAT —
+    /// 0x302. With PERSP_CENTER consuming v0 and v1, the position lands exactly
+    /// where the shader looks. See firstwave-plate-executed.md.</para>
+    /// </summary>
+    private static bool BuildPlate(
+        byte[] image,
+        string constantsPath,
+        string fullscreenVsPath,
+        out ParticleComputeRunner.ParticleDraw draw,
+        out string error)
+    {
+        draw = default;
+
+        var constants = new byte[0x200];
+        var recovered = File.ReadAllBytes(constantsPath);
+        recovered.AsSpan(0, Math.Min(recovered.Length, constants.Length)).CopyTo(constants);
+
+        var memory = new FirstWaveProbe.FlatMemory();
+        memory.AddRegion(ProgramAddress, Slice(image, PlatePsOffset, PlatePsLength));
+        memory.AddRegion(PlateConstantsAddress, constants);
+
+        var context = new CpuContext(memory, Generation.Gen5);
+        if (!Gen5ShaderTranslator.TryDecodeProgram(context, ProgramAddress, out var program, out error))
+        {
+            error = $"decode: {error}";
+            return false;
+        }
+
+        var userData = new uint[4];
+        FirstWaveProbe.WriteBufferDescriptorPublic(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(0, 4)),
+            PlateConstantsAddress, 0, constants.Length);
+
+        var state = new Gen5ShaderState(program, userData, Metadata: null, UserDataScalarRegisterBase: 0);
+        if (!Gen5ShaderScalarEvaluator.TryEvaluate(context, state, out var evaluation, out error))
+        {
+            error = $"evaluate: {error}";
+            return false;
+        }
+
+        if (!Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var compiled,
+                out error,
+                pixelInputEnable: 0x302,
+                pixelInputAddress: 0x302))
+        {
+            error = $"spirv: {error}";
+            return false;
+        }
+
+        var buffers = new byte[compiled.GlobalMemoryBindings.Count][];
+        for (var i = 0; i < buffers.Length; i++)
+        {
+            var data = new byte[compiled.GlobalMemoryBindings[i].DataLength];
+            constants.AsSpan(0, Math.Min(constants.Length, data.Length)).CopyTo(data);
+            buffers[i] = data;
+        }
+
+        draw = new ParticleComputeRunner.ParticleDraw(
+            File.ReadAllBytes(fullscreenVsPath), compiled.Spirv, buffers, 3, null, Additive: false);
         return true;
     }
 
