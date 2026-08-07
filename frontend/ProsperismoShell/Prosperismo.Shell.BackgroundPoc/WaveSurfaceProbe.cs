@@ -51,7 +51,10 @@ internal static class WaveSurfaceProbe
     // The hull writes 16 control points of 32 bytes each - position and a unit
     // normal - and the next patch starts 1024 bytes on, so the offchip slot per
     // patch is twice the data it fills.
-    private const uint PatchRingStride = 1024;
+    private static uint PatchRingStride =>
+        uint.TryParse(Environment.GetEnvironmentVariable("RING_STRIDE"), out var rs) && rs > 0
+            ? rs
+            : 1024;
 
     // Six factors of four bytes, padded to the hardware's 64-byte record.
     private const uint TessFactorStride = 64;
@@ -450,7 +453,13 @@ internal static class WaveSurfaceProbe
                         Environment.GetEnvironmentVariable("DOMAIN_OFFCHIP_SGPR"), out var ds)
                         ? ds
                         : 6,
-                    OffchipBytesPerPatch: PatchRingStride)))
+                    // The patch VGPR already selects the ring slot; supplying a
+                    // byte offset as well double-counts it, the same way the
+                    // hull's two indices did. DOMAIN_OFFCHIP_BYTES re-enables it.
+                    OffchipBytesPerPatch: uint.TryParse(
+                        Environment.GetEnvironmentVariable("DOMAIN_OFFCHIP_BYTES"), out var db)
+                        ? db
+                        : 0)))
         {
             Console.Error.WriteLine($"domain  : spirv FAILED {error}");
             return 1;

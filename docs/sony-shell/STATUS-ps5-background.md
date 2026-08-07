@@ -113,19 +113,47 @@ buffer states outright at `+0x100`. The near plane is `z = 505.7`. Control
 points run to `z = 1950`, behind the eye, and to `x = 2685` where the frustum
 half-width at that depth is 524.
 
-**How a patch maps to lattice entries is still unrecovered**, and it is host
-draw state rather than shader code. Two readings have been tested against the
-executing stages:
+### The patch count is 96, from the knot vectors
 
-| reading | result |
-|---|---|
-| patch `p` takes entries `16p..16p+15` | patches 0 and 1 evaluate; patch 2 on is NaN, and the NaN follows the lattice entries rather than the grouping |
-| a sliding 4x4 window over an 11-wide lattice | all 96 patches produce control points, but the domain then emits half zeroes and half NaN - no usable geometry |
+Two float tables sit next to the code that consumes the lattice seeds, at
+`0x00FF16F0` and `0x00FF1740`, and they settle the tiling:
 
-Neither is asserted. The consecutive reading degenerates almost immediately and
-the sliding window produces nothing the domain can evaluate, so the real mapping
-is something else - most likely the index buffer the host builds from the seed
-table, which the seed-block note already warns is *not* itself one patch.
+| table | contents | reading |
+|---|---|---|
+| `0x00FF1740` | 15 values, `-0.25 .. 1.25` in **1/8** steps, ends duplicated | 8 spans -> a cubic B-spline needs `8 + 3 = 11` control points and `8 + 7 = 15` knots |
+| `0x00FF16F0` | 19 values, `-1/6 .. 7/6` in **1/12** steps, ends duplicated | 12 spans -> `12 + 3 = 15` control points, `12 + 7 = 19` knots |
+
+11 and 15 are exactly the lattice's dimensions. So the surface is a uniform
+bicubic B-spline over an `11 x 15` control grid, and its patches are a 4x4
+window sliding by one: `(11 - 3) x (15 - 3)` = **8 x 12 = 96 patches**. The
+highest lattice index that tiling reaches is `14 * 11 + 10 = 164` - the last
+entry of the 165. Nothing is left over and nothing is short, which is the
+check that the reading is right.
+
+`VGT_LS_HS_CONFIG.NUM_PATCHES = 15` is unrelated to this: it is how many
+patches share a threadgroup, not how many the draw has.
+
+### The vertex buffer is host-built, and that is the blocker
+
+Driving the confirmed 96-patch tiling with the **raw seed table** makes the hull
+produce NaN for 1,410 of its 1,536 control points. The NaN originates in the
+hull, not the domain - the ring holds it before the domain ever reads.
+
+That is the seed-block note's own warning, now measured: *the later code deforms
+these seeds before producing the 16-control-point tessellation patches; the seed
+table is not itself one patch*. The local section reads a vertex buffer the host
+builds from the seeds, and the knot tables above are part of that construction.
+Recovering that construction is the next step, and until it exists the chain
+cannot produce pixels no matter how the patches are addressed.
+
+Two smaller things the same measurements settled:
+
+- The offchip ring stride is **1024 bytes per patch** on the hull side. At 512
+  every control point reads NaN; at 1024 the finite data appears.
+- The domain selects its ring slot at a **512-byte** step, so odd instances land
+  in the half the hull does not fill and collapse to the world origin. Supplying
+  a byte offset in an SGPR *as well* double-counts, exactly as it did on the
+  hull side.
 
 ### Tooling added
 
