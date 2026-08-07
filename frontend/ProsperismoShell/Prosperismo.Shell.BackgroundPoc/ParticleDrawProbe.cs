@@ -462,6 +462,9 @@ internal static class ParticleDrawProbe
             return false;
         }
 
+        // SPI_PS_INPUT_ENA/ADDR = 0x2 and SPI_PS_IN_CONTROL.NUM_INTERP = 6 are
+        // the values the firmware itself programs for particle_p — read out of
+        // its shader header with tools/dump_shader_registers.py, not chosen.
         if (!Gen5SpirvTranslator.TryCompilePixelShader(
                 pixelState,
                 pixelEvaluation,
@@ -469,7 +472,9 @@ internal static class ParticleDrawProbe
                 out var pixelShader,
                 out error,
                 globalBufferBase: vertexBufferCount,
-                totalGlobalBufferCount: total))
+                totalGlobalBufferCount: total,
+                pixelInputEnable: 0x2,
+                pixelInputAddress: 0x2))
         {
             error = $"pixel spirv: {error}";
             return false;
