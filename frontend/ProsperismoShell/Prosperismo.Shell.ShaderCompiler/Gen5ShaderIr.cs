@@ -83,7 +83,32 @@ public readonly record struct Gen5MergedWaveVgprSeeding(
     uint LdsSlotVgpr,
     uint LdsSlotStride,
     uint PackedIdVgpr,
-    uint PatchId);
+    uint PatchId,
+    // VGT_LS_HS_CONFIG.NUM_PATCHES packs several patches into one threadgroup.
+    // When this is greater than one the invocation carries both ids: the
+    // control point in the low part and the patch in the high, exactly as the
+    // SPI distributes them.
+    uint PatchesPerGroup = 1,
+    // Byte offsets the SPI hands a merged wave per threadgroup: s2 is where this
+    // group's patches begin in the offchip ring and s4 where its tessellation
+    // factors begin. Both are zero for a single group; splitting the draw across
+    // groups makes them the group index times the stride below.
+    uint OffchipOffsetSgpr = 0,
+    uint OffchipBytesPerGroup = 0,
+    uint FactorOffsetSgpr = 0,
+    uint FactorBytesPerGroup = 0,
+    // A host whose threadgroup memory is smaller than the console's cannot fit
+    // NUM_PATCHES patches in one group. Splitting them one per group keeps every
+    // LDS address inside the allocation and moves the patch id to the workgroup;
+    // the ring offset the shader computes from the packed id is unchanged.
+    bool PatchIdFromWorkgroup = false,
+    // How the draw's index buffer maps (patch, control point) to lattice
+    // entries. Zero means the non-indexed reading, patch p taking entries
+    // 16p..16p+15. A non-zero row length instead slides a 4x4 window across a
+    // lattice of that width, which is how a uniform bicubic surface tiles.
+    // This is host draw state, not shader code, and is not asserted as
+    // recovered - it is a hypothesis the geometry either supports or refutes.
+    uint LatticeRowLength = 0);
 
 /// <summary>
 /// What the fixed-function tessellator hands a domain stage.
@@ -102,7 +127,13 @@ public readonly record struct Gen5TessellationDomainSeeding(
     uint VVgpr,
     uint PatchVgpr,
     uint Segments,
-    uint PatchId);
+    uint PatchId,
+    // One instance per patch, matching the hull's one workgroup per patch.
+    bool PatchIdFromInstance = false,
+    // Like the hull's s2, the domain reads the offchip patch ring from a
+    // per-patch byte offset the SPI supplies in an SGPR rather than computing it.
+    uint OffchipOffsetSgpr = 0,
+    uint OffchipBytesPerPatch = 0);
 
 public sealed record Gen5ShaderMetadata(
     uint ExtendedUserDataSizeDwords,

@@ -227,7 +227,8 @@ public static partial class Gen5SpirvTranslator
             storageBufferOffsetAlignment: storageBufferOffsetAlignment,
             vertexPositionOutputControl: vertexPositionOutputControl,
             hostVertexOutputFeatures: hostVertexOutputFeatures,
-            hostSubgroupSize: hostSubgroupSize);
+            hostSubgroupSize: hostSubgroupSize,
+            domainSeeding: domainSeeding);
         return context.TryCompile(out shader, out error);
     }
 
@@ -2164,15 +2165,44 @@ public static partial class Gen5SpirvTranslator
                 if (_domainSeeding is { } domain)
                 {
                     // A domain stage receives its coordinates from the
-                    // tessellator, not as a vertex index. Rebuild the uniform
-                    // quad grid the hull's factors ask for: u varies fastest
-                    // over Segments + 1 vertices per edge.
+                    // tessellator, not as a vertex index. The tessellator is
+                    // fixed-function hardware, so the host stands in for it, and
+                    // fw_flow_h's VGT_TF_PARAM says exactly what to produce:
+                    // TESS_QUAD, PART_INTEGER, OUTPUT_TRIANGLE_CW, with every
+                    // factor 12.0. That is a uniform Segments x Segments grid of
+                    // quads, each split into two clockwise triangles, so the
+                    // draw is Segments * Segments * 6 vertices and the index
+                    // walks quad-major, corner-minor.
                     var index = Load(_uintType, _vertexIndexInput);
-                    var span = UInt(domain.Segments + 1);
-                    var column = _module.AddInstruction(
-                        SpirvOp.UMod, _uintType, index, span);
-                    var row = _module.AddInstruction(
-                        SpirvOp.UDiv, _uintType, index, span);
+                    var six = UInt(6);
+                    var quad = _module.AddInstruction(
+                        SpirvOp.UDiv, _uintType, index, six);
+                    var corner = _module.AddInstruction(
+                        SpirvOp.UMod, _uintType, index, six);
+                    var segments = UInt(domain.Segments);
+                    var quadX = _module.AddInstruction(
+                        SpirvOp.UMod, _uintType, quad, segments);
+                    var quadY = _module.AddInstruction(
+                        SpirvOp.UDiv, _uintType, quad, segments);
+
+                    // Corner offsets for the two clockwise triangles of a quad:
+                    // (0,0) (1,0) (1,1) and (0,0) (1,1) (0,1).
+                    uint SelectOffset(uint[] table)
+                    {
+                        var result = UInt(table[5]);
+                        for (var k = 4; k >= 0; k--)
+                        {
+                            var isK = _module.AddInstruction(
+                                SpirvOp.IEqual, _boolType, corner, UInt((uint)k));
+                            result = _module.AddInstruction(
+                                SpirvOp.Select, _uintType, isK, UInt(table[k]), result);
+                        }
+
+                        return result;
+                    }
+
+                    var column = IAdd(quadX, SelectOffset([0, 1, 1, 0, 1, 0]));
+                    var row = IAdd(quadY, SelectOffset([0, 0, 1, 0, 1, 1]));
                     var scale = Float(1f / domain.Segments);
                     StoreV(
                         domain.UVgpr,
@@ -2194,7 +2224,23 @@ public static partial class Gen5SpirvTranslator
                                 _module.AddInstruction(SpirvOp.ConvertUToF, _floatType, row),
                                 scale)),
                         guardWithExec: false);
-                    StoreV(domain.PatchVgpr, UInt(domain.PatchId), guardWithExec: false);
+                    if (domain.OffchipBytesPerPatch > 0)
+                    {
+                        StoreS(
+                            domain.OffchipOffsetSgpr,
+                            _module.AddInstruction(
+                                SpirvOp.IMul,
+                                _uintType,
+                                Load(_uintType, _instanceIndexInput),
+                                UInt(domain.OffchipBytesPerPatch)));
+                    }
+
+                    StoreV(
+                        domain.PatchVgpr,
+                        domain.PatchIdFromInstance
+                            ? Load(_uintType, _instanceIndexInput)
+                            : UInt(domain.PatchId),
+                        guardWithExec: false);
                 }
 
                 // Give every declared param output a defined starting value.
@@ -2290,6 +2336,30 @@ public static partial class Gen5SpirvTranslator
                     }
                 }
 
+                if (_mergedWaveSeeding is { OffchipBytesPerGroup: > 0 } offchip)
+                {
+                    // The offchip patch ring and the tessellation factor buffer
+                    // are addressed from a per-threadgroup byte offset the SPI
+                    // supplies in an SGPR, which is why the shader's own address
+                    // arithmetic only carries a within-group index.
+                    var group = _module.AddInstruction(
+                        SpirvOp.CompositeExtract,
+                        _uintType,
+                        Load(_uvec3Type, _workGroupIdInput),
+                        0u);
+                    StoreS(
+                        offchip.OffchipOffsetSgpr,
+                        _module.AddInstruction(
+                            SpirvOp.IMul, _uintType, group, UInt(offchip.OffchipBytesPerGroup)));
+                    if (offchip.FactorBytesPerGroup > 0)
+                    {
+                        StoreS(
+                            offchip.FactorOffsetSgpr,
+                            _module.AddInstruction(
+                                SpirvOp.IMul, _uintType, group, UInt(offchip.FactorBytesPerGroup)));
+                    }
+                }
+
                 if (_mergedWaveSeeding is { } seeding)
                 {
                     // A merged local+hull wave does not receive the compute
@@ -2298,16 +2368,70 @@ public static partial class Gen5SpirvTranslator
                     // section writes through, and the packed patch/control-point
                     // id the hull section unpacks.
                     var flat = LoadV(0);
-                    StoreV(seeding.VertexIndexVgpr, flat, guardWithExec: false);
-                    StoreV(
-                        seeding.LdsSlotVgpr,
-                        IAdd(flat, UInt(seeding.PatchId * seeding.LdsSlotStride)),
-                        guardWithExec: false);
+
+                    // VGT_LS_HS_CONFIG.NUM_PATCHES puts several patches in one
+                    // threadgroup: invocation i is control point
+                    // i % HS_NUM_INPUT_CP of patch i / HS_NUM_INPUT_CP.
+                    uint control, patch;
+                    if (seeding.PatchesPerGroup > 1)
+                    {
+                        var stride = UInt(seeding.LdsSlotStride);
+                        control = _module.AddInstruction(
+                            SpirvOp.UMod, _uintType, flat, stride);
+                        patch = _module.AddInstruction(
+                            SpirvOp.UDiv, _uintType, flat, stride);
+                    }
+                    else if (seeding.PatchIdFromWorkgroup)
+                    {
+                        control = flat;
+                        patch = _module.AddInstruction(
+                            SpirvOp.CompositeExtract,
+                            _uintType,
+                            Load(_uvec3Type, _workGroupIdInput),
+                            0u);
+                    }
+                    else
+                    {
+                        control = flat;
+                        patch = UInt(seeding.PatchId);
+                    }
+
+                    // The local section fetches through the vertex descriptor by
+                    // a running index; LDS is threadgroup-local so the slot is
+                    // the raw invocation.
+                    uint vertexIndex;
+                    if (seeding.LatticeRowLength > 0)
+                    {
+                        var width = UInt(seeding.LatticeRowLength);
+                        var patchCols = UInt(seeding.LatticeRowLength - 3);
+                        var four = UInt(4);
+                        var row = IAdd(
+                            _module.AddInstruction(SpirvOp.UDiv, _uintType, patch, patchCols),
+                            _module.AddInstruction(SpirvOp.UDiv, _uintType, control, four));
+                        var column = IAdd(
+                            _module.AddInstruction(SpirvOp.UMod, _uintType, patch, patchCols),
+                            _module.AddInstruction(SpirvOp.UMod, _uintType, control, four));
+                        vertexIndex = IAdd(
+                            _module.AddInstruction(SpirvOp.IMul, _uintType, row, width),
+                            column);
+                    }
+                    else if (seeding.PatchIdFromWorkgroup)
+                    {
+                        vertexIndex = IAdd(
+                            flat,
+                            _module.AddInstruction(
+                                SpirvOp.IMul, _uintType, patch, UInt(seeding.LdsSlotStride)));
+                    }
+                    else
+                    {
+                        vertexIndex = flat;
+                    }
+
+                    StoreV(seeding.VertexIndexVgpr, vertexIndex, guardWithExec: false);
+                    StoreV(seeding.LdsSlotVgpr, flat, guardWithExec: false);
                     StoreV(
                         seeding.PackedIdVgpr,
-                        BitwiseOr(
-                            ShiftLeftLogical(flat, UInt(8)),
-                            UInt(seeding.PatchId)),
+                        BitwiseOr(ShiftLeftLogical(control, UInt(8)), patch),
                         guardWithExec: false);
                 }
             }

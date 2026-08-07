@@ -672,7 +672,8 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
         uint VertexCount,
         int[]? BufferAlias = null,
         bool Additive = true,
-        IReadOnlyList<GuestImage>? Images = null);
+        IReadOnlyList<GuestImage>? Images = null,
+        uint InstanceCount = 1);
 
     /// <summary>
     /// Renders every particle group of one frame into a single image.
@@ -1080,7 +1081,7 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
                 0,
                 12,
                 limits);
-            _vk.CmdDraw(commandBuffer, draws[d].VertexCount, 1, 0, 0);
+            _vk.CmdDraw(commandBuffer, draws[d].VertexCount, draws[d].InstanceCount, 0, 0);
         }
 
         _vk.CmdEndRenderPass(commandBuffer);

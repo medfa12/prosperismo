@@ -18,6 +18,8 @@ the output looks right.
 | layer | programs | note |
 |---|---|---|
 | particle simulation | `particle_c` | 6000-record bank, authored pattern parameters |
+| wave control points | `fw_flow_vl` + `fw_flow_h` | merged LS+HS, 16 points/patch, factors all `12.0` |
+| wave surface | `fw_flow_dv` | evaluates and draws; produces no pixels yet |
 | particle draw | `particle_vv` + `particle_p` | eight groups, 1,820 particles |
 | light shafts + compositing | `light_p` | takes the particle frame as `texP` |
 | plate | `fw_background_p` | runs; see *Unresolved* for where it belongs |
@@ -30,24 +32,81 @@ Rendered output is gitignored under `out/`.
 
 ## Not executing
 
-**The FirstWave chain** — `fw_flow_vl` → `fw_flow_h` → `fw_flow_dv` →
-`fw_oit_p` → `fw_comp_oit_p` → `fw_blurh_p`/`fw_blurv_p` → `fw_fxaa_p`.
+**The FirstWave chain** - `fw_flow_vl` -> `fw_flow_h` -> `fw_flow_dv` ->
+`fw_oit_p` -> `fw_comp_oit_p` -> `fw_blurh_p`/`fw_blurv_p` -> `fw_fxaa_p`.
 
-Everything it needs from the firmware is recovered: the merged local+hull
-program decodes (366 instructions), the tessellation clamps are 12.0/1.0 from
-two independent sources, the 11×15 control lattice and 13-pair boundary ring
-have exact IEEE-754 words, and every stage's hardware registers are readable.
+The first three stages now **run**. What each produces:
 
-What it needs is **host capability**, and this is a build rather than a hunt:
+| stage | state |
+|---|---|
+| `fw_flow_vl` + `fw_flow_h` (merged LS+HS) | executes, any number of patches, 16/16 control points each - position plus a unit normal, 32 bytes per point |
+| tessellation factors | six literal `12.0`, read back from the factor buffer |
+| `fw_flow_dv` | executes, 700 instructions, distinct geometry per domain coordinate and per patch |
+| rasterisation | **nothing lit** - see below |
 
-1. Tessellation control and evaluation stages in `Gen5SpirvTranslator`, which
-   emits Vertex, Pixel and Compute only.
-2. Local/hull VGPR seeding — the local section reads `v2` as the vertex index
-   and `v3` as the LDS slot (`cpIndex·16 + patchId`), which is a different
-   contract from the compute path's local invocation id.
-3. The fixed-function tessellator, quad domain, uniform 12×12.
-4. OIT: `buffer_atomic_add` and a per-pixel linked list, then the resolve.
-5. Multi-pass render targets for the blur and FXAA passes.
+### What the hardware registers settled
+
+`fw_flow_h`'s own header carries the tessellation setup, so none of it is
+inferred:
+
+| register | value | meaning |
+|---|---|---|
+| `VGT_TF_PARAM` | `0x00040042` | `TESS_QUAD`, `PART_INTEGER`, `OUTPUT_TRIANGLE_CW` |
+| `VGT_LS_HS_CONFIG` | `0x0004100F` | 16 input CP, 16 output CP, **15 patches per threadgroup** |
+| `VGT_HOS_MAX/MIN_TESS_LEVEL` | `12.0` / `1.0` | matches the hull's own inline constant |
+| `SPI_SHADER_PGM_RSRC2_HS` | `0x003C0084` | **2 user SGPRs**, LDS 61,440 bytes |
+
+Two corrections came out of that last row. With two user SGPRs the merged wave's
+system registers begin at **s2**, so the order is `s2` offchip offset, `s3`
+merged wave info, `s4` factor offset, `s5` scratch - and `s3` being merged wave
+info is independently confirmed, because that is the register the prologue
+already turned into EXEC.
+
+- **`s4` had been pinned to the workgroup id.** It is the tessellation factor
+  byte offset. Group 0 works either way, which is why one patch always looked
+  right and every other patch was empty.
+- **The ring offset is not in the packed id.** The shader's own address
+  arithmetic only carries a within-group index; the per-threadgroup base arrives
+  in `s2`. Probing showed the packed id was already correct - `(cp << 8) | patch`,
+  varying properly - while every group still wrote patch 0. Supplying `s2` as
+  `group * 1024` separated them.
+
+The offchip stride is **1024 bytes per patch**, of which the hull fills 512.
+
+Apple caps threadgroup memory at 32,768 bytes against the console's 61,440, so
+the fifteen patches of a console threadgroup are split one per group. With `s2`
+carrying the base this is equivalent, and it is the only host-shaped
+accommodation in the chain.
+
+### The blocker
+
+Nothing rasterises, and it is not the tiling: at 96 patches, every patch is
+still outside the frustum. The projection at constant-buffer `+0x80` is
+
+```
+1.71677        0        0        0
+      0  1.71677        0        0
+      0        0 -1.02703       -1
+      0        0  519.381  900.450
+```
+
+so `w = 900.45 - z`, putting the camera plane at `z = 900.45`. The evaluated
+surface spans `z` from about 0 to 1630 - it passes through the eye, with `w`
+running from `-1123` to `+434` inside a single patch. Either the lattice is
+being scaled into the wrong space before the hull displaces it, or these
+constants are not the frame the wave is drawn in.
+
+Still unrecovered: the draw's index buffer, i.e. how a patch maps to lattice
+entries. Both readings tested - patch `p` taking entries `16p..16p+15`, and a
+sliding 4x4 window over the lattice - leave the surface off screen, so neither
+is asserted.
+
+### Tooling added
+
+`tools/patch_domain_probe.py` publishes a domain stage's clip output and its
+export gate into a scratch region of the patch ring. Note the module declares a
+**fixed three-element** buffer array, so a probe cannot append a fourth binding;
+it writes past the data instead.
 
 **`coldboot`'s large particles** — `large_particle_vv`/`_p`. Contract fully
 recovered. The sprites are BC7 480×270 with nine mips and `SW_256B_S` tiling,
@@ -96,3 +155,4 @@ independent before writing it down.
 | `export_particle_frames.py` | authored `ResourcesCs`/`ResourcesVsPs` blocks per frame |
 | `export_firstwave_constants.py` | the 412-byte FirstWave constant buffer |
 | `probe_clip.sh` + `patch_clip_probe.py` | dump a vertex stage's clip output by patching the SPIR-V |
+| `patch_domain_probe.py` | the same for a domain stage, including its export gate |

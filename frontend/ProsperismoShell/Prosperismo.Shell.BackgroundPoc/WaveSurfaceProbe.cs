@@ -46,8 +46,43 @@ internal static class WaveSurfaceProbe
     private const int HullOffset = 0x11F6600;
     private const int HullLength = 0x108;
 
-    private const int ControlPoints = 16;
-    private const int PatchRingBytes = 0x4000;
+    private const uint ControlPoints = 16;
+
+    // The hull writes 16 control points of 32 bytes each - position and a unit
+    // normal - and the next patch starts 1024 bytes on, so the offchip slot per
+    // patch is twice the data it fills.
+    private const uint PatchRingStride = 1024;
+
+    // Six factors of four bytes, padded to the hardware's 64-byte record.
+    private const uint TessFactorStride = 64;
+
+    // NUM_PATCHES is 15, but the console gives a threadgroup 61,440 bytes of LDS
+    // where Apple caps it at 32,768, so the draw is split into groups that fit.
+    // PATCHES_PER_GROUP overrides it.
+    private static uint PatchesPerGroup =>
+        uint.TryParse(Environment.GetEnvironmentVariable("PATCHES_PER_GROUP"), out var n) && n > 0
+            ? n
+            // The console fits all fifteen in one group; Apple's 32 KB ceiling
+            // fits one, and the per-group offchip offset makes that equivalent.
+            : 1;
+
+    private static uint GroupCount =>
+        (uint)((PatchCount + PatchesPerGroup - 1) / PatchesPerGroup);
+
+    // VGT_LS_HS_CONFIG in fw_flow_h's header is 0x0004100F: HS_NUM_INPUT_CP and
+    // HS_NUM_OUTPUT_CP are both 16 and NUM_PATCHES is 15. The seeded lattice is
+    // 165 vec4 entries, so a non-indexed patch list of 16 input control points
+    // covers ten patches. PATCH_COUNT overrides it for probing.
+    private static int PatchCount =>
+        int.TryParse(Environment.GetEnvironmentVariable("PATCH_COUNT"), out var n) && n > 0
+            ? n
+            : 15;
+
+    // Each patch owns 16 output control points at a 32-byte stride: 512 bytes.
+    private static int PatchRingBytes =>
+        int.TryParse(Environment.GetEnvironmentVariable("RING_BYTES"), out var rb) && rb > 0
+            ? rb
+            : Math.Max(0x4000, PatchCount * (int)PatchRingStride);
     private const int TessFactorBytes = 0x1000;
 
     private static void WriteVertexDescriptor(
@@ -145,7 +180,9 @@ internal static class WaveSurfaceProbe
 
         var state = new Gen5ShaderState(
             program, userData, Metadata: null,
-            ComputeSystemRegisters: new Gen5ComputeSystemRegisters(4, null, null, null),
+            // s2/s4 are the offchip and factor byte offsets; a single
+            // threadgroup leaves both at zero, so no system SGPR is pinned.
+            ComputeSystemRegisters: null,
             UserDataScalarRegisterBase: 0);
 
         if (!Gen5ShaderScalarEvaluator.TryEvaluate(context, state, out var evaluation, out error))
@@ -164,7 +201,7 @@ internal static class WaveSurfaceProbe
         }
 
         if (!Gen5SpirvTranslator.TryCompileComputeShader(
-                state, evaluation, ControlPoints, 1, 1, out var compiled, out error,
+                state, evaluation, PatchesPerGroup * ControlPoints, 1, 1, out var compiled, out error,
                 waveLaneCount: uint.TryParse(Environment.GetEnvironmentVariable("WAVE_LANES"), out var wl) ? wl : 32,
                 // Apple GPUs cap threadgroup memory at 32 KB where the PS5 gives
                 // a workgroup 64 KB. The merged wave's LDS reach here is
@@ -180,7 +217,14 @@ internal static class WaveSurfaceProbe
                     LdsSlotVgpr: 3,
                     LdsSlotStride: 16,   // patches are 16 control points apart in LDS
                     PackedIdVgpr: 1,
-                    PatchId: 0)))
+                    PatchId: 0,
+                    PatchesPerGroup: PatchesPerGroup,
+                    LatticeRowLength: uint.TryParse(
+                        Environment.GetEnvironmentVariable("LATTICE_ROW"), out var lr) ? lr : 0,
+                    OffchipOffsetSgpr: 2,
+                    OffchipBytesPerGroup: PatchesPerGroup * PatchRingStride,
+                    FactorOffsetSgpr: 4,
+                    FactorBytesPerGroup: PatchesPerGroup * TessFactorStride)))
         {
             Console.Error.WriteLine($"spirv   : FAILED {error}");
             return 1;
@@ -224,14 +268,52 @@ internal static class WaveSurfaceProbe
             uploads[i] = data;
         }
 
+        var hullPatched = Environment.GetEnvironmentVariable("HULL_CS");
+        var hullSpirv = !string.IsNullOrEmpty(hullPatched) && File.Exists(hullPatched)
+            ? File.ReadAllBytes(hullPatched)
+            : compiled.Spirv;
+
         byte[][] results;
         using (var runner = new ParticleComputeRunner())
         {
             Console.WriteLine($"device  : {runner.DeviceName}");
-            results = runner.Dispatch(compiled.Spirv, uploads, 1, ControlPoints);
+            // The last argument bounds total threads, not the group size.
+            results = runner.Dispatch(
+                hullSpirv, uploads, GroupCount, (uint)(PatchCount * ControlPoints));
         }
 
         Console.WriteLine("dispatch: OK");
+
+        if (ringIndex >= 0)
+        {
+            var ringData = results[ringIndex];
+            var ringOut = Environment.GetEnvironmentVariable("RING_OUT");
+            if (!string.IsNullOrEmpty(ringOut))
+            {
+                File.WriteAllBytes(ringOut, ringData);
+            }
+
+            for (var p = 0; p < PatchCount; p++)
+            {
+                var written = 0;
+                for (var c = 0; c < ControlPoints; c++)
+                {
+                    var o = p * (int)PatchRingStride + c * 32;
+                    if (o + 16 > ringData.Length)
+                    {
+                        break;
+                    }
+
+                    if (BitConverter.ToUInt32(ringData, o) != 0
+                        || BitConverter.ToUInt32(ringData, o + 4) != 0)
+                    {
+                        written++;
+                    }
+                }
+
+                Console.WriteLine($"          patch {p}: {written}/{ControlPoints} control points");
+            }
+        }
 
         if (tessIndex >= 0)
         {
@@ -333,7 +415,8 @@ internal static class WaveSurfaceProbe
 
         Console.WriteLine($"domain  : OK - {program.Instructions.Count} instructions");
 
-        const uint vertices = (Segments + 1) * (Segments + 1);
+        // Segments x Segments quads, two clockwise triangles each.
+        const uint vertices = Segments * Segments * 6;
         var userData = new uint[14];
         userData[3] = 0x4040;
         FirstWaveProbe.WriteBufferDescriptorPublic(
@@ -356,13 +439,24 @@ internal static class WaveSurfaceProbe
                 state, evaluation, out var compiled, out error,
                 requiredVertexOutputCount: 5,
                 domainSeeding: new Gen5TessellationDomainSeeding(
-                    UVgpr: 5, VVgpr: 6, PatchVgpr: 7, Segments: Segments, PatchId: 0)))
+                    UVgpr: 5, VVgpr: 6, PatchVgpr: 7, Segments: Segments, PatchId: 0,
+                    PatchIdFromInstance: true,
+                    OffchipOffsetSgpr: uint.TryParse(
+                        Environment.GetEnvironmentVariable("DOMAIN_OFFCHIP_SGPR"), out var ds)
+                        ? ds
+                        : 6,
+                    OffchipBytesPerPatch: PatchRingStride)))
         {
             Console.Error.WriteLine($"domain  : spirv FAILED {error}");
             return 1;
         }
 
         Console.WriteLine($"domain  : spirv OK - {compiled.Spirv.Length:N0} bytes");
+        var domainOut = Environment.GetEnvironmentVariable("DOMAIN_SPIRV_OUT");
+        if (!string.IsNullOrEmpty(domainOut))
+        {
+            File.WriteAllBytes(domainOut, compiled.Spirv);
+        }
 
         var buffers = new byte[compiled.GlobalMemoryBindings.Count][];
         for (var i = 0; i < buffers.Length; i++)
@@ -378,6 +472,15 @@ internal static class WaveSurfaceProbe
             };
             source?.AsSpan(0, Math.Min(source.Length, data.Length)).CopyTo(data);
             buffers[i] = data;
+            Console.WriteLine(
+                $"domain  : buffer[{i}] base 0x{binding.BaseAddress:X} len {binding.DataLength}");
+        }
+
+        // A patched module writes its clip output into one extra scratch buffer
+        // appended past the shader's own bindings. Diagnostic only.
+        if (Environment.GetEnvironmentVariable("DOMAIN_PROBE") == "1")
+        {
+            buffers = [.. buffers, new byte[vertices * 8 * sizeof(uint)]];
         }
 
         var fragmentPath = Environment.GetEnvironmentVariable("SURFACE_FS")
@@ -387,9 +490,27 @@ internal static class WaveSurfaceProbe
         const uint height = 720;
         using var runner = new ParticleComputeRunner();
         Console.WriteLine($"device  : {runner.DeviceName}");
+        // DOMAIN_VS swaps in a patched module so the clip output can be read
+        // back out of a storage buffer. Diagnostic only.
+        var patched = Environment.GetEnvironmentVariable("DOMAIN_VS");
+        var vertexSpirv = !string.IsNullOrEmpty(patched) && File.Exists(patched)
+            ? File.ReadAllBytes(patched)
+            : compiled.Spirv;
+
         var draw = new ParticleComputeRunner.ParticleDraw(
-            compiled.Spirv, File.ReadAllBytes(fragmentPath), buffers, vertices, null, false);
-        var rgba = runner.RenderParticleFrame([draw], width, height);
+            vertexSpirv, File.ReadAllBytes(fragmentPath), buffers, vertices, null, false,
+            InstanceCount: (uint)PatchCount);
+        var rgba = runner.RenderParticleFrame([draw], width, height, out var after);
+
+        var clipOut = Environment.GetEnvironmentVariable("DOMAIN_CLIP_OUT");
+        if (!string.IsNullOrEmpty(clipOut) && after.Length > 0)
+        {
+            var slot = int.TryParse(Environment.GetEnvironmentVariable("DOMAIN_CLIP_BUFFER"), out var cb) ? cb : 0;
+            if (slot < after[0].Length)
+            {
+                File.WriteAllBytes(clipOut, after[0][slot]);
+            }
+        }
 
         var lit = 0;
         for (var i = 0; i < rgba.Length; i += 4)
