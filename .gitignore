@@ -34,3 +34,7 @@ __pycache__/
 # macOS Finder metadata.
 .DS_Store
 **/.DS_Store
+
+# Frames and video rendered from Sony's own shaders: derived firmware output,
+# same rule as ps5oracle.
+/out/

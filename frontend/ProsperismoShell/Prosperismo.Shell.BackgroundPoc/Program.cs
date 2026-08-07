@@ -25,6 +25,40 @@ internal static class Program
 
         var frames = int.TryParse(Arg(args, "--frames"), out var f) ? Math.Clamp(f, 1, 240) : 8;
 
+        if (args.Contains("--firstwave"))
+        {
+            return FirstWaveProbe.Run(eboot);
+        }
+
+        if (args.Contains("--render-plate"))
+        {
+            return FirstWaveProbe.RenderPlate(
+                eboot,
+                Arg(args, "--out-png") ?? "plate.png",
+                float.TryParse(Arg(args, "--time"), out var tv) ? tv : 0f);
+        }
+
+        if (args.Contains("--compile-particle"))
+        {
+            return FirstWaveProbe.Compile(eboot);
+        }
+
+        if (args.Contains("--render-particles"))
+        {
+            return ParticleDrawProbe.Render(
+                eboot,
+                Arg(args, "--blocks") ?? "frames",
+                outDir,
+                uint.TryParse(Arg(args, "--width"), out var pw) ? pw : 1920u,
+                uint.TryParse(Arg(args, "--height"), out var ph) ? ph : 1080u,
+                float.TryParse(Arg(args, "--fps"), out var pf) ? pf : 30f);
+        }
+
+        if (args.Contains("--dump-stage"))
+        {
+            return FirstWaveProbe.Dump(eboot, Arg(args, "--dump-stage") ?? "particle_c");
+        }
+
         if (args.Contains("--scan"))
         {
             return Scan(eboot);

@@ -3364,20 +3364,29 @@ public static partial class Gen5SpirvTranslator
 
                 if (applySdwaIntegerModifiers)
                 {
+                    // SDWA ABS/NEG are *floating-point* modifiers: the hardware
+                    // clears or flips the sign bit of the selected sub-dword,
+                    // whatever opcode consumes it. Treating them as an
+                    // arithmetic negate corrupts float bit patterns moved by
+                    // v_mov_b32 — and Sony's particle_vv uses exactly that to
+                    // negate its clip-space z (`v13 = -v13` at +0x470), which
+                    // put every particle behind the near plane.
+                    var signBit = selector switch
+                    {
+                        <= 3 => 0x80u,
+                        4 or 5 => 0x8000u,
+                        _ => 0x8000_0000u,
+                    };
+
                     if ((sdwa.AbsoluteMask & (1u << sourceIndex)) != 0)
                     {
-                        value = Bitcast(
-                            _uintType,
-                            Ext(5, _intType, Bitcast(_intType, value)));
+                        value = BitwiseAnd(value, UInt(~signBit));
                     }
 
                     if ((sdwa.NegateMask & (1u << sourceIndex)) != 0)
                     {
                         value = _module.AddInstruction(
-                            SpirvOp.ISub,
-                            _uintType,
-                            UInt(0),
-                            value);
+                            SpirvOp.BitwiseXor, _uintType, value, UInt(signBit));
                     }
                 }
             }
