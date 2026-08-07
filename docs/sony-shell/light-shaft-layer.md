@@ -203,6 +203,37 @@ another function stores into the same range, `gamma = 200.0` where every genuine
 record carries 1/2.2. The narrow window is deliberate: a blank is honest, a
 plausible wrong number is not.
 
+## What a complete `spread_expanded` background contains
+
+Sampling all seven pattern blobs across their timelines settles which draw
+programs a given background actually needs:
+
+| pattern | small groups | large groups |
+|---|---|---|
+| `coldboot` | 0, 1 | **0, 1** |
+| `spread_expanded` | 0–7 | none |
+| `spread_expanded_fadeout` | 0–7 | none |
+| `bottom_camCal` | 0–7 | none |
+| `bottom_fadeout` | 0–7 | none |
+| `initboot_to_spread_no_movie` | 0–7 | none |
+| `initboot_to_bottom_no_movie` | 0–7 | none |
+
+**`coldboot` is the only pattern that uses large particles.** Six of the seven
+never activate a `large_compute` group at any time in their timeline, so
+`large_particle_vv`/`_p` and the two GNF sprites are a boot-animation element,
+not part of a steady-state background.
+
+That means for `spread_expanded` — the living home-screen background — the
+complete draw set is the eight small groups plus `light_p`, which is what
+this repository executes. The large pair is still needed for `coldboot`, and
+its sprites are BC7 480×270 with nine mips and the same `SW_256B_S` tiling,
+which is a different untiling geometry from the 8bpp case because the element
+is a 16-byte block rather than a texel.
+
+An earlier revision of this note listed the large particles as a missing layer
+of every background. That was wrong: they are missing from one pattern out of
+seven.
+
 ## The full shader inventory
 
 Resolving the descriptor table gives **138 shaders** with exact code offsets,
