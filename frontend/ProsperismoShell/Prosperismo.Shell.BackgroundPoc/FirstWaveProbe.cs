@@ -531,6 +531,70 @@ internal static class FirstWaveProbe
 
 
     /// <summary>
+    /// Decodes the merged local+hull program the wave surface actually runs.
+    ///
+    /// <para>On GFX10 <c>fw_flow_vl</c> and <c>fw_flow_h</c> are one hardware
+    /// shader. The local section ends with <c>s_swappc_b64 null, s[6:7]</c> —
+    /// an absolute jump the driver points at the hull entry, laid out directly
+    /// after the local code. Concatenating the two slices and letting the tail
+    /// call fall through is that layout; branches inside either section are
+    /// PC-relative, so contiguity is all the jump needs.</para>
+    /// </summary>
+    internal static int MergeFlow(string eboot)
+    {
+        var image = File.ReadAllBytes(eboot);
+        var local = Array.Find(Stages, x => x.Name == "fw_flow_vl");
+        var hull = Array.Find(Stages, x => x.Name == "fw_flow_h");
+
+        var merged = new byte[local.Length + hull.Length];
+        Array.Copy(image, local.Offset, merged, 0, local.Length);
+        Array.Copy(image, hull.Offset, merged, local.Length, hull.Length);
+
+        var memory = new FlatMemory();
+        memory.AddRegion(ProgramAddress, merged);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        if (!Gen5ShaderTranslator.TryDecodeMergedProgram(
+                context, ProgramAddress, out var decoded, out var error))
+        {
+            Console.Error.WriteLine($"decode : FAILED {error}");
+            return 1;
+        }
+
+        var tail = -1;
+        for (var i = 0; i < decoded.Instructions.Count; i++)
+        {
+            if (decoded.Instructions[i].Opcode == "SSwappcB64")
+            {
+                tail = i;
+                break;
+            }
+        }
+        Console.WriteLine(
+            $"merged : fw_flow_vl (0x{local.Length:X}) + fw_flow_h (0x{hull.Length:X}) " +
+            $"= 0x{merged.Length:X} bytes");
+        Console.WriteLine(
+            $"decode : OK - {decoded.Instructions.Count} instructions " +
+            $"(local {tail + 1}, hull {decoded.Instructions.Count - tail - 1})");
+        Console.WriteLine(
+            $"tail   : pc=0x{decoded.Instructions[tail].Pc:X} {decoded.Instructions[tail].Opcode} " +
+            $"-> falls through to the hull entry at pc=0x{local.Length:X}");
+
+        // The hull's only authored output is the tessellation factor set, and
+        // every one of them is the inline constant 12. Reading them back out of
+        // the decode is a cheap check that the concatenation landed on
+        // instruction boundaries rather than mid-stream.
+        var factors = decoded.Instructions
+            .Where(i => i.Pc >= (uint)local.Length && i.Opcode == "VCvtF32I32")
+            .Select(i => i.Sources.Count > 0 ? i.Sources[0].Value : 0u)
+            .ToArray();
+        Console.WriteLine(
+            $"factors: {factors.Length} v_cvt_f32_i32 from inline constants " +
+            $"[{string.Join(", ", factors.Select(v => v >= 128 && v <= 192 ? (v - 128).ToString() : $"src{v}"))}]");
+        return 0;
+    }
+
+    /// <summary>
     /// Renders <c>fw_background_p</c>, the background's base plate, by
     /// executing Sony's own pixel shader.
     ///

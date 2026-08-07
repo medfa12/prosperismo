@@ -41,6 +41,11 @@ internal static class Program
                 uint.TryParse(Arg(args, "--height"), out var plh) ? plh : 2160u);
         }
 
+        if (args.Contains("--merge-flow"))
+        {
+            return FirstWaveProbe.MergeFlow(eboot);
+        }
+
         if (args.Contains("--compile-particle"))
         {
             return FirstWaveProbe.Compile(eboot);

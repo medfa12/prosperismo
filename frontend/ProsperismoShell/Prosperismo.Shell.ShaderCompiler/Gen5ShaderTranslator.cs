@@ -746,12 +746,30 @@ public static class Gen5ShaderTranslator
         out string error) =>
         TryDecodeProgram(ctx, address, 0, out program, out error);
 
+    /// <summary>
+    /// Decodes a merged local+hull program.
+    ///
+    /// <para>On GFX10 the LS and HS are one hardware shader: the local section
+    /// ends with <c>s_swappc_b64 null, s[6:7]</c>, an absolute jump the driver
+    /// points at the hull entry, which it lays out immediately after the local
+    /// code. Placing the two slices back to back and letting the tail call fall
+    /// through reproduces that exactly — every branch inside either section is
+    /// PC-relative, so contiguity is all the jump needs.</para>
+    /// </summary>
+    public static bool TryDecodeMergedProgram(
+        CpuContext ctx,
+        ulong address,
+        out Gen5ShaderProgram program,
+        out string error) =>
+        TryDecodeProgram(ctx, address, 0, out program, out error, followTailCall: true);
+
     private static bool TryDecodeProgram(
         CpuContext ctx,
         ulong address,
         uint shaderSizeBytes,
         out Gen5ShaderProgram program,
-        out string error)
+        out string error,
+        bool followTailCall = false)
     {
         ValidateDppControlVectors();
         program = new Gen5ShaderProgram(address, []);
@@ -826,7 +844,8 @@ public static class Gen5ShaderTranslator
             // the return address — so only that form terminates the program.
             // fw_flow_vl is exactly this shape and read as "unterminated" until
             // the rule existed.
-            if (string.Equals(name, "SSwappcB64", StringComparison.Ordinal) &&
+            if (!followTailCall &&
+                string.Equals(name, "SSwappcB64", StringComparison.Ordinal) &&
                 IsNullScalarDestination(words[0]))
             {
                 program = new Gen5ShaderProgram(address, instructions);
