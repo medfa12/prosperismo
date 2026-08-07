@@ -41,6 +41,14 @@ internal static class Program
                 uint.TryParse(Arg(args, "--height"), out var plh) ? plh : 2160u);
         }
 
+        if (args.Contains("--wave-surface"))
+        {
+            return WaveSurfaceProbe.Run(
+                eboot,
+                Arg(args, "--constants") ?? "fwcb.bin",
+                Arg(args, "--seeds") ?? "wave_seeds.bin");
+        }
+
         if (args.Contains("--render-light"))
         {
             return LightLayerProbe.Render(

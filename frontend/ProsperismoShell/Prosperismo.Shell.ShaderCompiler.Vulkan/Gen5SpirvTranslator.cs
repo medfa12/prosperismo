@@ -230,6 +230,14 @@ public static partial class Gen5SpirvTranslator
         return context.TryCompile(out shader, out error);
     }
 
+    /// <param name="ldsDwordCount">Optional cap on the declared workgroup
+    /// array. The PS5 gives a workgroup 64 KB of LDS and that is the default,
+    /// but a host may allow less — Apple GPUs cap threadgroup memory at 32 KB —
+    /// and pipeline creation fails outright when the declaration exceeds the
+    /// device limit. Addresses are range-checked either way, and an access past
+    /// the allocation is recorded by the ldsAddressOutOfRange module flag, so a
+    /// shader that genuinely needs more is reported rather than silently wrong.
+    /// </param>
     public static bool TryCompileComputeShader(
         Gen5ShaderState state,
         Gen5ShaderEvaluation evaluation,
@@ -242,7 +250,8 @@ public static partial class Gen5SpirvTranslator
         int initialScalarBufferIndex = -1,
         uint waveLaneCount = 32,
         ulong storageBufferOffsetAlignment = 1,
-        uint hostSubgroupSize = RdnaWaveLaneCount)
+        uint hostSubgroupSize = RdnaWaveLaneCount,
+        uint ldsDwordCount = LdsDwordCount)
     {
         var context = new CompilationContext(
             Gen5SpirvStage.Compute,
@@ -258,7 +267,8 @@ public static partial class Gen5SpirvTranslator
             initialScalarBufferIndex,
             waveLaneCount: waveLaneCount,
             storageBufferOffsetAlignment: storageBufferOffsetAlignment,
-            hostSubgroupSize: hostSubgroupSize);
+            hostSubgroupSize: hostSubgroupSize,
+            ldsDwordLimit: ldsDwordCount);
         return context.TryCompile(out shader, out error);
     }
 
@@ -441,6 +451,7 @@ public static partial class Gen5SpirvTranslator
         private uint _lds;
         private uint _ldsElementPointer;
         private uint _ldsDwordCount;
+        private readonly uint _ldsDwordLimit;
         private uint _ldsOutOfRange;
         private uint _positionOutput;
         private uint _pointSizeOutput;
@@ -546,8 +557,10 @@ public static partial class Gen5SpirvTranslator
             ulong storageBufferOffsetAlignment = 1,
             uint? vertexPositionOutputControl = null,
             Gen5HostVertexOutputFeatures hostVertexOutputFeatures = default,
-            uint hostSubgroupSize = RdnaWaveLaneCount)
+            uint hostSubgroupSize = RdnaWaveLaneCount,
+            uint ldsDwordLimit = LdsDwordCount)
         {
+            _ldsDwordLimit = ldsDwordLimit == 0 ? LdsDwordCount : ldsDwordLimit;
             _stage = stage;
             _requiredVertexOutputCount = requiredVertexOutputCount;
             _state = state;
@@ -1141,7 +1154,7 @@ public static partial class Gen5SpirvTranslator
                 ? SpirvStorageClass.Workgroup
                 : SpirvStorageClass.Private;
             var dwordCount = _stage == Gen5SpirvStage.Compute
-                ? LdsDwordCount
+                ? Math.Min(_ldsDwordLimit, LdsDwordCount)
                 : PrivateLdsDwordCount;
             _ldsDwordCount = dwordCount;
 

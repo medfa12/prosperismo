@@ -315,6 +315,23 @@ public static class Gen5ShaderScalarEvaluator
             {
                 if (instruction.Opcode is "SSetpcB64" or "SSwappcB64")
                 {
+                    // A merged local+hull program's tail call is a fallthrough:
+                    // the decoder laid the hull directly after the local code,
+                    // which is the layout the driver produces and the jump
+                    // target. Stopping here would leave every hull resource
+                    // unresolved. Any other indirect PC still ends the walk,
+                    // because its target is not statically known.
+                    if (state.Program.MergedTailCall &&
+                        instruction.Opcode == "SSwappcB64" &&
+                        instruction.Destinations.Count > 0 &&
+                        instruction.Destinations[0] is
+                        {
+                            Kind: Gen5OperandKind.ScalarRegister, Value: >= 125,
+                        })
+                    {
+                        continue;
+                    }
+
                     break;
                 }
 

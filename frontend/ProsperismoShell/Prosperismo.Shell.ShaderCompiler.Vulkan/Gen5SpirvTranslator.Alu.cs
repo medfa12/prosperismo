@@ -2115,6 +2115,23 @@ public static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            // In a merged local+hull program the local section's tail call
+            // targets the hull entry, which the decoder placed directly after
+            // it, so the jump is a fallthrough and the next instruction is
+            // already the right one. This is not the general case - see below -
+            // and it applies only because Gen5ShaderTranslator laid the two
+            // slices out contiguously and recorded that on the program.
+            if (instruction.Opcode == "SSwappcB64" &&
+                _state.Program.MergedTailCall &&
+                instruction.Destinations.Count > 0 &&
+                instruction.Destinations[0] is
+                {
+                    Kind: Gen5OperandKind.ScalarRegister, Value: >= 125,
+                })
+            {
+                return true;
+            }
+
             if (instruction.Opcode is "SSetpcB64" or "SSwappcB64")
             {
                 // s_setpc_b64 jumps to the 64-bit address held in an SGPR pair;

@@ -337,9 +337,16 @@ public sealed record Gen5ShaderInstruction(
     IReadOnlyList<Gen5Operand> Destinations,
     Gen5InstructionControl? Control);
 
+/// <param name="MergedTailCall">True when this program was decoded as a merged
+/// local+hull pair. In that layout the local section's
+/// <c>s_swappc_b64 null, s[6:7]</c> targets the hull entry, which the driver
+/// places immediately after the local code, so the jump is a fallthrough. It is
+/// only safe to treat it that way because the decoder itself laid the two
+/// slices out contiguously.</param>
 public sealed record Gen5ShaderProgram(
     ulong Address,
-    IReadOnlyList<Gen5ShaderInstruction> Instructions)
+    IReadOnlyList<Gen5ShaderInstruction> Instructions,
+    bool MergedTailCall = false)
 {
     private const uint PixelColorTargetCount = 8;
     private const int PixelColorMaskBits = 4;

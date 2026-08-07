@@ -772,6 +772,7 @@ public static class Gen5ShaderTranslator
         bool followTailCall = false)
     {
         ValidateDppControlVectors();
+        var sawMergedTailCall = false;
         program = new Gen5ShaderProgram(address, []);
         error = string.Empty;
         if (address == 0)
@@ -834,7 +835,7 @@ public static class Gen5ShaderTranslator
             pc += instructionBytes;
             if (string.Equals(name, "SEndpgm", StringComparison.Ordinal))
             {
-                program = new Gen5ShaderProgram(address, instructions);
+                program = new Gen5ShaderProgram(address, instructions, sawMergedTailCall);
                 return true;
             }
 
@@ -850,6 +851,13 @@ public static class Gen5ShaderTranslator
             {
                 program = new Gen5ShaderProgram(address, instructions);
                 return true;
+            }
+
+            if (followTailCall &&
+                string.Equals(name, "SSwappcB64", StringComparison.Ordinal) &&
+                IsNullScalarDestination(words[0]))
+            {
+                sawMergedTailCall = true;
             }
         }
 
