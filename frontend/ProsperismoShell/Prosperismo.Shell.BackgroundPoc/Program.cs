@@ -35,7 +35,10 @@ internal static class Program
             return FirstWaveProbe.RenderPlate(
                 eboot,
                 Arg(args, "--out-png") ?? "plate.png",
-                float.TryParse(Arg(args, "--time"), out var tv) ? tv : 0f);
+                float.TryParse(Arg(args, "--time"), out var tv) ? tv : 0f,
+                Arg(args, "--constants"),
+                uint.TryParse(Arg(args, "--width"), out var plw) ? plw : 3840u,
+                uint.TryParse(Arg(args, "--height"), out var plh) ? plh : 2160u);
         }
 
         if (args.Contains("--compile-particle"))

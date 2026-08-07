@@ -539,38 +539,44 @@ internal static class FirstWaveProbe
     /// firmware palette. Nothing about the plate is reimplemented — the
     /// fragment stage is the console's instruction stream.</para>
     /// </summary>
-    internal static int RenderPlate(string eboot, string outPath, float time)
+    internal static int RenderPlate(
+        string eboot, string outPath, float time, string? constantsPath, uint width, uint height)
     {
         const ulong constantBufferAddress = 0x0200_0000;
-        const uint width = 1920;
-        const uint height = 1080;
 
         var image = File.ReadAllBytes(eboot);
         var slice = Array.Find(Stages, x => x.Name == "fw_background_p");
         var text = new byte[slice.Length];
         Array.Copy(image, slice.Offset, text, 0, slice.Length);
 
+        // The 412-byte FirstWave constant buffer, produced by executing the
+        // firmware's own builder at VA 0x000c5d00 — see
+        // docs/sony-shell/firstwave-host-constants-12.40.md and
+        // tools/export_firstwave_constants.py. Two fields are easy to get wrong
+        // and both flatten the plate completely:
+        //   +0x40  worldProjectionMatrix. The shader takes v_rcp_f32 of m00 and
+        //          m11 to rebuild the view ray; zeros give infinities.
+        //   +0x190 screenDim, read with v_cvt_f32_u32 — *unsigned integers*,
+        //          not floats. 1920.0f reinterpreted as a uint is ~1.14e9.
         var constantBuffer = new byte[0x200];
-        void Colour(int offset, float r, float g, float b, float a)
+        if (string.IsNullOrEmpty(constantsPath) || !File.Exists(constantsPath))
         {
-            BitConverter.TryWriteBytes(constantBuffer.AsSpan(offset + 0, 4), r);
-            BitConverter.TryWriteBytes(constantBuffer.AsSpan(offset + 4, 4), g);
-            BitConverter.TryWriteBytes(constantBuffer.AsSpan(offset + 8, 4), b);
-            BitConverter.TryWriteBytes(constantBuffer.AsSpan(offset + 12, 4), a);
+            Console.Error.WriteLine(
+                "no constant buffer: build one with tools/export_firstwave_constants.py");
+            return 2;
         }
 
-        var probe = Environment.GetEnvironmentVariable("PLATE_PROBE") == "1";
-        Colour(0x110, probe ? 1f : 76 / 255f, probe ? 0f : 158 / 255f, probe ? 0f : 255 / 255f, 1f);
-        Colour(0x120, 58 / 255f, 148 / 255f, 238 / 255f, 1f);
-        Colour(0x130, 42 / 255f, 98 / 255f, 202 / 255f, 1f);
-        Colour(0x140, 27 / 255f, 62 / 255f, 89 / 255f, 1f);
-        Colour(0x150, 27 / 255f, 62 / 255f, 89 / 255f, 1f);
-        Colour(0x160, 76 / 255f, 158 / 255f, 255 / 255f, 1f);
-        BitConverter.TryWriteBytes(constantBuffer.AsSpan(0x180, 4), 1f);
-        BitConverter.TryWriteBytes(constantBuffer.AsSpan(0x184, 4), time);
-        BitConverter.TryWriteBytes(constantBuffer.AsSpan(0x188, 4), 1f);
-        BitConverter.TryWriteBytes(constantBuffer.AsSpan(0x190, 4), (float)width);
-        BitConverter.TryWriteBytes(constantBuffer.AsSpan(0x194, 4), (float)height);
+        var constants = File.ReadAllBytes(constantsPath);
+        constants.AsSpan(0, Math.Min(constants.Length, constantBuffer.Length)).CopyTo(constantBuffer);
+        if (time != 0f)
+        {
+            BitConverter.TryWriteBytes(constantBuffer.AsSpan(0x184, 4), time);
+        }
+
+        Console.WriteLine(
+            $"constants: {constants.Length} bytes, proj m00={BitConverter.ToSingle(constantBuffer, 0x40):G6} " +
+            $"screenDim={BitConverter.ToUInt32(constantBuffer, 0x190)}x{BitConverter.ToUInt32(constantBuffer, 0x194)} " +
+            $"time={BitConverter.ToSingle(constantBuffer, 0x184):G6}");
 
         var memory = new FlatMemory();
         memory.AddRegion(ProgramAddress, text);
