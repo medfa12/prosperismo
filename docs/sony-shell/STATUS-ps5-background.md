@@ -301,10 +301,28 @@ Probing `v13` per vertex confirms it varies - vertices 0, 1, 7 and 100 give
 `0`, vertices 431 and 863 give `1.0` - so the geometry does carry a radial
 coordinate, and fragments near the centre should survive with `alpha = 1`.
 
-They do not: the OIT counter stays at zero for every fragment at every patch
-count and resolution tried. So the radius reaching the fragment stage is pinned
-at the rim even though the domain computes both extremes. That is the specific
-question to answer next, and it is much narrower than "the shading is wrong".
+They do not, and histogramming the radius across every fragment - with an atomic
+per bucket, rather than sampling one fragment - says why:
+
+| `|1 - r|` | fragments |
+|---|---|
+| ~1e-5 | 3 |
+| ~1e-6 | 436,242 |
+| ~1e-7 | 262,736 |
+| ~1e-9 | 476,387 |
+
+**Every fragment sits within a millionth of `r = 1.0`.** For small `e = |1 - r|`
+the alpha law linearises to `alpha ~ 40e`, which reproduces the measured 1e-5
+exactly and is three orders under the 0.002 threshold.
+
+So this is not a shading fault at all: **the drawn geometry is the rim of the
+disc and nothing else.** The interior is never rasterised. The domain computes
+`v13 = 0` at some vertices, but those never reach the fragment stage.
+
+That makes the OIT discard a *symptom* of the unestablished patch tiling rather
+than an independent problem. A tiling that sweeps only the boundary of the
+control mesh would produce exactly this: correct shaders, correct interfaces,
+correct constants, and a surface that is all edge.
 
 ### The domain's NaN is a stride mismatch, not bad geometry
 
