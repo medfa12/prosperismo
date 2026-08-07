@@ -19,7 +19,7 @@ the output looks right.
 |---|---|---|
 | particle simulation | `particle_c` | 6000-record bank, authored pattern parameters |
 | wave control points | `fw_flow_vl` + `fw_flow_h` | merged LS+HS, 16 points/patch, factors all `12.0` |
-| wave surface | `fw_flow_dv` | **rasterises** - 96 patches, 645,939 of 921,600 pixels |
+| wave surface | `fw_flow_dv` | **rasterises** - 645,939 of 921,600 pixels, on an unestablished patch tiling |
 | particle draw | `particle_vv` + `particle_p` | eight groups, 1,820 particles |
 | light shafts + compositing | `light_p` | takes the particle frame as `texP` |
 | plate | `fw_background_p` | runs; see *Unresolved* for where it belongs |
@@ -113,30 +113,51 @@ buffer states outright at `+0x100`. The near plane is `z = 505.7`. Control
 points run to `z = 1950`, behind the eye, and to `x = 2685` where the frustum
 half-width at that depth is 524.
 
-### The patch count is 96, from the knot vectors
+### The boundary ring is a closed periodic B-spline, and it re-scopes the knot tables
 
-Two float tables sit next to the code that consumes the lattice seeds, at
-`0x00FF16F0` and `0x00FF1740`, and they settle the tiling:
+The 13-pair ring decodes exactly. Every entry is a **unit** direction -
+`r = 1.0000` for all 26 - at an exact multiple of 36 degrees:
 
-| table | contents | reading |
-|---|---|---|
-| `0x00FF1740` | 15 values, `-0.25 .. 1.25` in **1/8** steps, ends duplicated | 8 spans -> a cubic B-spline needs `8 + 3 = 11` control points and `8 + 7 = 15` knots |
-| `0x00FF16F0` | 19 values, `-1/6 .. 7/6` in **1/12** steps, ends duplicated | 12 spans -> `12 + 3 = 15` control points, `12 + 7 = 19` knots |
+```
+36, 72, 108, 144, 180, -144, -108, -72, -36, 0,   then 36, 72, 108 again
+```
 
-11 and 15 are exactly the lattice's dimensions. So the surface is a uniform
-bicubic B-spline over an `11 x 15` control grid, and its patches are a 4x4
-window sliding by one: `(11 - 3) x (15 - 3)` = **8 x 12 = 96 patches**. The
-highest lattice index that tiling reaches is `14 * 11 + 10 = 164` - the last
-entry of the 165. Nothing is left over and nothing is short, which is the
-check that the reading is right.
+Ten distinct angles around the full circle, then three wrapped repeats, each
+angle appearing twice with `z = -1` and `z = 0`. Ten spans with the cubic
+degree's three control points duplicated to close the loop is a **closed
+periodic cubic B-spline**: the surface is radially symmetric with ten-fold
+angular periodicity.
 
-`VGT_LS_HS_CONFIG.NUM_PATCHES = 15` is unrelated to this: it is how many
-patches share a threadgroup, not how many the draw has.
+**This corrects an earlier claim in this file.** The knot tables at `0x00FF1740`
+and `0x00FF16F0` - 8 spans over 11 control points, 12 spans over 15 - were
+written up here as giving the GPU's patch tiling, `8 x 12 = 96`. They do not.
+They describe the **host-side** `11 x 15` lattice that `0xc2a30` evaluates; that
+routine opens with a knot-span binary search and is handed `11`, `15` and both
+tables directly. The angular direction on the GPU has ten spans, not eight or
+twelve, so the two cannot be the same grid.
+
+The `96` figure produced a picture because 96 patches of *something* were drawn,
+but the tiling it rested on was not established. It is withdrawn.
+
+### What the ring tells us about the GPU stream
+
+The local section fetches the ring at the **same index as the lattice** -
+probing the address it resolves shows byte `index * 16` for both. With only 26
+ring entries, any draw wider than 26 vertices reads out of range. So either the
+GPU vertex buffer is at most 26 vertices wide, or the host builds a wider one -
+and the host B-spline evaluator is the candidate, since a `11 x 15` control
+lattice evaluated on the CPU is exactly how a smaller GPU control mesh would be
+produced.
+
+That is the open question, and it is the same one as before, now with a much
+sharper shape: **the GPU vertex stream is host-produced, and its dimensions are
+ten-fold periodic in the angular direction.**
 
 ### The surface rasterises
 
 645,939 pixels of 921,600, from `fw_flow_vl` + `fw_flow_h` + `fw_flow_dv`
-executing across all 96 patches. The geometry is the console's; the colour is a
+executing across 96 patches - a patch count now known to be unestablished, see
+above. The geometry is the console's; the colour is a
 placeholder fragment shader, because `fw_oit_p` is not wired yet.
 
 What had been blocking it was **not** the tiling and not the addressing.
