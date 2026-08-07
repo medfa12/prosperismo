@@ -2261,14 +2261,13 @@ public static partial class Gen5SpirvTranslator
                     StoreV(seeding.VertexIndexVgpr, flat, guardWithExec: false);
                     StoreV(
                         seeding.LdsSlotVgpr,
-                        IAdd(
-                            _module.AddInstruction(
-                                SpirvOp.IMul, _uintType, flat, UInt(seeding.LdsSlotStride)),
-                            UInt(seeding.PatchId)),
+                        IAdd(flat, UInt(seeding.PatchId * seeding.LdsSlotStride)),
                         guardWithExec: false);
                     StoreV(
                         seeding.PackedIdVgpr,
-                        BitwiseOr(flat, UInt(seeding.PatchId << 8)),
+                        BitwiseOr(
+                            ShiftLeftLogical(flat, UInt(8)),
+                            UInt(seeding.PatchId)),
                         guardWithExec: false);
                 }
             }

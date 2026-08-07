@@ -172,13 +172,13 @@ internal static class WaveSurfaceProbe
                 // the allocation would be reported by ldsAddressOutOfRange.
                 ldsDwordCount: 32 * 1024 / sizeof(uint),
                 // The local section reads v2 as the vertex index and v3 as the
-                // LDS slot; the hull reads v1 as (patchId << 8) | controlPoint.
-                // v3's stride of 16 is the local's own v3 << 5 matching the
-                // hull's controlPoint*512 + patchId*32.
+                // LDS slot; the hull reads v1 as (controlPoint << 8) | patchId,
+                // giving it a ring address of patch*512 + point*32 - the
+                // 32-byte stride fw_flow_dv reads sixteen control points at.
                 mergedWaveSeeding: new Gen5MergedWaveVgprSeeding(
                     VertexIndexVgpr: 2,
                     LdsSlotVgpr: 3,
-                    LdsSlotStride: 16,
+                    LdsSlotStride: 16,   // patches are 16 control points apart in LDS
                     PackedIdVgpr: 1,
                     PatchId: 0)))
         {
@@ -266,16 +266,16 @@ internal static class WaveSurfaceProbe
             }
 
             Console.WriteLine($"patches : {written:N0} of {ringOut.Length:N0} bytes written");
-            // The hull addresses the ring as controlPoint*512 + patch*32, so
-            // consecutive control points of one patch are 512 bytes apart, not
-            // adjacent.
+            // The hull addresses the ring as patch*512 + controlPoint*32, which
+            // is the 32-byte stride fw_flow_dv reads its sixteen control points
+            // at, so one patch's points are contiguous.
             var live = 0;
             for (var cp = 0; cp < ControlPoints; cp++)
             {
                 var v = new float[4];
                 for (var k = 0; k < 4; k++)
                 {
-                    v[k] = BitConverter.ToSingle(ringOut, (cp * 512) + (k * 4));
+                    v[k] = BitConverter.ToSingle(ringOut, (cp * 32) + (k * 4));
                 }
 
                 if (v[3] != 0f)

@@ -72,8 +72,12 @@ public readonly record struct Gen5ShaderResourceMapping(
 /// this describes it rather than reimplementing anything the shader does.</para>
 /// </summary>
 /// <param name="VertexIndexVgpr">Receives the flat invocation id.</param>
-/// <param name="LdsSlotVgpr">Receives <c>id * LdsSlotStride + PatchId</c>.</param>
-/// <param name="PackedIdVgpr">Receives <c>(PatchId &lt;&lt; 8) | id</c>.</param>
+/// <param name="LdsSlotVgpr">Receives <c>id + PatchId * LdsSlotStride</c>.</param>
+/// <param name="PackedIdVgpr">Receives <c>(id &lt;&lt; 8) | PatchId</c>. The hull
+/// takes the control-point index from bits 12:8 and the patch from the low
+/// byte, which is what makes its ring address <c>patch * 512 + point * 32</c> —
+/// the 32-byte stride the domain stage then reads sixteen control points
+/// at.</param>
 public readonly record struct Gen5MergedWaveVgprSeeding(
     uint VertexIndexVgpr,
     uint LdsSlotVgpr,
