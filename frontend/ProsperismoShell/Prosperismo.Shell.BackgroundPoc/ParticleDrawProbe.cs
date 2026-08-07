@@ -197,6 +197,23 @@ internal static class ParticleDrawProbe
                 }
             }
 
+            // The light layer is the compositor: it takes the plate-and-particle
+            // frame as texP and adds the shafts. This is the firmware's own
+            // order, not a post-process of convenience.
+            var colorCbPath = Environment.GetEnvironmentVariable("LIGHT_COLORCB");
+            if (!string.IsNullOrEmpty(colorCbPath))
+            {
+                if (!LightLayerProbe.TryBuildDraw(
+                        image, colorCbPath, rgba, width, height, time,
+                        out var lightDraw, out var lightError))
+                {
+                    Console.Error.WriteLine($"frame {frame}: {lightError}");
+                    return 1;
+                }
+
+                rgba = runner.RenderParticleFrame([lightDraw], width, height);
+            }
+
             var path = Path.Combine(outputDirectory, $"{frame:D5}.png");
             FirstWaveProbe.WritePngPublic(path, (int)width, (int)height, rgba);
 

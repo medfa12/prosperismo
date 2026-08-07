@@ -41,6 +41,17 @@ internal static class Program
                 uint.TryParse(Arg(args, "--height"), out var plh) ? plh : 2160u);
         }
 
+        if (args.Contains("--render-light"))
+        {
+            return LightLayerProbe.Render(
+                eboot,
+                Arg(args, "--out-png") ?? "light.png",
+                Arg(args, "--colorcb") ?? "colorcb.bin",
+                null,
+                uint.TryParse(Arg(args, "--width"), out var lw) ? lw : 1920u,
+                uint.TryParse(Arg(args, "--height"), out var lh) ? lh : 1080u);
+        }
+
         if (args.Contains("--merge-flow"))
         {
             return FirstWaveProbe.MergeFlow(eboot);
