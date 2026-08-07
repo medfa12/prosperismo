@@ -819,6 +819,19 @@ public static class Gen5ShaderTranslator
                 program = new Gen5ShaderProgram(address, instructions);
                 return true;
             }
+
+            // A merged LS+HS ends its local section with a tail call into the
+            // hull entry rather than s_endpgm: `s_swappc_b64 null, s[n:n+1]`.
+            // The NULL destination is what makes it a jump — a real call keeps
+            // the return address — so only that form terminates the program.
+            // fw_flow_vl is exactly this shape and read as "unterminated" until
+            // the rule existed.
+            if (string.Equals(name, "SSwappcB64", StringComparison.Ordinal) &&
+                IsNullScalarDestination(words[0]))
+            {
+                program = new Gen5ShaderProgram(address, instructions);
+                return true;
+            }
         }
 
         error = $"unterminated pc=0x{pc:X} instructions={instructionCount}" +
@@ -2070,6 +2083,13 @@ public static class Gen5ShaderTranslator
         "DsWrxchgRtnB32" or "DsCmpstRtnB32" => true,
         _ => false,
     };
+
+    /// <summary>
+    /// True when a SOP1 word names the architectural NULL register as its
+    /// scalar destination. On GFX10 that operand code is 125.
+    /// </summary>
+    private static bool IsNullScalarDestination(uint sop1Word) =>
+        ((sop1Word >> 16) & 0x7F) == 125;
 
     private static Gen5ShaderInstruction CreateInstruction(
         uint pc,
