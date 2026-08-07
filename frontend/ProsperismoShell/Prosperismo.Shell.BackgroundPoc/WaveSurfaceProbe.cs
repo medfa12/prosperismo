@@ -397,6 +397,8 @@ internal static class WaveSurfaceProbe
                     PatchIdFromWorkgroup: PatchesPerGroup == 1,
                     LatticeRowLength: uint.TryParse(
                         Environment.GetEnvironmentVariable("LATTICE_ROW"), out var lr) ? lr : 0,
+                    LatticeWrapSpans: uint.TryParse(
+                        Environment.GetEnvironmentVariable("LATTICE_WRAP"), out var lw) ? lw : 0,
                     OffchipOffsetSgpr: 2,
                     OffchipBytesPerGroup: PatchesPerGroup * PatchRingStride,
                     FactorOffsetSgpr: 4,

@@ -2415,16 +2415,31 @@ public static partial class Gen5SpirvTranslator
                     if (seeding.LatticeRowLength > 0)
                     {
                         var width = UInt(seeding.LatticeRowLength);
-                        var patchCols = UInt(seeding.LatticeRowLength - 3);
                         var four = UInt(4);
-                        var row = IAdd(
-                            _module.AddInstruction(
-                                SpirvOp.UDiv, _uintType, globalPatch, patchCols),
-                            _module.AddInstruction(SpirvOp.UDiv, _uintType, control, four));
+
+                        // The wrapping direction contributes LatticeWrapSpans
+                        // patch columns and its index closes on itself; the
+                        // clamped direction contributes width - 3.
+                        var spans = seeding.LatticeWrapSpans > 0
+                            ? seeding.LatticeWrapSpans
+                            : seeding.LatticeRowLength - 3;
+                        var patchCols = UInt(spans);
+
                         var column = IAdd(
                             _module.AddInstruction(
                                 SpirvOp.UMod, _uintType, globalPatch, patchCols),
                             _module.AddInstruction(SpirvOp.UMod, _uintType, control, four));
+                        if (seeding.LatticeWrapSpans > 0)
+                        {
+                            column = _module.AddInstruction(
+                                SpirvOp.UMod, _uintType, column, width);
+                        }
+
+                        var row = IAdd(
+                            _module.AddInstruction(
+                                SpirvOp.UDiv, _uintType, globalPatch, patchCols),
+                            _module.AddInstruction(SpirvOp.UDiv, _uintType, control, four));
+
                         vertexIndex = IAdd(
                             _module.AddInstruction(SpirvOp.IMul, _uintType, row, width),
                             column);

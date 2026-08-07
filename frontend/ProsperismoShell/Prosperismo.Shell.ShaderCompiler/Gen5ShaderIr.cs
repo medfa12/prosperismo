@@ -108,7 +108,12 @@ public readonly record struct Gen5MergedWaveVgprSeeding(
     // lattice of that width, which is how a uniform bicubic surface tiles.
     // This is host draw state, not shader code, and is not asserted as
     // recovered - it is a hypothesis the geometry either supports or refutes.
-    uint LatticeRowLength = 0);
+    uint LatticeRowLength = 0,
+    // Number of spans in the wrapping direction. A closed periodic cubic
+    // B-spline over N spans has N + 3 control points, the last three repeating
+    // the first three, so a patch window must take its index modulo the row
+    // length rather than running off the end. Zero means no wrap.
+    uint LatticeWrapSpans = 0);
 
 /// <summary>
 /// What the fixed-function tessellator hands a domain stage.

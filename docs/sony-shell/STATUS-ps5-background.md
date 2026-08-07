@@ -324,6 +324,41 @@ than an independent problem. A tiling that sweeps only the boundary of the
 control mesh would produce exactly this: correct shaders, correct interfaces,
 correct constants, and a surface that is all edge.
 
+### The angular direction is periodic, and wrapping the tiling doubles coverage
+
+The two knot tables resolve against a disc once the directions are told apart:
+
+| table | spans | direction | control points |
+|---|---|---|---|
+| `0x00FF16F0` | 12 | **periodic** (angular) | `12 + 3 = 15` |
+| `0x00FF1740` | 8 | clamped (radial) | `8 + 3 = 11` |
+
+`15 x 11 = 165`, the lattice exactly. A closed periodic cubic B-spline repeats
+its first three control points at the end, which is also the boundary ring's own
+shape - ten spans, thirteen points - so the angular patch window must take its
+index **modulo** the row length rather than running off the end.
+
+Adding that wrap (`LatticeWrapSpans`) doubles the fragments the surface produces,
+2,421,597 against 1,175,368. So the wrap is real and the previous tiling was
+covering half the mesh.
+
+It does **not** change the radius: every fragment still lands within 1e-5 of
+`r = 1.0`.
+
+### Where the radius actually dies
+
+An earlier note here guessed the `v13 = 0` vertices were inactive lanes. They are
+not - instrumenting EXEC alongside `v13` shows **all 864 lanes active**.
+
+Before the domain's final write, `v13` is bimodal across a patch: 276 vertices at
+exactly `0.0`, the rest spread `1.0` to `1.074`. The final write is
+`v13 += v15 * v5`, and after it every fragment reads `r` within a millionth of
+1.0. So that one accumulate flattens a varying radius into a constant.
+
+The radius the shader wants therefore exists in the mesh right up to the last
+step. What feeds `v15` and `v5` at that point is the open question - and it is
+the last one between the wave and its own colour.
+
 ### The domain's NaN is a stride mismatch, not bad geometry
 
 The hull's ring is **fully finite at 96 patches** - 1,536 of 1,536 control points,
