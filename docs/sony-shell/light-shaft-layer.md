@@ -162,15 +162,46 @@ indexed by the object field at `+0xE0`. Each record is a `ColorCb` — `0x7C`
 bytes — padded to `0x80`. The draw path then crossfades the live colours at obj
 `+0xF0`…`+0x170` toward that record.
 
-**Its contents are not in the file.** Reading 22 records at that address yields
-values with absurd exponents — it is runtime-initialised memory, seeded by code,
-the same arrangement as `FirstWave::Initialize`'s six palette records. Those
-bytes are **not** colours and are not reproduced here.
+**Its contents are not in the file** — it is runtime-initialised memory, seeded
+by code, the same arrangement as `FirstWave::Initialize`'s palette records.
+Reading the static bytes yields values with absurd exponents; those are not
+colours.
 
-The seeder has not been found. A sweep for writers into the table's range
-returns a large number of hits across an adjacent general data region, and
-narrowing that was not completed. This is the one remaining data gap in the
-light layer, and it is what a specific screen's wave colour depends on.
+**The seeder is at `0xEA786`**: a straight-line block of vector stores, one
+record at a time. `tools/dump_wave_colour_presets.py` replays it — walk the
+instructions, track which RIP-relative constant each vector register last
+loaded, and apply every store into the table. Nothing is fitted; every float is
+a constant the seeder itself names.
+
+Twenty of the twenty-two records come out. Three checks say the replay is right:
+
+- `gamma` is `0.45454` — **1/2.2** — in every record but three, and those three
+  (`MiniApp` `0.607`, `SystemArea`/`MusicUnlimited` `0.560`) are deliberate
+  variations, not noise.
+- `themedColor` is `(1, 1, 1, 1)` everywhere: the identity default that
+  `SetThemedLightColor` overwrites.
+- `gintensity` forms a clean per-screen ladder — `1.0`, `0.52`, `0.32`, `0.27` —
+  and `Login` (`0.52`) and `LoginNoUserLogined` (`0.32`) differ **only** in that
+  one value, which is exactly what two variants of one screen should look like.
+
+| preset | `lightCol` | `light2ColOnFloor` | `pointLightCol` | `gintensity` |
+|---|---|---|---|---|
+| `HomeScreen` | `0.072, 0.070, 0.073` | `2.0, 1.0, 1.3` | `0.063, 0.063, 0.060` | `1.0` |
+| `Login` | `0.020, 0.020, 0.200` | `5.0, 5.0, 5.0` | `0.20, 0.20, 0.40` | `0.52` |
+| `LoginNoUserLogined` | `0.020, 0.020, 0.200` | `5.0, 5.0, 5.0` | `0.20, 0.20, 0.40` | `0.32` |
+| `Boot` | `0.020, 0.020, 0.200` | `5.0, 5.0, 5.0` | `0.20, 0.20, 0.40` | `0.27` |
+| `Store` | `0.065, 0.065, 0.070` | `1.75, 1.75, 1.75` | `0.0, 0.0, 0.01` | `1.0` |
+| `ThemeFlow2` | `0.100, 0.175, 0.300` | `3.0, 7.15, 9.0` | `0.15, 0.35, 1.10` | `1.0` |
+
+`Login`'s dim blue with a bright neutral floor pool is the dark room the login
+sequence sits in; `HomeScreen`'s near-neutral key with a warm `(2.0, 1.0, 1.3)`
+floor is the home screen. `noise` is `0.008` in every record.
+
+**`ThemeFlow6` and `ThemeFlow7` are not written by this block** and are reported
+blank. Widening the disassembly window makes them appear to fill — with values
+another function stores into the same range, `gamma = 200.0` where every genuine
+record carries 1/2.2. The narrow window is deliberate: a blank is honest, a
+plausible wrong number is not.
 
 ## The full shader inventory
 
