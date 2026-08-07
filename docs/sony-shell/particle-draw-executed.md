@@ -109,11 +109,14 @@ the tuning values are replayed from the firmware's own authored blob.
 
 **One host-chosen input is not recovered.** `SRTVsPs + 0x14` selects which half
 of the palette is used — entries 0–3 (the four bright face-button hues) when it
-is non-zero, entries 4–6 (warm gold/amber/brown) when it is zero.
-[`particle-draw.md`](particle-draw.md) records that this constant is
-host-written and has **never been read out of the firmware**. This render
+is non-zero, entries 4–6 (warm gold/amber/brown) when it is zero. This render
 writes zero, so it takes the warm path. That is an assumption, not a recovered
 fact, and the colour of the result depends on it.
+
+The field is now **named**: the PSSL reflection table calls it
+`colorPatternFlag`, sitting directly beside `transPatternFlag` — see
+[`bglayer-reflection-contracts.md`](bglayer-reflection-contracts.md). That
+identifies what it is without settling what the shell writes into it.
 
 Still not rendered: the `large_particle_vv`/`_p` pair and its two GNF sprites.
 They appear in `coldboot` (4 and 40 particles) but not in `spread_expanded`, so
