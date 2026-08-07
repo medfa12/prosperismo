@@ -85,6 +85,25 @@ public readonly record struct Gen5MergedWaveVgprSeeding(
     uint PackedIdVgpr,
     uint PatchId);
 
+/// <summary>
+/// What the fixed-function tessellator hands a domain stage.
+///
+/// <para>The wave surface's domain stage reads two tessellation coordinates and
+/// a patch id from VGPRs; every other register it touches it writes first. The
+/// tessellator that produces those coordinates is hardware — the same category
+/// as the rasteriser — so a host driving the stage supplies them rather than
+/// reimplementing anything the shader does.</para>
+///
+/// <para>The grid is the uniform quad subdivision the hull's factors ask for:
+/// <c>Segments + 1</c> vertices per edge, <c>u</c> varying fastest.</para>
+/// </summary>
+public readonly record struct Gen5TessellationDomainSeeding(
+    uint UVgpr,
+    uint VVgpr,
+    uint PatchVgpr,
+    uint Segments,
+    uint PatchId);
+
 public sealed record Gen5ShaderMetadata(
     uint ExtendedUserDataSizeDwords,
     uint ShaderResourceTableSizeDwords,

@@ -207,7 +207,8 @@ public static partial class Gen5SpirvTranslator
         uint? vertexPositionOutputControl = null,
         Gen5HostVertexOutputFeatures hostVertexOutputFeatures = default,
         uint hostSubgroupSize = RdnaWaveLaneCount,
-        uint waveLaneCount = RdnaWaveLaneCount)
+        uint waveLaneCount = RdnaWaveLaneCount,
+        Gen5TessellationDomainSeeding? domainSeeding = null)
     {
         var context = new CompilationContext(
             Gen5SpirvStage.Vertex,
@@ -455,6 +456,7 @@ public static partial class Gen5SpirvTranslator
         private uint _ldsDwordCount;
         private readonly uint _ldsDwordLimit;
         private readonly Gen5MergedWaveVgprSeeding? _mergedWaveSeeding;
+        private readonly Gen5TessellationDomainSeeding? _domainSeeding;
         private uint _ldsOutOfRange;
         private uint _positionOutput;
         private uint _pointSizeOutput;
@@ -562,8 +564,10 @@ public static partial class Gen5SpirvTranslator
             Gen5HostVertexOutputFeatures hostVertexOutputFeatures = default,
             uint hostSubgroupSize = RdnaWaveLaneCount,
             uint ldsDwordLimit = LdsDwordCount,
-            Gen5MergedWaveVgprSeeding? mergedWaveSeeding = null)
+            Gen5MergedWaveVgprSeeding? mergedWaveSeeding = null,
+            Gen5TessellationDomainSeeding? domainSeeding = null)
         {
+            _domainSeeding = domainSeeding;
             _mergedWaveSeeding = mergedWaveSeeding;
             _ldsDwordLimit = ldsDwordLimit == 0 ? LdsDwordCount : ldsDwordLimit;
             _stage = stage;
@@ -2156,6 +2160,42 @@ public static partial class Gen5SpirvTranslator
             {
                 StoreV(5, Load(_uintType, _vertexIndexInput), guardWithExec: false);
                 StoreV(8, Load(_uintType, _instanceIndexInput), guardWithExec: false);
+
+                if (_domainSeeding is { } domain)
+                {
+                    // A domain stage receives its coordinates from the
+                    // tessellator, not as a vertex index. Rebuild the uniform
+                    // quad grid the hull's factors ask for: u varies fastest
+                    // over Segments + 1 vertices per edge.
+                    var index = Load(_uintType, _vertexIndexInput);
+                    var span = UInt(domain.Segments + 1);
+                    var column = _module.AddInstruction(
+                        SpirvOp.UMod, _uintType, index, span);
+                    var row = _module.AddInstruction(
+                        SpirvOp.UDiv, _uintType, index, span);
+                    var scale = Float(1f / domain.Segments);
+                    StoreV(
+                        domain.UVgpr,
+                        Bitcast(
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.FMul,
+                                _floatType,
+                                _module.AddInstruction(SpirvOp.ConvertUToF, _floatType, column),
+                                scale)),
+                        guardWithExec: false);
+                    StoreV(
+                        domain.VVgpr,
+                        Bitcast(
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.FMul,
+                                _floatType,
+                                _module.AddInstruction(SpirvOp.ConvertUToF, _floatType, row),
+                                scale)),
+                        guardWithExec: false);
+                    StoreV(domain.PatchVgpr, UInt(domain.PatchId), guardWithExec: false);
+                }
 
                 // Give every declared param output a defined starting value.
                 // Outputs the program actually exports overwrite this; the

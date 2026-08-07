@@ -293,6 +293,123 @@ internal static class WaveSurfaceProbe
             Console.WriteLine($"          {live} of {ControlPoints} control points written");
         }
 
+        // The domain stage reads the same descriptor block the hull wrote
+        // through - its ring V# is at +0x30 either way - plus the
+        // worldViewProjection and world matrices at constant-buffer +0x80 and
+        // +0xC0. Its only VGPR inputs are the two tessellation coordinates and
+        // the patch id.
+        var outPng = Environment.GetEnvironmentVariable("WAVE_OUT_PNG");
+        if (string.IsNullOrEmpty(outPng))
+        {
+            return 0;
+        }
+
+        return RenderSurface(
+            image, constants, descriptorBlock,
+            ringIndex >= 0 ? results[ringIndex] : new byte[PatchRingBytes],
+            outPng);
+    }
+
+    private const int DomainOffset = 0x11F5500;
+    private const int DomainLength = 0xF68;
+    private const int Segments = 12;
+
+    private static int RenderSurface(
+        byte[] image, byte[] constants, byte[] descriptorBlock, byte[] patchRing, string outPath)
+    {
+        var memory = new FirstWaveProbe.FlatMemory();
+        memory.AddRegion(ProgramAddress, Slice(image, DomainOffset, DomainLength));
+        memory.AddRegion(ConstantsAddress, constants);
+        memory.AddRegion(DescriptorBlockAddress, descriptorBlock);
+        memory.AddRegion(PatchRingAddress, patchRing);
+
+        var context = new CpuContext(memory, Generation.Gen5);
+        if (!Gen5ShaderTranslator.TryDecodeProgram(
+                context, ProgramAddress, out var program, out var error))
+        {
+            Console.Error.WriteLine($"domain  : decode FAILED {error}");
+            return 1;
+        }
+
+        Console.WriteLine($"domain  : OK - {program.Instructions.Count} instructions");
+
+        const uint vertices = (Segments + 1) * (Segments + 1);
+        var userData = new uint[14];
+        userData[3] = 0x4040;
+        FirstWaveProbe.WriteBufferDescriptorPublic(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(8, 4)),
+            ConstantsAddress, 0, constants.Length);
+        BitConverter.TryWriteBytes(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(12, 2)),
+            DescriptorBlockAddress);
+
+        var state = new Gen5ShaderState(program, userData, Metadata: null, UserDataScalarRegisterBase: 0);
+        if (!Gen5ShaderScalarEvaluator.TryEvaluate(context, state, out var evaluation, out error))
+        {
+            Console.Error.WriteLine($"domain  : evaluate FAILED {error}");
+            return 1;
+        }
+
+        Console.WriteLine($"domain  : {evaluation.GlobalMemoryBindings.Count} buffer(s)");
+
+        if (!Gen5SpirvTranslator.TryCompileVertexShader(
+                state, evaluation, out var compiled, out error,
+                requiredVertexOutputCount: 5,
+                domainSeeding: new Gen5TessellationDomainSeeding(
+                    UVgpr: 5, VVgpr: 6, PatchVgpr: 7, Segments: Segments, PatchId: 0)))
+        {
+            Console.Error.WriteLine($"domain  : spirv FAILED {error}");
+            return 1;
+        }
+
+        Console.WriteLine($"domain  : spirv OK - {compiled.Spirv.Length:N0} bytes");
+
+        var buffers = new byte[compiled.GlobalMemoryBindings.Count][];
+        for (var i = 0; i < buffers.Length; i++)
+        {
+            var binding = compiled.GlobalMemoryBindings[i];
+            var data = new byte[binding.DataLength];
+            var source = binding.BaseAddress switch
+            {
+                ConstantsAddress => constants,
+                DescriptorBlockAddress => descriptorBlock,
+                PatchRingAddress => patchRing,
+                _ => null,
+            };
+            source?.AsSpan(0, Math.Min(source.Length, data.Length)).CopyTo(data);
+            buffers[i] = data;
+        }
+
+        var fragmentPath = Environment.GetEnvironmentVariable("SURFACE_FS")
+            ?? throw new InvalidOperationException("SURFACE_FS not set");
+
+        const uint width = 1280;
+        const uint height = 720;
+        using var runner = new ParticleComputeRunner();
+        Console.WriteLine($"device  : {runner.DeviceName}");
+        var draw = new ParticleComputeRunner.ParticleDraw(
+            compiled.Spirv, File.ReadAllBytes(fragmentPath), buffers, vertices, null, false);
+        var rgba = runner.RenderParticleFrame([draw], width, height);
+
+        var lit = 0;
+        for (var i = 0; i < rgba.Length; i += 4)
+        {
+            if (rgba[i] != 0 || rgba[i + 1] != 0 || rgba[i + 2] != 0)
+            {
+                lit++;
+            }
+        }
+
+        Console.WriteLine($"surface : {lit:N0} lit pixels of {width * height:N0}");
+        FirstWaveProbe.WritePngPublic(outPath, (int)width, (int)height, rgba);
+        Console.WriteLine($"output  : {outPath}");
         return 0;
+    }
+
+    private static byte[] Slice(byte[] image, int offset, int length)
+    {
+        var text = new byte[length];
+        Array.Copy(image, offset, text, 0, length);
+        return text;
     }
 }
