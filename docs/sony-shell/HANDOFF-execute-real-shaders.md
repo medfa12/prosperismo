@@ -118,6 +118,10 @@ opcode mix. 19 programs in `0x11F0000–0x1200000`.
 - `particle_c` is a *simulation* and renders nothing. Chasing it for an image
   was wrong; the pixel shaders make pixels.
 
+> **Start at [`STATUS-ps5-background.md`](STATUS-ps5-background.md)** — it
+> supersedes this file's status section and lists what executes, what does not,
+> and what is still unresolved.
+>
 > **Status: the particle field renders.** See
 > [`particle-draw-executed.md`](particle-draw-executed.md) and
 > [`METHODOLOGY-executing-sony-shaders.md`](METHODOLOGY-executing-sony-shaders.md).
