@@ -234,6 +234,43 @@ An earlier revision of this note listed the large particles as a missing layer
 of every background. That was wrong: they are missing from one pattern out of
 seven.
 
+## The colour crossfade, and what actually advances
+
+`0xE9C10` is the preset setter — `(object, screen, variant, immediate)`. It
+computes the record index as **`variant + screen * 4`**, which is why the table
+reads as groups of four: `gintensity` runs `1.0`, `0.52`, `0.32`, `0.27` across
+each group, so the four entries of a screen are dimming variants of one look.
+
+Two paths out of it:
+
+- `immediate` clear → the record is copied straight into the live colours at obj
+  `+0xF0` and the duration at `+0xE8` is set to **-1**. A snap.
+- `immediate` set, and obj `+0xD0`, `+0xD4`, `+0x58` all below `0.01` — the
+  light effectively off — → the elapsed and duration at `+0xE4`/`+0xE8` are
+  cleared and nothing else happens.
+
+The tick at `0xE9CE0` runs the crossfade only when the duration is **positive**:
+
+```
+elapsed += dt
+t       = elapsed / duration
+eased   = 1 - (1 - t)^4            // quartic ease-out
+```
+
+and it blends by an incremental factor `((1-t0)^4 - (1-t1)^4) / (1-t0)^4`, so
+repeated per-frame lerps reproduce that curve exactly rather than compounding.
+It snaps to the target once `elapsed >= duration - 1` or the eased value passes
+`0.9999`.
+
+**Nothing in the light class ever sets a positive duration.** Every store to
+`+0xE8` inside it writes `-1`. So the light does not advance on its own — it
+changes when the shell's state machine asks for a preset with a duration. What
+*does* advance by itself is the particle field, through the authored timeline in
+the pattern blob.
+
+`time` at obj `+0xCC` accumulates `dt * 0.001` — so the update takes
+milliseconds — and wraps at `3600`, one hour.
+
 ## The full shader inventory
 
 Resolving the descriptor table gives **138 shaders** with exact code offsets,
