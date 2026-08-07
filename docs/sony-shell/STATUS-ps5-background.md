@@ -241,6 +241,37 @@ design.
 **Location 2, component 0**, which the domain sets to `v13`. Instance 0 exports
 `1.0` there; instance 5 exports NaN.
 
+### The fragment interface is correct; the collapse is inside fw_oit_p
+
+Reading `fw_oit_p`'s inputs at entry shows it receives exactly what the domain
+exports:
+
+```
+Location 0   0.2136  -0.3815   0.8980   1     unit normal
+Location 1   -682.9  -249.1   -1380.5   1     world position
+Location 2      1       0        0      1     (v13, 0, 0, 1)
+Location 3   0.2063  -0.3742   0.9028   1     neighbouring normal
+Location 4   0.2258  -0.3815   0.8950   1     neighbouring normal
+```
+
+So the vertex-to-fragment interface is **not** permuted, and `v11` starts life as
+`Location 2.x = 1.0`. The shader's own arithmetic then drives it to `4.5e-06`
+before the `0.002` test. The discard is internal to `fw_oit_p` operating on
+inputs that are correct.
+
+`SPI_PS_INPUT_CNTL_n` is absent from the shader's header - the driver builds that
+mapping from reflection at draw time - so a permuted interface was a live
+possibility, and this rules it out.
+
+Four things were tested against the discard and none revive it:
+
+| tried | result |
+|---|---|
+| `time` at `+0x184`, 0 to 30 | no change - not the entrance envelope |
+| `BlurParameters` at `+0x170`, all zero in the captured frame, forced to 1.0 | no change |
+| wave lane count 32 and 64 | no change |
+| ring stride 512 matched to the domain's step | no change |
+
 ### The domain's NaN is a stride mismatch, not bad geometry
 
 The hull's ring is **fully finite at 96 patches** - 1,536 of 1,536 control points,
