@@ -178,29 +178,50 @@ remains unestablished separately.
 `evaluatePointAndNormal(u, v, knots, 15, 11, lattice, out)` - a **single** point
 per call, called four times at the seed site. That is bounds or corner probing.
 
-### fw_oit_p executes
+### fw_oit_p executes, and its user data is recovered from its own registers
 
 `fw_oit_p` decodes to **524 instructions**, matching
-`firstwave-12.40-stage-contracts.md` exactly, evaluates, and compiles to 181 KB
-of SPIR-V as the surface's fragment stage with its header's own
-`SPI_PS_INPUT_ENA/ADDR = 0x302`.
+`firstwave-12.40-stage-contracts.md`, and compiles to 181 KB of SPIR-V.
 
-It produces no pixels yet, and the reason is visible in its bindings: it fetches
-a descriptor from **`descriptorBlock + 0x00`** - its OIT node buffer - which
-nothing populates, so the fetch resolves to a zero-length buffer. It is a node
-*capture* stage; `fw_comp_oit_p` is what resolves the list into colour. Both the
-node buffer's shape and the resolve pass are still to come.
+Its twelve user SGPRs were read off the program's own memory operations rather
+than assumed:
 
-Note the stage table's addresses are **file offsets**, not virtual addresses -
-the local and hull slices already use them that way. Adding `0x4000` decodes
-garbage.
+| operation | through | meaning |
+|---|---|---|
+| `buffer_atomic_add` at `0x928` | `s[4:7]` | the node allocation counter |
+| `buffer_store_dword` at `0xB2C`, `0xB34`, `0xC70`, `0xC78`; `buffer_load_dword` at `0xB64..0xB7C` | `s[0:3]` | the per-pixel node list |
+| every `s_buffer_load` | `s8` | the FirstWave constant buffer |
 
-**This leaves one host stream unrecovered.** The ring is tiled with `i % 26` to
-get past the bound, which is a stand-in, not Sony's data. Either the host
-expands the 13 pairs into a per-lattice-point stream, or its vertex descriptor
-maps many vertices onto few records some other way. The 26-entry seed table is
-real; how it reaches 165 vertices is not yet known, and the pixels above are
-honest about the geometry and not about that stream.
+The constants had been bound at `s0`, which is why the node descriptor resolved
+to a zero-length buffer. With the layout corrected all three resolve.
+
+**The two OIT buffers are scratch, and allocating them is not fabrication.**
+Every byte in them is written by this shader and read back by `fw_comp_oit_p`;
+only the extent is a host decision, in the same category as the render target's
+size. Nothing about their contents is invented.
+
+### Why it still produces no pixels
+
+It discards every fragment, and the discard is exact. At `0x...` the program
+compares against the literal `0x3B03126F` - **0.002** - and keeps the fragment
+only when the computed alpha exceeds it. Instrumenting the alpha chain shows:
+
+```
+v5 = 1.0        v5 *= v18 (1.0)        v5 *= v11 (~4.5e-06)        v5 += v16*v11 (0)
+```
+
+so the alpha arrives around **1e-6**, three orders below the threshold, and
+`v11` - an interpolant from the domain - is what collapses it. The interpolants
+either side are live (`v6 = 0.841`, `v7 = 0.135`), so the domain is feeding real
+data; one channel is near zero.
+
+Advancing `time` at `+0x184` from 0 to 30 does not lift it, so this is not the
+ten-second entrance envelope. The likely cause is upstream: the domain's exports
+depend on the vertex stream arrangement, which is still a host choice rather
+than a recovered one.
+
+This was found by bisecting EXEC - instrumenting all 27 writes to it showed the
+fragment alive through three and dead at the fourth.
 
 ### Tooling added
 

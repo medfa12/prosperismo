@@ -78,6 +78,17 @@ internal static class WaveSurfaceProbe
     // 165 vec4 entries, so a non-indexed patch list of 16 input control points
     // covers ten patches. PATCH_COUNT overrides it for probing.
     private const ulong OitAddress = 0x11F7200UL;
+    private const ulong OitNodeAddress = 0x0A00_0000;
+    private const ulong OitCounterAddress = 0x0B00_0000;
+
+    // Scratch for the per-pixel node list and its allocation counter. The
+    // shader writes every byte; only the extent is a host decision.
+    private static int OitNodeBytes =>
+        int.TryParse(Environment.GetEnvironmentVariable("OIT_NODE_BYTES"), out var n) && n > 0
+            ? n
+            : 32 * 1024 * 1024;
+
+    private const int OitCounterBytes = 0x1000;
     // The stage table's 0xC84 is the program's own extent; the decoder is
     // given slack past it and stops at s_endpgm.
     private const int OitLength = 0x1400;
@@ -94,9 +105,11 @@ internal static class WaveSurfaceProbe
     /// </remarks>
     private static bool TryCompileOit(
         byte[] image, byte[] constants, byte[] descriptorBlock,
-        out byte[] spirv, out string error)
+        int globalBufferBase, int totalGlobalBufferCount,
+        out byte[] spirv, out byte[][] buffers, out string error)
     {
         spirv = [];
+        buffers = [];
         var text = new byte[OitLength];
         // The stage table's values are already file offsets, as the local and
         // hull slices above use them.
@@ -106,6 +119,8 @@ internal static class WaveSurfaceProbe
         memory.AddRegion(OitAddress, text);
         memory.AddRegion(ConstantsAddress, constants);
         memory.AddRegion(DescriptorBlockAddress, descriptorBlock);
+        memory.AddRegion(OitNodeAddress, new byte[OitNodeBytes]);
+        memory.AddRegion(OitCounterAddress, new byte[OitCounterBytes]);
 
         var context = new CpuContext(memory, Generation.Gen5);
         if (!Gen5ShaderTranslator.TryDecodeProgram(context, OitAddress, out var program, out error))
@@ -115,15 +130,44 @@ internal static class WaveSurfaceProbe
 
         Console.WriteLine($"oit     : OK - {program.Instructions.Count} instructions");
 
-        // Twelve user SGPRs: the constant buffer V# and the descriptor block,
-        // laid out as the geometry stages receive them.
+        if (Environment.GetEnvironmentVariable("OIT_DUMP") == "1")
+        {
+            foreach (var i in program.Instructions)
+            {
+                var op = i.Opcode;
+                if (i.Encoding is not Gen5ShaderEncoding.Vop1 and not Gen5ShaderEncoding.Vop2
+                    and not Gen5ShaderEncoding.Vop3 and not Gen5ShaderEncoding.Vopc
+                    and not Gen5ShaderEncoding.Sop1 and not Gen5ShaderEncoding.Sop2
+                    and not Gen5ShaderEncoding.Sopk and not Gen5ShaderEncoding.Sopp
+                    and not Gen5ShaderEncoding.Sopc)
+                {
+                    var src = string.Join(", ", i.Sources);
+                    var dst = string.Join(", ", i.Destinations);
+                    Console.WriteLine($"          {i.Pc:X4}  {i.Encoding,-10} {op,-26} dst[{dst}] src[{src}]");
+                }
+            }
+        }
+
+        // The twelve user SGPRs are laid out by the program's own register use:
+        // every SBufferLoad takes s8 as its base, the buffer_atomic_add at
+        // 0x928 goes through s[4:7], and the node stores and loads at 0xB2C,
+        // 0xB34, 0xB64..0xB7C, 0xC70 and 0xC78 go through s[0:3]. So s[0:3] is
+        // the OIT node list, s[4:7] its counter, and s[8:11] the constants.
+        //
+        // The two OIT buffers are scratch: every byte in them is written by this
+        // shader and read back by fw_comp_oit_p, so sizing them is host policy
+        // in the same way the render target is, and none of their contents are
+        // invented here.
         var userData = new uint[16];
         FirstWaveProbe.WriteBufferDescriptorPublic(
             System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(0, 4)),
+            OitNodeAddress, 0, OitNodeBytes);
+        FirstWaveProbe.WriteBufferDescriptorPublic(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(4, 4)),
+            OitCounterAddress, 0, OitCounterBytes);
+        FirstWaveProbe.WriteBufferDescriptorPublic(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(8, 4)),
             ConstantsAddress, 0, constants.Length);
-        BitConverter.TryWriteBytes(
-            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(4, 2)),
-            DescriptorBlockAddress);
 
         var state = new Gen5ShaderState(program, userData, Metadata: null, UserDataScalarRegisterBase: 0);
         if (!Gen5ShaderScalarEvaluator.TryEvaluate(context, state, out var evaluation, out error))
@@ -140,15 +184,43 @@ internal static class WaveSurfaceProbe
                 $"{(b.Writable ? " (writable)" : string.Empty)}");
         }
 
+        // The vertex and fragment stages share one descriptor array, so the
+        // fragment's buffers are placed after the vertex's rather than on top.
         if (!Gen5SpirvTranslator.TryCompilePixelShader(
                 state, evaluation, Gen5PixelOutputKind.Float, out var compiled, out error,
-                pixelInputEnable: 0x302, pixelInputAddress: 0x302))
+                globalBufferBase: globalBufferBase,
+                totalGlobalBufferCount: totalGlobalBufferCount,
+                pixelInputEnable: 0x302, pixelInputAddress: 0x302,
+                waveLaneCount: uint.TryParse(
+                    Environment.GetEnvironmentVariable("OIT_WAVE"), out var ow) ? ow : 32u))
         {
             return false;
         }
 
+        buffers = new byte[compiled.GlobalMemoryBindings.Count][];
+        for (var i = 0; i < buffers.Length; i++)
+        {
+            var binding = compiled.GlobalMemoryBindings[i];
+            var data = new byte[binding.DataLength];
+            if (binding.BaseAddress == ConstantsAddress)
+            {
+                constants.AsSpan(0, Math.Min(constants.Length, data.Length)).CopyTo(data);
+            }
+
+            buffers[i] = data;
+        }
+
         Console.WriteLine($"oit     : spirv OK - {compiled.Spirv.Length:N0} bytes");
-        spirv = compiled.Spirv;
+        var oitOut = Environment.GetEnvironmentVariable("OIT_SPIRV_OUT");
+        if (!string.IsNullOrEmpty(oitOut))
+        {
+            File.WriteAllBytes(oitOut, compiled.Spirv);
+        }
+
+        var oitPatched = Environment.GetEnvironmentVariable("OIT_FS");
+        spirv = !string.IsNullOrEmpty(oitPatched) && File.Exists(oitPatched)
+            ? File.ReadAllBytes(oitPatched)
+            : compiled.Spirv;
         return true;
     }
 
@@ -601,16 +673,28 @@ internal static class WaveSurfaceProbe
         // which is what the domain is asked to export. SURFACE_FS still
         // overrides it, for the placeholder used while the geometry was blind.
         byte[] fragmentSpirv;
+        var oitBuffers = Array.Empty<byte[]>();
         var fragmentPath = Environment.GetEnvironmentVariable("SURFACE_FS");
         if (!string.IsNullOrEmpty(fragmentPath) && File.Exists(fragmentPath))
         {
             fragmentSpirv = File.ReadAllBytes(fragmentPath);
         }
-        else if (!TryCompileOit(image, constants, descriptorBlock, out fragmentSpirv, out var oitError))
+        else
         {
-            Console.Error.WriteLine($"oit     : FAILED {oitError}");
-            return 1;
+            // fw_oit_p resolves three buffers of its own; they follow the
+            // domain's in the shared descriptor array.
+            const int oitBufferCount = 3;
+            if (!TryCompileOit(
+                    image, constants, descriptorBlock,
+                    buffers.Length, buffers.Length + oitBufferCount,
+                    out fragmentSpirv, out oitBuffers, out var oitError))
+            {
+                Console.Error.WriteLine($"oit     : FAILED {oitError}");
+                return 1;
+            }
         }
+
+        var allBuffers = oitBuffers.Length > 0 ? [.. buffers, .. oitBuffers] : buffers;
 
         const uint width = 1280;
         const uint height = 720;
@@ -624,7 +708,7 @@ internal static class WaveSurfaceProbe
             : compiled.Spirv;
 
         var draw = new ParticleComputeRunner.ParticleDraw(
-            vertexSpirv, fragmentSpirv, buffers, vertices, null, false,
+            vertexSpirv, fragmentSpirv, allBuffers, vertices, null, false,
             InstanceCount: (uint)PatchCount);
         var rgba = runner.RenderParticleFrame([draw], width, height, out var after);
 
