@@ -115,11 +115,22 @@ internal static class WaveSurfaceProbe
         var seeds = File.ReadAllBytes(seedsPath);
         var latticeBytes = 165 * 16;
         var lattice = new byte[latticeBytes];
-        var ring = new byte[26 * 16];
+        // The seed block holds 13 pairs. RING_REPEAT tiles them across a wider
+        // record count, to test whether the ring's 26 entries are what bounds
+        // the surface - the local section fetches it with the same vertex index
+        // as the lattice, so anything past entry 25 reads out of range.
+        var ringRecords =
+            int.TryParse(Environment.GetEnvironmentVariable("RING_RECORDS"), out var rr) && rr > 0
+                ? rr
+                : 26;
+        var ring = new byte[ringRecords * 16];
         seeds.AsSpan(0, Math.Min(latticeBytes, seeds.Length)).CopyTo(lattice);
-        if (seeds.Length >= latticeBytes + ring.Length)
+        if (seeds.Length >= latticeBytes + 26 * 16)
         {
-            seeds.AsSpan(latticeBytes, ring.Length).CopyTo(ring);
+            for (var i = 0; i < ringRecords; i++)
+            {
+                seeds.AsSpan(latticeBytes + (i % 26) * 16, 16).CopyTo(ring.AsSpan(i * 16, 16));
+            }
         }
 
         // buffer_load_format_* fetches through the V#'s own FORMAT field, so a
@@ -133,7 +144,7 @@ internal static class WaveSurfaceProbe
         WriteVertexDescriptor(
             vertexTable.AsSpan(0x00, 16), LatticeAddress, 16, 165, selectXyzw | (77u << 12));
         WriteVertexDescriptor(
-            vertexTable.AsSpan(0x10, 16), RingAddress, 16, 26, selectXyz1 | (74u << 12));
+            vertexTable.AsSpan(0x10, 16), RingAddress, 16, ringRecords, selectXyz1 | (74u << 12));
 
         var descriptorBlock = new byte[0x100];
         FirstWaveProbe.WriteBufferDescriptorPublic(

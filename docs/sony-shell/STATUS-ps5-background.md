@@ -19,7 +19,7 @@ the output looks right.
 |---|---|---|
 | particle simulation | `particle_c` | 6000-record bank, authored pattern parameters |
 | wave control points | `fw_flow_vl` + `fw_flow_h` | merged LS+HS, 16 points/patch, factors all `12.0` |
-| wave surface | `fw_flow_dv` | evaluates and draws; produces no pixels yet |
+| wave surface | `fw_flow_dv` | **rasterises** - 96 patches, 645,939 of 921,600 pixels |
 | particle draw | `particle_vv` + `particle_p` | eight groups, 1,820 particles |
 | light shafts + compositing | `light_p` | takes the particle frame as `texP` |
 | plate | `fw_background_p` | runs; see *Unresolved* for where it belongs |
@@ -133,27 +133,31 @@ check that the reading is right.
 `VGT_LS_HS_CONFIG.NUM_PATCHES = 15` is unrelated to this: it is how many
 patches share a threadgroup, not how many the draw has.
 
-### The vertex buffer is host-built, and that is the blocker
+### The surface rasterises
 
-Driving the confirmed 96-patch tiling with the **raw seed table** makes the hull
-produce NaN for 1,410 of its 1,536 control points. The NaN originates in the
-hull, not the domain - the ring holds it before the domain ever reads.
+645,939 pixels of 921,600, from `fw_flow_vl` + `fw_flow_h` + `fw_flow_dv`
+executing across all 96 patches. The geometry is the console's; the colour is a
+placeholder fragment shader, because `fw_oit_p` is not wired yet.
 
-That is the seed-block note's own warning, now measured: *the later code deforms
-these seeds before producing the 16-control-point tessellation patches; the seed
-table is not itself one patch*. The local section reads a vertex buffer the host
-builds from the seeds, and the knot tables above are part of that construction.
-Recovering that construction is the next step, and until it exists the chain
-cannot produce pixels no matter how the patches are addressed.
+What had been blocking it was **not** the tiling and not the addressing.
 
-Two smaller things the same measurements settled:
+The local section fetches the boundary ring with the same vertex index as the
+lattice, and the seed block's ring is **26 entries** where the lattice is 165.
+Every vertex past index 25 read out of range, returned zero, and turned into NaN
+the moment the hull normalised it. The signature was exact: with eight patches,
+26 control points were finite and 102 were NaN.
 
-- The offchip ring stride is **1024 bytes per patch** on the hull side. At 512
-  every control point reads NaN; at 1024 the finite data appears.
-- The domain selects its ring slot at a **512-byte** step, so odd instances land
-  in the half the hull does not fill and collapse to the world origin. Supplying
-  a byte offset in an SGPR *as well* double-counts, exactly as it did on the
-  hull side.
+The diagnosis was separated from the data by feeding a lattice whose entries
+repeat the first sixteen. The NaN count did not move - 26 finite either way - so
+the fault was the index bound, not the values. Widening the ring's record count
+removes the NaN entirely and the surface appears.
+
+**This leaves one host stream unrecovered.** The ring is tiled with `i % 26` to
+get past the bound, which is a stand-in, not Sony's data. Either the host
+expands the 13 pairs into a per-lattice-point stream, or its vertex descriptor
+maps many vertices onto few records some other way. The 26-entry seed table is
+real; how it reaches 165 vertices is not yet known, and the pixels above are
+honest about the geometry and not about that stream.
 
 ### Tooling added
 
