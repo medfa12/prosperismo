@@ -936,6 +936,53 @@ bool RenderExecutor::PrepareDrawRenderState(uint64_t submit_id, RenderCommandBuf
 	}
 	ResolveRenderDepthTarget(submit_id, buffer, state.depth_info);
 
+	// KYTY_M42_DROP_SMALL_DEPTH (ported from Stepz97/ps5emu 4ee7a43, "wall 42"): Vulkan requires
+	// renderArea to fit inside EVERY attachment, so AcquireRenderTargets clamps it to the
+	// smallest one via std::min. GCN/RDNA has no such rule — colour writes are bounded by the
+	// viewport and scissor, and a depth buffer smaller than the colour target is legal so long as
+	// depth is not sampled. Astro Bot's menu pass binds a 960x540 depth buffer alongside the
+	// 1920x1080 menu target, so the clamp shrinks renderArea to a quarter and clips the pass to
+	// the top-left corner — the black quadrant. When depth provably cannot affect the result (no
+	// test, no write, no bounds test, no live stencil, no clear) the attachment carries no
+	// information, and dropping it restores full coverage. Clearing image_id covers both
+	// consumers of depth_info: AcquireRenderTargets stops shrinking renderArea, and the pipeline
+	// key stops declaring a depth format, so the two stay consistent. HTile-backed depth is
+	// excluded because depth_meta_clear_enable is only resolved later, inside
+	// AcquireRenderTargets, so a pending fast-clear cannot be ruled out here.
+	if (const char* drop = std::getenv("KYTY_M42_DROP_SMALL_DEPTH");
+	    drop != nullptr && *drop == '1' && state.depth_info.image_id && state.color_count > 0) {
+		uint32_t max_w = 0;
+		uint32_t max_h = 0;
+		for (uint32_t i = 0; i < state.color_count; i++) {
+			max_w = std::max(max_w, state.color_info[i].extent.width);
+			max_h = std::max(max_h, state.color_info[i].extent.height);
+		}
+		const bool undersized = state.depth_info.width < max_w || state.depth_info.height < max_h;
+		// A stencil test that is enabled but compares eAlways and keeps every op cannot reject a
+		// fragment, so the attachment carries no information even with the enable bit set.
+		const bool stencil_inert =
+		    !state.depth_info.stencil_test_enable ||
+		    (!stencil_face_accesses_attachment(state.depth_info.stencil_static_front,
+		                                       state.depth_info.stencil_dynamic_front) &&
+		     !stencil_face_accesses_attachment(state.depth_info.stencil_static_back,
+		                                       state.depth_info.stencil_dynamic_back));
+		const bool inert =
+		    !state.depth_info.depth_test_enable && !state.depth_info.depth_write_enable &&
+		    !state.depth_info.depth_bounds_test_enable && stencil_inert &&
+		    !state.depth_info.depth_clear_enable && !state.depth_info.depth_load_clear_enable &&
+		    !state.depth_info.stencil_clear_enable &&
+		    !state.depth_info.AttachmentWriteAspects() && !state.depth_info.htile;
+		if (undersized && inert) {
+			static std::atomic<uint32_t> dropped {0};
+			const auto                   n = dropped.fetch_add(1);
+			if (n < 8) {
+				LOGF("m42-drop-depth: dropping inert %ux%u depth beside %ux%u colour\n",
+				     state.depth_info.width, state.depth_info.height, max_w, max_h);
+			}
+			state.depth_info = {};
+		}
+	}
+
 	const bool with_depth = (state.depth_info.format != vk::Format::eUndefined &&
 	                         static_cast<bool>(state.depth_info.image_id));
 	if (state.color_count == 0 && !with_depth) {

@@ -3,6 +3,11 @@
 #include <cinttypes>
 #include <cstdio>
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
+
 #if KYTY_PLATFORM == KYTY_PLATFORM_WINDOWS
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -52,6 +57,35 @@ bool HostMemoryQueryRange(uint64_t addr, uint64_t requested_size, HostMemoryAcce
 		}
 		if (finish <= current || (region.State & MEM_COMMIT) == 0 ||
 		    !IsAccessible(region.Protect, access)) {
+			break;
+		}
+		current = finish < end ? finish : end;
+	}
+#elif defined(__APPLE__)
+	// macOS builds compile under the Linux platform id but have no /proc/self/maps, so the branch
+	// below opened a file that never exists and reported every address unreadable. That silently
+	// failed every shader SRT read, which aborts recompilation. Ask the kernel directly instead.
+	while (current < end) {
+		mach_vm_address_t     region_addr = current;
+		mach_vm_size_t        region_size = 0;
+		vm_region_basic_info_data_64_t info {};
+		mach_msg_type_number_t         count     = VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t                    object    = MACH_PORT_NULL;
+		if (mach_vm_region(mach_task_self(), &region_addr, &region_size, VM_REGION_BASIC_INFO_64,
+		                   reinterpret_cast<vm_region_info_t>(&info), &count,
+		                   &object) != KERN_SUCCESS) {
+			break;
+		}
+		if (region_addr > current) {
+			break; // current sits in a hole before the next mapping
+		}
+		const bool allowed =
+		    access == HostMemoryAccess::Mapped || (info.protection & VM_PROT_READ) != 0;
+		if (!allowed) {
+			break;
+		}
+		auto finish = static_cast<uint64_t>(region_addr + region_size);
+		if (finish <= current) {
 			break;
 		}
 		current = finish < end ? finish : end;

@@ -39,6 +39,11 @@ using Handler = bool (*)(const ExceptionInfo&);
 
 bool InstallHandler(Handler handler);
 
+
+// Give the calling thread its own alternate signal stack. Guest threads run on stacks the game
+// sizes, which are far too small to also host a fault handler.
+void InstallSignalStack();
+
 } // namespace Common::HostException
 
 #endif /* KYTY_COMMON_HOST_EXCEPTION_H_ */

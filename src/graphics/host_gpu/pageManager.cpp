@@ -85,7 +85,23 @@ constexpr uint32_t READ_WRITE_PROTECTION = PAGE_READWRITE;
 	std::_Exit(322);
 }
 
+// Tracking exists to intercept CPU *reads and writes* to memory the GPU also uses; instruction
+// fetch is never what it wants to catch. Dropping execute permission here is therefore a pure
+// side effect, and a ruinous one when the guest happens to run code from a tracked page: the
+// fetch faults, HandleFault services it as a data access, permission is recomputed without
+// execute, and the same instruction faults again forever. Astro's Playroom hits exactly that and
+// livelocks at ~3.5M faults on one address. Keeping execute on every readable state preserves
+// read and write tracking untouched — a read-only page still traps writes.
 Common::VirtualMemory::Mode ToMemoryMode(uint32_t protection) {
+	switch (protection) {
+		case NO_ACCESS_PROTECTION: return Common::VirtualMemory::Mode::NoAccess;
+		case READ_ONLY_PROTECTION: return Common::VirtualMemory::Mode::ExecuteRead;
+		case READ_WRITE_PROTECTION: return Common::VirtualMemory::Mode::ExecuteReadWrite;
+		default: Fatal("unmappable protection 0x%08" PRIx32, protection);
+	}
+}
+
+Common::VirtualMemory::Mode ToMemoryModeNoExec(uint32_t protection) {
 	switch (protection) {
 		case NO_ACCESS_PROTECTION: return Common::VirtualMemory::Mode::NoAccess;
 		case READ_ONLY_PROTECTION: return Common::VirtualMemory::Mode::Read;
@@ -240,11 +256,20 @@ struct PageManager::Impl {
 	}
 
 	void Protect(uint64_t vaddr, uint64_t size, uint32_t protection) noexcept {
-		if (!Libs::LibKernel::Memory::ProtectGuestHostMemory(vaddr, size,
-		                                                     ToMemoryMode(protection))) {
-			Fatal("address-space protection failed at 0x%016" PRIx64 ", new=0x%08" PRIx32, vaddr,
-			      protection);
+		if (Libs::LibKernel::Memory::ProtectGuestHostMemory(vaddr, size,
+		                                                    ToMemoryMode(protection))) {
+			return;
 		}
+		// Keeping execute is what stops guest code on a tracked page from faulting forever, but
+		// it is not always grantable: macOS refuses to raise protection above a mapping's maximum,
+		// so a range mapped read/write can never gain PROT_EXEC. Those ranges hold no guest code,
+		// so dropping back to the plain mode is correct rather than merely tolerable.
+		if (Libs::LibKernel::Memory::ProtectGuestHostMemory(vaddr, size,
+		                                                    ToMemoryModeNoExec(protection))) {
+			return;
+		}
+		Fatal("address-space protection failed at 0x%016" PRIx64 ", new=0x%08" PRIx32, vaddr,
+		      protection);
 	}
 
 	template <bool track, bool is_read, bool masked>

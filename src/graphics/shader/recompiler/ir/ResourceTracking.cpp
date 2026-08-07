@@ -3,6 +3,7 @@
 #include "graphics/shader/recompiler/ir/ScalarProvenance.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fmt/format.h>
 #include <functional>
 
@@ -499,6 +500,30 @@ private:
 								unbased = false;
 								break;
 							}
+						}
+					}
+				}
+				if (unbased) {
+					// Last resort: bind to the most recent resolved scalar-buffer allocation.
+					// The address itself is still computed live in SPIR-V and passed through the
+					// robust bounds check, so the anchor chooses which allocation the access is
+					// validated against, not what it reads. Astro's compute shaders chase
+					// pointers deeper than the single parent-pair hop above follows; refusing
+					// here fails the whole shader, which drops the dispatch and leaves the game
+					// reading results that were never produced.
+					static const bool disable_fallback = [] {
+						const char* v = std::getenv("KYTY_NO_ANCHOR_FALLBACK");
+						return v != nullptr && v[0] != '\0' && v[0] != '0';
+					}();
+					for (auto it = m_info.addresses.rbegin();
+					     !disable_fallback && it != m_info.addresses.rend(); ++it) {
+						if (it->kind == ResourceKind::ScalarBuffer &&
+						    it->source > ScalarProvenance::Unknown) {
+							inst.memory.resource_source          = it->source;
+							inst.memory.runtime_address          = true;
+							inst.memory.runtime_address_register = inst.memory.resource;
+							unbased                              = false;
+							break;
 						}
 					}
 				}

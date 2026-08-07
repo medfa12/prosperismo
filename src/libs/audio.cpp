@@ -503,6 +503,18 @@ uint32_t Audio::AudioOutOutputs(OutputParam* params, uint32_t num, bool blocking
 	EXIT_NOT_IMPLEMENTED(num == 0);
 	EXIT_NOT_IMPLEMENTED(!AudioOutValid(params[0].handle));
 
+	// Only params[0] was validated, yet every loop below indexes m_out_ports with
+	// params[i].handle.GetId() for all i. m_out_ports is a fixed 32-entry array, so an unvalidated
+	// handle reads and writes outside it. Drop the whole call rather than corrupt memory.
+	for (uint32_t i = 0; i < num; i++) {
+		if (!AudioOutValid(params[i].handle) ||
+		    params[i].handle.GetId() >= static_cast<int>(OUT_PORTS_MAX)) {
+			printf("Audio::AudioOutOutputs: invalid handle at index %" PRIu32 " of %" PRIu32 "\n", i,
+			       num);
+			return 0;
+		}
+	}
+
 	const auto& first_port = m_out_ports[params[0].handle.GetId()];
 
 	uint64_t block_time   = (1000000 * first_port.samples_num) / first_port.freq;

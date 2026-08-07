@@ -197,8 +197,14 @@ void RenderExecutor::DispatchDirect(uint64_t submit_id, RenderCommandBuffer& buf
 	ShaderComputeInputInfo    input_info {};
 	std::span<const uint32_t> cs_shader;
 	if (!ShaderCompileInfoCS(cs_regs, sh_regs, input_info, cs_shader)) {
-		EXIT("ShaderCompileInfoCS failed for dispatch with CS shader 0x%016" PRIx64 "\n",
-		     cs_regs.cs_regs.data_addr);
+		// The shader stage reports rather than aborts for compute programs it cannot translate;
+		// honour that here by dropping this dispatch. The frame will be wrong wherever the
+		// dispatch mattered, which is still far better than ending the process. Set
+		// KYTY_SHADER_FATAL=1 to make an untranslatable compute shader fatal again.
+		LOGF_COLOR(Log::Color::BrightRed,
+		           "Dispatch skipped: no compute shader for 0x%016" PRIx64 "\n",
+		           cs_regs.cs_regs.data_addr);
+		return;
 	}
 
 	const bool use_thread_dimensions = (mode & DISPATCH_INITIATOR_USE_THREAD_DIMENSIONS) != 0;

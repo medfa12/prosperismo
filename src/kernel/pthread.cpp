@@ -1,5 +1,6 @@
 #include "kernel/pthread.h"
 
+#include "common/hostException.h"
 #include "common/assert.h"
 #include "common/common.h"
 #include "common/dateTime.h"
@@ -3370,6 +3371,9 @@ static void CleanupThread(void* arg) {
 static void* RunThread(void* arg) {
 	auto* thread = static_cast<Pthread>(arg);
 	void* ret    = nullptr;
+
+	// Guest threads run on stacks the game sizes, which cannot also host a fault handler.
+	Common::HostException::InstallSignalStack();
 
 	thread->unique_id = Common::Thread::GetThreadIdUnique();
 

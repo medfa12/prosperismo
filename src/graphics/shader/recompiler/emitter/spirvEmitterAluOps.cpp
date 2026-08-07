@@ -3,6 +3,10 @@
 namespace Libs::Graphics::ShaderRecompiler::Spirv::Emitter {
 
 void EmitPerInvocationMask(EmitterState& state, const IR::Operand& dst, uint32_t value_bool) {
+	// The other path that can write EXEC; same invalidation as EmitStoreU32.
+	if (dst.kind == IR::OperandKind::Register && dst.reg.file == IR::RegisterFile::Exec) {
+		state.exec_active_id = 0;
+	}
 	const auto value = state.builder.AllocateId();
 	state.builder.AddFunction({OpSelect, state.uint_type, value, value_bool, ConstantU32(state, 1),
 	                           ConstantU32(state, 0)});

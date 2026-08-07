@@ -318,6 +318,14 @@ struct EmitterState {
 	    : program(program_), resources(resources_) {}
 
 	Builder                                          builder;
+
+	// EmitExecActiveBool() is called once per guest instruction and expands to a load, shift,
+	// mask and compare every time — measured at 24-28 SPIR-V instructions per guest instruction
+	// overall, where ~4 is normal. Cache it per basic block. Valid only while the builder's block
+	// epoch is unchanged (SSA dominance) and until EXEC is written.
+	uint32_t                                         exec_active_id    = 0;
+	uint32_t                                         exec_active_epoch = 0;
+
 	const IR::Program&                               program;
 	const IR::ResourceSnapshot&                      resources;
 	const ShaderVertexInputInfo*                     vertex_input_info  = nullptr;

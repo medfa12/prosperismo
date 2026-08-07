@@ -20,6 +20,79 @@
 #include <limits>
 #include <span>
 
+// Persistent Vulkan pipeline cache. Both creation sites passed nullptr, so every boot re-ran the
+// MSL -> Metal compile for every pipeline; that is a large part of the cold-start cost Stepz
+// describes as "the first minutes are shader-recompilation heavy". MoltenVK stores its compiled
+// MTLLibrary blobs here. Saved incrementally because this process frequently dies before exit.
+namespace {
+
+std::string PipelineCachePath() {
+	const char* dir = std::getenv("KYTY_SHADER_CACHE_DIR");
+	return std::string(dir != nullptr ? dir : "_shader_cache") + "/pipeline.bin";
+}
+
+vk::PipelineCache GetPersistentPipelineCache(const Libs::Graphics::GraphicContext& graphics) {
+	static vk::PipelineCache cache = [&graphics]() -> vk::PipelineCache {
+		std::vector<uint8_t> blob;
+		if (auto* f = std::fopen(PipelineCachePath().c_str(), "rb"); f != nullptr) {
+			std::fseek(f, 0, SEEK_END);
+			blob.resize(static_cast<size_t>(std::ftell(f)));
+			std::fseek(f, 0, SEEK_SET);
+			if (!blob.empty() && std::fread(blob.data(), 1, blob.size(), f) != blob.size()) {
+				blob.clear();
+			}
+			std::fclose(f);
+		}
+		vk::PipelineCacheCreateInfo info {};
+		info.initialDataSize = blob.size();
+		info.pInitialData    = blob.empty() ? nullptr : blob.data();
+		vk::PipelineCache created {};
+		if (graphics.device.createPipelineCache(&info, nullptr, &created) != vk::Result::eSuccess) {
+			return nullptr;
+		}
+		return created;
+	}();
+	return cache;
+}
+
+void SavePersistentPipelineCache(const Libs::Graphics::GraphicContext& graphics) {
+	auto cache = GetPersistentPipelineCache(graphics);
+	if (!cache) {
+		return;
+	}
+	size_t size = 0;
+	if (graphics.device.getPipelineCacheData(cache, &size, nullptr) != vk::Result::eSuccess ||
+	    size == 0) {
+		return;
+	}
+	std::vector<uint8_t> blob(size);
+	if (graphics.device.getPipelineCacheData(cache, &size, blob.data()) != vk::Result::eSuccess) {
+		return;
+	}
+	std::error_code ec;
+	const char*     dir = std::getenv("KYTY_SHADER_CACHE_DIR");
+	std::filesystem::create_directories(dir != nullptr ? dir : "_shader_cache", ec);
+	const auto tmp = PipelineCachePath() + ".tmp";
+	if (auto* f = std::fopen(tmp.c_str(), "wb"); f != nullptr) {
+		const auto written = std::fwrite(blob.data(), 1, blob.size(), f);
+		std::fclose(f);
+		if (written == blob.size()) {
+			std::rename(tmp.c_str(), PipelineCachePath().c_str());
+		} else {
+			std::remove(tmp.c_str());
+		}
+	}
+}
+
+void MaybeSavePipelineCache(const Libs::Graphics::GraphicContext& graphics) {
+	static std::atomic<uint32_t> created {0};
+	if ((created.fetch_add(1) % 8) == 7) {
+		SavePersistentPipelineCache(graphics);
+	}
+}
+
+} // namespace
+
 namespace Libs::Graphics {
 
 // IDK: maybe we can remove it?
@@ -411,7 +484,7 @@ static void CreateLayout(DescriptorCache&                   descriptor_cache,
 	}
 }
 
-static void ConfigureSubgroupSize(const GraphicContext& graphics, vk::ShaderStageFlagBits vk_stage,
+static void ConfigureSubgroupSize(const Libs::Graphics::GraphicContext& graphics, vk::ShaderStageFlagBits vk_stage,
                                   const ShaderRecompiler::IR::Program&                   program,
                                   vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo& required,
                                   vk::PipelineShaderStageCreateInfo&                     stage) {
@@ -955,7 +1028,8 @@ void CreatePipelineInternal(
 		     viewport.y, viewport.width, viewport.height, scissor.offset.x, scissor.offset.y,
 		     scissor.extent.width, scissor.extent.height);
 	}
-	result = graphics.device.createGraphicsPipelines(nullptr, 1, &pipeline_info, nullptr,
+	result = graphics.device.createGraphicsPipelines(GetPersistentPipelineCache(graphics), 1,
+	                                                &pipeline_info, nullptr,
 	                                                 &pipeline.pipeline);
 	if (graphics_debug_dump_enabled()) {
 		LOGF("PipelineTrace: vkCreateGraphicsPipelines done result=%s pipeline=%p\n",
@@ -1053,7 +1127,9 @@ void CreatePipelineInternal(GraphicContext& graphics, DescriptorCache& descripto
 
 	LOGF("PipelineTrace: vkCreateComputePipelines begin layout=%p\n",
 	     static_cast<void*>(pipeline.pipeline_layout));
-	result = graphics.device.createComputePipelines(nullptr, 1, &info, nullptr, &pipeline.pipeline);
+	result = graphics.device.createComputePipelines(GetPersistentPipelineCache(graphics), 1, &info,
+	                                               nullptr, &pipeline.pipeline);
+	MaybeSavePipelineCache(graphics);
 	LOGF("PipelineTrace: vkCreateComputePipelines done result=%s pipeline=%p\n",
 	     VulkanToString(result).c_str(), static_cast<void*>(pipeline.pipeline));
 	EXIT_NOT_IMPLEMENTED(result != vk::Result::eSuccess);

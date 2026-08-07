@@ -88,6 +88,10 @@ uint32_t EmitSdwaDestinationMerge(EmitterState& state, uint32_t pointer, const I
 }
 
 void EmitStoreU32(EmitterState& state, const IR::Operand& dst, uint32_t value) {
+	// Writing EXEC invalidates any cached exec-active bool.
+	if (dst.kind == IR::OperandKind::Register && dst.reg.file == IR::RegisterFile::Exec) {
+		state.exec_active_id = 0;
+	}
 	if (dst.kind != IR::OperandKind::Register) {
 		return;
 	}

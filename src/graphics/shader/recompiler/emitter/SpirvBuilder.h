@@ -29,9 +29,16 @@ public:
 	void AddFunction(std::initializer_list<uint32_t> words);
 	void AddFunction(const std::vector<uint32_t>& words);
 
+	// Bumped every time an OpLabel is appended, i.e. at every SPIR-V basic-block boundary.
+	// Anything cached across instructions must compare this before reusing an id, or it will
+	// reference a value that no longer dominates the use.
+	[[nodiscard]] uint32_t BlockEpoch() const noexcept { return m_block_epoch; }
+
 	[[nodiscard]] std::vector<uint32_t> Build() const;
 
 private:
+	uint32_t m_block_epoch = 0;
+
 	static void AppendInstruction(std::vector<uint32_t>& section, uint32_t opcode,
 	                              const std::vector<uint32_t>& operands);
 	static void AppendInstruction(std::vector<uint32_t>& section, uint32_t opcode,

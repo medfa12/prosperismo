@@ -948,6 +948,19 @@ void WindowContext::UpdateTitle() {
 		fps_frames  = 0;
 	}
 
+	// The frame counter otherwise exists only in the window title, which is unreadable from a
+	// headless/automated run. Astro reaches its menu somewhere past frame 1000 at well under one
+	// FPS, so progress has to be observable from the log to tell slow from stuck.
+	static const bool frame_log = [] {
+		const char* v = std::getenv("KYTY_FRAME_LOG");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	if (frame_log) {
+		::printf("[present] frame: %llu, fps: %.3f\n", static_cast<unsigned long long>(frame_num),
+		         current_fps);
+		::fflush(stdout);
+	}
+
 	auto fps =
 	    fmt::format("{}{}{}{}{}{}[{}] [{}], frame: {}, fps: {:f}", (has_title ? title : ""),
 	                (has_title ? ", " : ""), (has_title_id ? title_id : ""),

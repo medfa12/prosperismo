@@ -1,6 +1,7 @@
 #include "graphics/shader/recompiler/cfg/ShaderCFG.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fmt/format.h>
 #include <iterator>
 #include <map>
@@ -1236,10 +1237,28 @@ bool SplitOneSelectionMerge(Graph& graph, uint32_t block_budget) {
 
 bool SplitSharedMergeBlocks(Graph& graph, std::string* error) {
 	const auto original_block_count = static_cast<uint32_t>(graph.blocks.size());
-	const auto split_budget = std::max<uint32_t>(
-	    16u, std::min<uint32_t>(128u, original_block_count * 4u));
+	// KYTY_CFG_SPLIT_BUDGET: setting this to 0 makes structurization give up immediately, which
+	// routes the shader through the dispatcher fallback instead. Worth testing because SPIRV-Cross
+	// lowers our *successfully* structurized CFG into a 150-case state machine that Metal aborts
+	// on — the flatter dispatcher form may lower better.
+	static const uint32_t split_cap = [] {
+		const char* v = std::getenv("KYTY_CFG_SPLIT_BUDGET");
+		return (v != nullptr && v[0] != '\0') ? static_cast<uint32_t>(std::atoi(v)) : 128u;
+	}();
+	const auto split_budget =
+	    split_cap == 0u ? 0u
+	                    : std::max<uint32_t>(16u, std::min<uint32_t>(split_cap,
+	                                                                 original_block_count * 4u));
+	// Experiment (KYTY_CFG_BLOCK_BUDGET): the largest Astro compute shader structurizes to 408
+	// blocks against this 512 ceiling, and SPIRV-Cross then lowers it to a ~150-case state machine
+	// that Apple's compiler aborts on. Lowering the ceiling tests whether duplication volume is
+	// what defeats the lowering.
+	static const uint32_t budget_cap = [] {
+		const char* v = std::getenv("KYTY_CFG_BLOCK_BUDGET");
+		return (v != nullptr && v[0] != '\0') ? static_cast<uint32_t>(std::atoi(v)) : 512u;
+	}();
 	const auto block_budget = std::max<uint32_t>(
-	    32u, std::min<uint32_t>(512u, original_block_count * 8u));
+	    32u, std::min<uint32_t>(budget_cap, original_block_count * 8u));
 	for (uint32_t splits = 0; splits < split_budget; splits++) {
 		if (!SplitOneLoopMerge(graph) && !SplitOneSelectionMerge(graph, block_budget)) {
 			return true;
