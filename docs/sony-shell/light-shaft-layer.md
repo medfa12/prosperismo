@@ -146,6 +146,32 @@ particle target the light layer still draws, with its particle contribution
 scaled to zero. The observation that the particles disappear in settings while
 the shafts remain is now explained by the code, not by watching a capture.
 
+## The colour presets: table found, contents not
+
+The crossfade at `0xEA0C2` resolves the preset:
+
+```
+lea    rax, [rip+…]  -> 0x137CFC0     ; table base
+movsxd rcx, dword ptr [rbx + 0xE0]    ; preset index, initialised to -1
+shl    rcx, 7                         ; 128 bytes per record
+add    rax, rcx
+```
+
+So the **`WaveColourPreset` table is at `0x137CFC0`, 128 bytes per record**,
+indexed by the object field at `+0xE0`. Each record is a `ColorCb` — `0x7C`
+bytes — padded to `0x80`. The draw path then crossfades the live colours at obj
+`+0xF0`…`+0x170` toward that record.
+
+**Its contents are not in the file.** Reading 22 records at that address yields
+values with absurd exponents — it is runtime-initialised memory, seeded by code,
+the same arrangement as `FirstWave::Initialize`'s six palette records. Those
+bytes are **not** colours and are not reproduced here.
+
+The seeder has not been found. A sweep for writers into the table's range
+returns a large number of hits across an adjacent general data region, and
+narrowing that was not completed. This is the one remaining data gap in the
+light layer, and it is what a specific screen's wave colour depends on.
+
 ## The full shader inventory
 
 Resolving the descriptor table gives **138 shaders** with exact code offsets,

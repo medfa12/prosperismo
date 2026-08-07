@@ -653,6 +653,11 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
     /// implies (<c>6 × numParticles</c> — the vertex program expands each
     /// particle into an inline quad).
     /// </summary>
+    /// <summary>
+    /// One sampled texture, already untiled to a linear layout.
+    /// </summary>
+    internal sealed record GuestImage(byte[] Pixels, uint Width, uint Height, Format Format);
+
     /// <param name="BufferAlias">Per slot, the index of an earlier slot whose
     /// GPU buffer this slot shares, or -1 for its own. The two stages address
     /// one guest allocation through separate descriptor slots — particle_vv
@@ -666,7 +671,8 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
         byte[][] Buffers,
         uint VertexCount,
         int[]? BufferAlias = null,
-        bool Additive = true);
+        bool Additive = true,
+        IReadOnlyList<GuestImage>? Images = null);
 
     /// <summary>
     /// Renders every particle group of one frame into a single image.
@@ -691,6 +697,7 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
         IReadOnlyList<ParticleDraw> draws, uint width, uint height, out byte[][][] buffersAfter)
     {
         ReleaseBuffers();
+        var uploads = new List<(Image Image, DeviceMemory Memory, ImageView View, Sampler Sampler)>();
 
         const Format format = Format.R8G8B8A8Unorm;
         var imageInfo = new ImageCreateInfo
@@ -799,33 +806,54 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
                 slots[i] = _buffers.Count - 1;
             }
 
-            var layoutBinding = new DescriptorSetLayoutBinding
+            // Binding 0 is the guest storage-buffer array; the translator puts
+            // sampled images at binding index+1 on the same set.
+            var images = draw.Images ?? [];
+            var layoutBindings = stackalloc DescriptorSetLayoutBinding[1 + images.Count];
+            layoutBindings[0] = new DescriptorSetLayoutBinding
             {
                 Binding = 0,
                 DescriptorType = DescriptorType.StorageBuffer,
                 DescriptorCount = (uint)Math.Max(1, draw.Buffers.Length),
                 StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
             };
+            for (var k = 0; k < images.Count; k++)
+            {
+                layoutBindings[k + 1] = new DescriptorSetLayoutBinding
+                {
+                    Binding = (uint)(k + 1),
+                    DescriptorType = DescriptorType.CombinedImageSampler,
+                    DescriptorCount = 1,
+                    StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                };
+            }
+
             var layoutInfo = new DescriptorSetLayoutCreateInfo
             {
                 SType = StructureType.DescriptorSetLayoutCreateInfo,
-                BindingCount = 1,
-                PBindings = &layoutBinding,
+                BindingCount = (uint)(1 + images.Count),
+                PBindings = layoutBindings,
             };
             Check(_vk.CreateDescriptorSetLayout(_device, in layoutInfo, null, out setLayouts[d]),
                 "vkCreateDescriptorSetLayout");
 
-            var poolSize = new DescriptorPoolSize
+            var poolSizes = stackalloc DescriptorPoolSize[2];
+            poolSizes[0] = new DescriptorPoolSize
             {
                 Type = DescriptorType.StorageBuffer,
                 DescriptorCount = (uint)Math.Max(1, draw.Buffers.Length),
+            };
+            poolSizes[1] = new DescriptorPoolSize
+            {
+                Type = DescriptorType.CombinedImageSampler,
+                DescriptorCount = (uint)Math.Max(1, images.Count),
             };
             var poolInfo = new DescriptorPoolCreateInfo
             {
                 SType = StructureType.DescriptorPoolCreateInfo,
                 MaxSets = 1,
-                PoolSizeCount = 1,
-                PPoolSizes = &poolSize,
+                PoolSizeCount = images.Count > 0 ? 2u : 1u,
+                PPoolSizes = poolSizes,
             };
             Check(_vk.CreateDescriptorPool(_device, in poolInfo, null, out pools[d]),
                 "vkCreateDescriptorPool");
@@ -866,6 +894,27 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
                     PBufferInfo = bufferInfos,
                 };
                 _vk.UpdateDescriptorSets(_device, 1, in write, 0, null);
+            }
+
+            for (var k = 0; k < images.Count; k++)
+            {
+                var (view, sampler) = CreateSampledImage(images[k], uploads);
+                var imageInfoWrite = new DescriptorImageInfo
+                {
+                    Sampler = sampler,
+                    ImageView = view,
+                    ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
+                };
+                var imageWrite = new WriteDescriptorSet
+                {
+                    SType = StructureType.WriteDescriptorSet,
+                    DstSet = sets[d],
+                    DstBinding = (uint)(k + 1),
+                    DescriptorCount = 1,
+                    DescriptorType = DescriptorType.CombinedImageSampler,
+                    PImageInfo = &imageInfoWrite,
+                };
+                _vk.UpdateDescriptorSets(_device, 1, in imageWrite, 0, null);
             }
 
             var pushRange = new PushConstantRange
@@ -1083,6 +1132,14 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
             _vk.DestroyShaderModule(_device, module, null);
         }
 
+        foreach (var (guestImage, guestMemory, guestView, guestSampler) in uploads)
+        {
+            _vk.DestroySampler(_device, guestSampler, null);
+            _vk.DestroyImageView(_device, guestView, null);
+            _vk.DestroyImage(_device, guestImage, null);
+            _vk.FreeMemory(_device, guestMemory, null);
+        }
+
         _vk.DestroyFramebuffer(_device, framebuffer, null);
         _vk.DestroyRenderPass(_device, renderPass, null);
         _vk.DestroyImageView(_device, colorView, null);
@@ -1090,6 +1147,134 @@ internal sealed unsafe class ParticleComputeRunner : IDisposable
         _vk.FreeMemory(_device, imageMemory, null);
         ReleaseBuffers();
         return image;
+    }
+
+    /// <summary>
+    /// Uploads one guest texture and returns a view and sampler for it.
+    ///
+    /// <para>Sampled images are the capability this runner never had, and they
+    /// are what the light layer, the large particles and the blur passes all
+    /// wait on. The upload is a staging buffer plus two layout transitions —
+    /// nothing clever — because the interesting part is upstream: the pixels
+    /// come from Sony's own GNF blobs.</para>
+    /// </summary>
+    private (ImageView View, Sampler Sampler) CreateSampledImage(
+        GuestImage guest,
+        List<(Image, DeviceMemory, ImageView, Sampler)> owned)
+    {
+        var info = new ImageCreateInfo
+        {
+            SType = StructureType.ImageCreateInfo,
+            ImageType = ImageType.Type2D,
+            Format = guest.Format,
+            Extent = new Extent3D(guest.Width, guest.Height, 1),
+            MipLevels = 1,
+            ArrayLayers = 1,
+            Samples = SampleCountFlags.Count1Bit,
+            Tiling = ImageTiling.Optimal,
+            Usage = ImageUsageFlags.SampledBit | ImageUsageFlags.TransferDstBit,
+            InitialLayout = ImageLayout.Undefined,
+        };
+        Check(_vk.CreateImage(_device, in info, null, out var image), "vkCreateImage(guest)");
+        _vk.GetImageMemoryRequirements(_device, image, out var requirements);
+        var allocate = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = requirements.Size,
+            MemoryTypeIndex = FindMemoryType(
+                requirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit),
+        };
+        Check(_vk.AllocateMemory(_device, in allocate, null, out var memory), "vkAllocateMemory(guest)");
+        Check(_vk.BindImageMemory(_device, image, memory, 0), "vkBindImageMemory(guest)");
+
+        CreateBuffer(guest.Pixels);
+        var staging = _buffers[^1].Buffer;
+
+        var commandInfo = new CommandBufferAllocateInfo
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            CommandPool = _commandPool,
+            Level = CommandBufferLevel.Primary,
+            CommandBufferCount = 1,
+        };
+        Check(_vk.AllocateCommandBuffers(_device, in commandInfo, out var command), "vkAllocateCommandBuffers");
+        var begin = new CommandBufferBeginInfo
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+        };
+        Check(_vk.BeginCommandBuffer(command, in begin), "vkBeginCommandBuffer(guest)");
+
+        var toTransfer = new ImageMemoryBarrier
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = ImageLayout.Undefined,
+            NewLayout = ImageLayout.TransferDstOptimal,
+            Image = image,
+            SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1),
+            DstAccessMask = AccessFlags.TransferWriteBit,
+        };
+        _vk.CmdPipelineBarrier(
+            command, PipelineStageFlags.TopOfPipeBit, PipelineStageFlags.TransferBit,
+            0, 0, null, 0, null, 1, in toTransfer);
+
+        var copy = new BufferImageCopy
+        {
+            ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, 1),
+            ImageExtent = new Extent3D(guest.Width, guest.Height, 1),
+        };
+        _vk.CmdCopyBufferToImage(
+            command, staging, image, ImageLayout.TransferDstOptimal, 1, in copy);
+
+        var toRead = new ImageMemoryBarrier
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = ImageLayout.TransferDstOptimal,
+            NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+            Image = image,
+            SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1),
+            SrcAccessMask = AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.ShaderReadBit,
+        };
+        _vk.CmdPipelineBarrier(
+            command, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit,
+            0, 0, null, 0, null, 1, in toRead);
+        Check(_vk.EndCommandBuffer(command), "vkEndCommandBuffer(guest)");
+
+        var submit = new SubmitInfo
+        {
+            SType = StructureType.SubmitInfo,
+            CommandBufferCount = 1,
+            PCommandBuffers = &command,
+        };
+        Check(_vk.QueueSubmit(_queue, 1, in submit, default), "vkQueueSubmit(guest)");
+        Check(_vk.QueueWaitIdle(_queue), "vkQueueWaitIdle(guest)");
+        _vk.FreeCommandBuffers(_device, _commandPool, 1, in command);
+
+        var viewInfo = new ImageViewCreateInfo
+        {
+            SType = StructureType.ImageViewCreateInfo,
+            Image = image,
+            ViewType = ImageViewType.Type2D,
+            Format = guest.Format,
+            SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1),
+        };
+        Check(_vk.CreateImageView(_device, in viewInfo, null, out var view), "vkCreateImageView(guest)");
+
+        var samplerInfo = new SamplerCreateInfo
+        {
+            SType = StructureType.SamplerCreateInfo,
+            MagFilter = Filter.Linear,
+            MinFilter = Filter.Linear,
+            AddressModeU = SamplerAddressMode.ClampToEdge,
+            AddressModeV = SamplerAddressMode.ClampToEdge,
+            AddressModeW = SamplerAddressMode.ClampToEdge,
+            MaxLod = 1f,
+        };
+        Check(_vk.CreateSampler(_device, in samplerInfo, null, out var sampler), "vkCreateSampler(guest)");
+
+        owned.Add((image, memory, view, sampler));
+        return (view, sampler);
     }
 
     private void ReleaseBuffers()
