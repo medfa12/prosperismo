@@ -345,6 +345,38 @@ covering half the mesh.
 It does **not** change the radius: every fragment still lands within 1e-5 of
 `r = 1.0`.
 
+### The domain's VGPR contract, confirmed from its own code
+
+The domain's earliest instructions settle what the tessellator hands it, so this
+is no longer inferred:
+
+```
+v0 = v7 << 9            patch id times 512 - the ring byte offset
+v96 = v5 + 0.01005      v5 used as a float coordinate, then squared
+```
+
+- **`v7` is the patch id.** The shift by 9 is the ring offset, which also proves
+  the domain's per-patch ring stride is **512 bytes**, not the 1024 the hull was
+  being laid out at.
+- **`v5` is a float coordinate**, added to a small constant and then squared -
+  consistent with the `u` the seeding supplies.
+
+Note the usual first-read-before-write test does *not* discriminate here: the
+translator's VGPR array starts uninitialised, so every register reads before it
+is written. What discriminates is *how early*: `v7` at line 1430 and `v5` at
+1483, against thousands of lines later for the rest.
+
+Aligning the hull's patch spacing to that 512 raises coverage again. Cumulative
+effect of the two corrections, measured as fragments reaching the fragment stage:
+
+| tiling | fragments |
+|---|---|
+| non-wrapping, 1024 spacing | 1,175,368 |
+| wrapping angular, 1024 | 2,421,597 |
+| wrapping angular, 512 | 3,427,150 |
+
+Neither changes the radius: every fragment still arrives within 1e-5 of 1.0.
+
 ### Where the radius actually dies
 
 An earlier note here guessed the `v13 = 0` vertices were inactive lanes. They are
