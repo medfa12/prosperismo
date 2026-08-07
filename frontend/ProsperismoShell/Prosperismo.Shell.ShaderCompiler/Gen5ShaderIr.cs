@@ -60,6 +60,27 @@ public readonly record struct Gen5ShaderResourceMapping(
     uint OffsetDwords,
     bool SizeFlag);
 
+/// <summary>
+/// How the SPI distributes VGPRs to a merged local+hull wave.
+///
+/// <para>The local section of the wave-surface shader reads its vertex index
+/// from one VGPR and its LDS slot from another, and the hull section reads a
+/// packed patch/control-point id from a third. None of those match the compute
+/// contract, where the first three VGPRs carry the local invocation id, so a
+/// host running the merged wave as a dispatch has to reproduce the
+/// distribution. That distribution is fixed-function hardware, not shader code:
+/// this describes it rather than reimplementing anything the shader does.</para>
+/// </summary>
+/// <param name="VertexIndexVgpr">Receives the flat invocation id.</param>
+/// <param name="LdsSlotVgpr">Receives <c>id * LdsSlotStride + PatchId</c>.</param>
+/// <param name="PackedIdVgpr">Receives <c>(PatchId &lt;&lt; 8) | id</c>.</param>
+public readonly record struct Gen5MergedWaveVgprSeeding(
+    uint VertexIndexVgpr,
+    uint LdsSlotVgpr,
+    uint LdsSlotStride,
+    uint PackedIdVgpr,
+    uint PatchId);
+
 public sealed record Gen5ShaderMetadata(
     uint ExtendedUserDataSizeDwords,
     uint ShaderResourceTableSizeDwords,

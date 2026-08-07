@@ -50,6 +50,13 @@ internal static class WaveSurfaceProbe
     private const int PatchRingBytes = 0x4000;
     private const int TessFactorBytes = 0x1000;
 
+    private static void WriteVertexDescriptor(
+        Span<byte> destination, ulong address, int stride, int records, uint word3)
+    {
+        FirstWaveProbe.WriteBufferDescriptorPublic(destination, address, stride, records);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(destination[12..], word3);
+    }
+
     internal static int Run(string eboot, string constantsPath, string seedsPath)
     {
         var image = File.ReadAllBytes(eboot);
@@ -77,9 +84,18 @@ internal static class WaveSurfaceProbe
             seeds.AsSpan(latticeBytes, ring.Length).CopyTo(ring);
         }
 
+        // buffer_load_format_* fetches through the V#'s own FORMAT field, so a
+        // descriptor with word 3 left at zero returns nothing and the local
+        // section's normalise turns into a NaN. Word 3 is
+        // dst_sel_x|y|z|w in bits 11:0 and the RDNA2 unified FORMAT in 18:12;
+        // 74 is 32_32_32_FLOAT and 77 is 32_32_32_32_FLOAT.
+        const uint selectXyzw = 4u | (5u << 3) | (6u << 6) | (7u << 9);
+        const uint selectXyz1 = 4u | (5u << 3) | (6u << 6) | (1u << 9);
         var vertexTable = new byte[0x100];
-        FirstWaveProbe.WriteBufferDescriptorPublic(vertexTable.AsSpan(0x00, 16), LatticeAddress, 16, 165);
-        FirstWaveProbe.WriteBufferDescriptorPublic(vertexTable.AsSpan(0x10, 16), RingAddress, 16, 26);
+        WriteVertexDescriptor(
+            vertexTable.AsSpan(0x00, 16), LatticeAddress, 16, 165, selectXyzw | (77u << 12));
+        WriteVertexDescriptor(
+            vertexTable.AsSpan(0x10, 16), RingAddress, 16, 26, selectXyz1 | (74u << 12));
 
         var descriptorBlock = new byte[0x100];
         FirstWaveProbe.WriteBufferDescriptorPublic(
@@ -154,7 +170,17 @@ internal static class WaveSurfaceProbe
                 // a workgroup 64 KB. The merged wave's LDS reach here is
                 // cpIndex*512 + patchId*32, so 32 KB covers it; an access past
                 // the allocation would be reported by ldsAddressOutOfRange.
-                ldsDwordCount: 32 * 1024 / sizeof(uint)))
+                ldsDwordCount: 32 * 1024 / sizeof(uint),
+                // The local section reads v2 as the vertex index and v3 as the
+                // LDS slot; the hull reads v1 as (patchId << 8) | controlPoint.
+                // v3's stride of 16 is the local's own v3 << 5 matching the
+                // hull's controlPoint*512 + patchId*32.
+                mergedWaveSeeding: new Gen5MergedWaveVgprSeeding(
+                    VertexIndexVgpr: 2,
+                    LdsSlotVgpr: 3,
+                    LdsSlotStride: 16,
+                    PackedIdVgpr: 1,
+                    PatchId: 0)))
         {
             Console.Error.WriteLine($"spirv   : FAILED {error}");
             return 1;
@@ -240,17 +266,31 @@ internal static class WaveSurfaceProbe
             }
 
             Console.WriteLine($"patches : {written:N0} of {ringOut.Length:N0} bytes written");
-            for (var cp = 0; cp < 3; cp++)
+            // The hull addresses the ring as controlPoint*512 + patch*32, so
+            // consecutive control points of one patch are 512 bytes apart, not
+            // adjacent.
+            var live = 0;
+            for (var cp = 0; cp < ControlPoints; cp++)
             {
                 var v = new float[4];
                 for (var k = 0; k < 4; k++)
                 {
-                    v[k] = BitConverter.ToSingle(ringOut, (cp * 32) + (k * 4));
+                    v[k] = BitConverter.ToSingle(ringOut, (cp * 512) + (k * 4));
                 }
 
-                Console.WriteLine(
-                    $"          control point {cp}: ({v[0]:G6}, {v[1]:G6}, {v[2]:G6}, {v[3]:G6})");
+                if (v[3] != 0f)
+                {
+                    live++;
+                }
+
+                if (cp < 4)
+                {
+                    Console.WriteLine(
+                        $"          control point {cp}: ({v[0]:G6}, {v[1]:G6}, {v[2]:G6}, {v[3]:G6})");
+                }
             }
+
+            Console.WriteLine($"          {live} of {ControlPoints} control points written");
         }
 
         return 0;

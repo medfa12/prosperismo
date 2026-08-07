@@ -251,7 +251,8 @@ public static partial class Gen5SpirvTranslator
         uint waveLaneCount = 32,
         ulong storageBufferOffsetAlignment = 1,
         uint hostSubgroupSize = RdnaWaveLaneCount,
-        uint ldsDwordCount = LdsDwordCount)
+        uint ldsDwordCount = LdsDwordCount,
+        Gen5MergedWaveVgprSeeding? mergedWaveSeeding = null)
     {
         var context = new CompilationContext(
             Gen5SpirvStage.Compute,
@@ -268,7 +269,8 @@ public static partial class Gen5SpirvTranslator
             waveLaneCount: waveLaneCount,
             storageBufferOffsetAlignment: storageBufferOffsetAlignment,
             hostSubgroupSize: hostSubgroupSize,
-            ldsDwordLimit: ldsDwordCount);
+            ldsDwordLimit: ldsDwordCount,
+            mergedWaveSeeding: mergedWaveSeeding);
         return context.TryCompile(out shader, out error);
     }
 
@@ -452,6 +454,7 @@ public static partial class Gen5SpirvTranslator
         private uint _ldsElementPointer;
         private uint _ldsDwordCount;
         private readonly uint _ldsDwordLimit;
+        private readonly Gen5MergedWaveVgprSeeding? _mergedWaveSeeding;
         private uint _ldsOutOfRange;
         private uint _positionOutput;
         private uint _pointSizeOutput;
@@ -558,8 +561,10 @@ public static partial class Gen5SpirvTranslator
             uint? vertexPositionOutputControl = null,
             Gen5HostVertexOutputFeatures hostVertexOutputFeatures = default,
             uint hostSubgroupSize = RdnaWaveLaneCount,
-            uint ldsDwordLimit = LdsDwordCount)
+            uint ldsDwordLimit = LdsDwordCount,
+            Gen5MergedWaveVgprSeeding? mergedWaveSeeding = null)
         {
+            _mergedWaveSeeding = mergedWaveSeeding;
             _ldsDwordLimit = ldsDwordLimit == 0 ? LdsDwordCount : ldsDwordLimit;
             _stage = stage;
             _requiredVertexOutputCount = requiredVertexOutputCount;
@@ -2243,6 +2248,28 @@ public static partial class Gen5SpirvTranslator
                             sizeRegister,
                             UInt(checked(_localSizeX * _localSizeY * _localSizeZ)));
                     }
+                }
+
+                if (_mergedWaveSeeding is { } seeding)
+                {
+                    // A merged local+hull wave does not receive the compute
+                    // VGPR contract. Reproduce the SPI's distribution: the flat
+                    // invocation id as the vertex index, the LDS slot the local
+                    // section writes through, and the packed patch/control-point
+                    // id the hull section unpacks.
+                    var flat = LoadV(0);
+                    StoreV(seeding.VertexIndexVgpr, flat, guardWithExec: false);
+                    StoreV(
+                        seeding.LdsSlotVgpr,
+                        IAdd(
+                            _module.AddInstruction(
+                                SpirvOp.IMul, _uintType, flat, UInt(seeding.LdsSlotStride)),
+                            UInt(seeding.PatchId)),
+                        guardWithExec: false);
+                    StoreV(
+                        seeding.PackedIdVgpr,
+                        BitwiseOr(flat, UInt(seeding.PatchId << 8)),
+                        guardWithExec: false);
                 }
             }
         }
