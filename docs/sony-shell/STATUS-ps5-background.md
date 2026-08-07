@@ -139,25 +139,53 @@ twelve, so the two cannot be the same grid.
 The `96` figure produced a picture because 96 patches of *something* were drawn,
 but the tiling it rested on was not established. It is withdrawn.
 
-### What the ring tells us about the GPU stream
+### The second vertex stream shapes the surface, so the stand-in invalidates the picture
 
-The local section fetches the ring at the **same index as the lattice** -
-probing the address it resolves shows byte `index * 16` for both. With only 26
-ring entries, any draw wider than 26 vertices reads out of range. So either the
-GPU vertex buffer is at most 26 vertices wide, or the host builds a wider one -
-and the host B-spline evaluator is the candidate, since a `11 x 15` control
-lattice evaluated on the CPU is exactly how a smaller GPU control mesh would be
-produced.
+The local section fetches two vertex streams at the **same index** - probing the
+resolved address shows byte `index * 16` for both. The second was being fed the
+26-entry ring, tiled with `i % 26` to clear the bound.
 
-That is the open question, and it is the same one as before, now with a much
-sharper shape: **the GPU vertex stream is host-produced, and its dimensions are
-ten-fold periodic in the angular direction.**
+That tiling is not cosmetic. Replacing the ring with a constant direction and
+re-reading the control points changes the **positions**, not just the normals:
 
-### The surface rasterises
+| stream | first control points (x, y, z) |
+|---|---|
+| real ring | `(2452.2, 731.9, 1544.9)  (2937.7, 801.0, -0.0)  (2521.2, 777.0, -1450.0)` |
+| constant | `(2523.4, 783.6, 1332.4)  (2913.7, 783.6, -29.6)  (2523.4, 783.6, -1466.6)` |
+
+With the real ring the height varies per control point; with a constant it
+collapses to one value per row. The stream is part of the surface's shape.
+
+**So the rendered image is not Sony's geometry.** It is Sony's shaders run over a
+second stream that is 26 real entries repeated seven times. The pixel count is
+real and the stages executing is real; the shape is not trustworthy, and the
+picture should not be read as the PS5's wave.
+
+### Why the ring is not that stream
+
+The ring is 13 angular control points - ten spans closed with the cubic degree's
+three - while the lattice is 165 = 3 x 5 x 11. **13 does not divide 165**, so the
+two are not samples of one mesh. The ring is construction data for the angular
+sweep; the per-vertex second stream is something the host computes, and it is
+neither of the two tables the seed block provides.
+
+`0xc2a30` is not the producer either. Its stack frame and its cross-product tail
+(`vshufps 0xc9` / `0x49`, with degenerate fallbacks) make it
+`evaluatePointAndNormal(u, v, knots, 15, 11, lattice, out)` - a **single** point
+per call, and it is called four times at the seed site. That is bounds or corner
+probing, not mesh generation.
+
+**Open, and now precisely stated:** the local section needs a second per-vertex
+stream the same length as the lattice. Neither seed table is it, and the host
+routine that would build it has not been found. Until it is, the wave's shape
+cannot be claimed as recovered.
+
+### The surface rasterises, on data that is not Sony's
 
 645,939 pixels of 921,600, from `fw_flow_vl` + `fw_flow_h` + `fw_flow_dv`
-executing across 96 patches - a patch count now known to be unestablished, see
-above. The geometry is the console's; the colour is a
+executing. Both the patch tiling and the second vertex stream underneath it are
+unestablished - see above - so this demonstrates the stages run end to end and
+nothing about the shape. The geometry is the console's; the colour is a
 placeholder fragment shader, because `fw_oit_p` is not wired yet.
 
 What had been blocking it was **not** the tiling and not the addressing.
