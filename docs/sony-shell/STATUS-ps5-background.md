@@ -152,6 +152,23 @@ repeat the first sixteen. The NaN count did not move - 26 finite either way - so
 the fault was the index bound, not the values. Widening the ring's record count
 removes the NaN entirely and the surface appears.
 
+### fw_oit_p executes
+
+`fw_oit_p` decodes to **524 instructions**, matching
+`firstwave-12.40-stage-contracts.md` exactly, evaluates, and compiles to 181 KB
+of SPIR-V as the surface's fragment stage with its header's own
+`SPI_PS_INPUT_ENA/ADDR = 0x302`.
+
+It produces no pixels yet, and the reason is visible in its bindings: it fetches
+a descriptor from **`descriptorBlock + 0x00`** - its OIT node buffer - which
+nothing populates, so the fetch resolves to a zero-length buffer. It is a node
+*capture* stage; `fw_comp_oit_p` is what resolves the list into colour. Both the
+node buffer's shape and the resolve pass are still to come.
+
+Note the stage table's addresses are **file offsets**, not virtual addresses -
+the local and hull slices already use them that way. Adding `0x4000` decodes
+garbage.
+
 **This leaves one host stream unrecovered.** The ring is tiled with `i % 26` to
 get past the bound, which is a stand-in, not Sony's data. Either the host
 expands the 13 pairs into a per-lattice-point stream, or its vertex descriptor

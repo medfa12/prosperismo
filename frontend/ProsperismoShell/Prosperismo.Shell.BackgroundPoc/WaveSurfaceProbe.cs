@@ -76,6 +76,81 @@ internal static class WaveSurfaceProbe
     // HS_NUM_OUTPUT_CP are both 16 and NUM_PATCHES is 15. The seeded lattice is
     // 165 vec4 entries, so a non-indexed patch list of 16 input control points
     // covers ten patches. PATCH_COUNT overrides it for probing.
+    private const ulong OitAddress = 0x11F7200UL;
+    // The stage table's 0xC84 is the program's own extent; the decoder is
+    // given slack past it and stops at s_endpgm.
+    private const int OitLength = 0x1400;
+
+    /// <summary>
+    /// Compiles <c>fw_oit_p</c>, the wave surface's own fragment stage.
+    /// </summary>
+    /// <remarks>
+    /// Its header carries <c>SPI_PS_INPUT_ENA</c> and <c>SPI_PS_INPUT_ADDR</c>
+    /// of <c>0x302</c> and <c>SPI_SHADER_PGM_RSRC2 = 0x18</c>, so twelve user
+    /// SGPRs. The program reads the colour/light block and the blur parameters
+    /// out of the same FirstWave constant buffer the geometry stages use, so it
+    /// is handed the same descriptor block rather than a private one.
+    /// </remarks>
+    private static bool TryCompileOit(
+        byte[] image, byte[] constants, byte[] descriptorBlock,
+        out byte[] spirv, out string error)
+    {
+        spirv = [];
+        var text = new byte[OitLength];
+        // The stage table's values are already file offsets, as the local and
+        // hull slices above use them.
+        image.AsSpan((int)OitAddress, OitLength).CopyTo(text);
+
+        var memory = new FirstWaveProbe.FlatMemory();
+        memory.AddRegion(OitAddress, text);
+        memory.AddRegion(ConstantsAddress, constants);
+        memory.AddRegion(DescriptorBlockAddress, descriptorBlock);
+
+        var context = new CpuContext(memory, Generation.Gen5);
+        if (!Gen5ShaderTranslator.TryDecodeProgram(context, OitAddress, out var program, out error))
+        {
+            return false;
+        }
+
+        Console.WriteLine($"oit     : OK - {program.Instructions.Count} instructions");
+
+        // Twelve user SGPRs: the constant buffer V# and the descriptor block,
+        // laid out as the geometry stages receive them.
+        var userData = new uint[16];
+        FirstWaveProbe.WriteBufferDescriptorPublic(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(0, 4)),
+            ConstantsAddress, 0, constants.Length);
+        BitConverter.TryWriteBytes(
+            System.Runtime.InteropServices.MemoryMarshal.AsBytes(userData.AsSpan(4, 2)),
+            DescriptorBlockAddress);
+
+        var state = new Gen5ShaderState(program, userData, Metadata: null, UserDataScalarRegisterBase: 0);
+        if (!Gen5ShaderScalarEvaluator.TryEvaluate(context, state, out var evaluation, out error))
+        {
+            return false;
+        }
+
+        Console.WriteLine(
+            $"oit     : {evaluation.GlobalMemoryBindings.Count} buffer(s), " +
+            $"{evaluation.ImageBindings.Count} image(s)");
+        foreach (var b in evaluation.GlobalMemoryBindings)
+        {
+            Console.WriteLine($"          base=0x{b.BaseAddress:X8} {b.DataLength,9:N0} bytes" +
+                $"{(b.Writable ? " (writable)" : string.Empty)}");
+        }
+
+        if (!Gen5SpirvTranslator.TryCompilePixelShader(
+                state, evaluation, Gen5PixelOutputKind.Float, out var compiled, out error,
+                pixelInputEnable: 0x302, pixelInputAddress: 0x302))
+        {
+            return false;
+        }
+
+        Console.WriteLine($"oit     : spirv OK - {compiled.Spirv.Length:N0} bytes");
+        spirv = compiled.Spirv;
+        return true;
+    }
+
     private static int PatchCount =>
         int.TryParse(Environment.GetEnvironmentVariable("PATCH_COUNT"), out var n) && n > 0
             ? n
@@ -508,8 +583,21 @@ internal static class WaveSurfaceProbe
             buffers = [.. buffers, new byte[vertices * 8 * sizeof(uint)]];
         }
 
-        var fragmentPath = Environment.GetEnvironmentVariable("SURFACE_FS")
-            ?? throw new InvalidOperationException("SURFACE_FS not set");
+        // fw_oit_p is the surface's own fragment stage. Its header gives
+        // SPI_PS_INPUT_ENA/ADDR = 0x302 and SPI_PS_IN_CONTROL.NUM_INTERP = 5,
+        // which is what the domain is asked to export. SURFACE_FS still
+        // overrides it, for the placeholder used while the geometry was blind.
+        byte[] fragmentSpirv;
+        var fragmentPath = Environment.GetEnvironmentVariable("SURFACE_FS");
+        if (!string.IsNullOrEmpty(fragmentPath) && File.Exists(fragmentPath))
+        {
+            fragmentSpirv = File.ReadAllBytes(fragmentPath);
+        }
+        else if (!TryCompileOit(image, constants, descriptorBlock, out fragmentSpirv, out var oitError))
+        {
+            Console.Error.WriteLine($"oit     : FAILED {oitError}");
+            return 1;
+        }
 
         const uint width = 1280;
         const uint height = 720;
@@ -523,7 +611,7 @@ internal static class WaveSurfaceProbe
             : compiled.Spirv;
 
         var draw = new ParticleComputeRunner.ParticleDraw(
-            vertexSpirv, File.ReadAllBytes(fragmentPath), buffers, vertices, null, false,
+            vertexSpirv, fragmentSpirv, buffers, vertices, null, false,
             InstanceCount: (uint)PatchCount);
         var rgba = runner.RenderParticleFrame([draw], width, height, out var after);
 
