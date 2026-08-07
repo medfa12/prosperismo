@@ -46,6 +46,7 @@ internal static class WaveSurfaceProbe
     private const int HullOffset = 0x11F6600;
     private const int HullLength = 0x108;
 
+    private const int LatticeEntries = 165;
     private const uint ControlPoints = 16;
 
     // The hull writes 16 control points of 32 bytes each - position and a unit
@@ -219,7 +220,19 @@ internal static class WaveSurfaceProbe
         WriteVertexDescriptor(
             vertexTable.AsSpan(0x00, 16), LatticeAddress, 16, 165, selectXyzw | (77u << 12));
         WriteVertexDescriptor(
-            vertexTable.AsSpan(0x10, 16), RingAddress, 16, ringRecords, selectXyz1 | (74u << 12));
+            vertexTable.AsSpan(0x10, 16),
+            // STREAM2 selects what the local section's second vertex stream
+            // reads. The seed block's 13-pair ring is ten-span periodic while
+            // the lattice is 165 = 3*5*11, so 13 does not divide it and the ring
+            // is unlikely to be a per-vertex attribute of the same mesh.
+            Environment.GetEnvironmentVariable("STREAM2") == "ring"
+                ? RingAddress
+                : LatticeAddress,
+            16,
+            Environment.GetEnvironmentVariable("STREAM2") == "ring"
+                ? ringRecords
+                : LatticeEntries,
+            selectXyz1 | (74u << 12));
 
         var descriptorBlock = new byte[0x100];
         FirstWaveProbe.WriteBufferDescriptorPublic(

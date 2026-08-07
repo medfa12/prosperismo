@@ -139,67 +139,44 @@ twelve, so the two cannot be the same grid.
 The `96` figure produced a picture because 96 patches of *something* were drawn,
 but the tiling it rested on was not established. It is withdrawn.
 
-### The second vertex stream shapes the surface, so the stand-in invalidates the picture
+### The second vertex stream shapes the surface
 
 The local section fetches two vertex streams at the **same index** - probing the
-resolved address shows byte `index * 16` for both. The second was being fed the
-26-entry ring, tiled with `i % 26` to clear the bound.
+resolved address shows byte `index * 16` for both. That stream is not cosmetic:
+replacing it with a constant direction moves the control point **positions**, not
+just the normals. With real data the height varies per control point; with a
+constant it collapses to one value per row.
 
-That tiling is not cosmetic. Replacing the ring with a constant direction and
-re-reading the control points changes the **positions**, not just the normals:
+So whatever feeds it is part of the surface's shape, and getting it wrong
+invalidates the geometry rather than just the shading.
 
-| stream | first control points (x, y, z) |
-|---|---|
-| real ring | `(2452.2, 731.9, 1544.9)  (2937.7, 801.0, -0.0)  (2521.2, 777.0, -1450.0)` |
-| constant | `(2523.4, 783.6, 1332.4)  (2913.7, 783.6, -29.6)  (2523.4, 783.6, -1466.6)` |
+### The ring is not that stream; the lattice is
 
-With the real ring the height varies per control point; with a constant it
-collapses to one value per row. The stream is part of the surface's shape.
+Binding the 13-pair ring there forces a stand-in, because 26 entries bound a
+wider draw and the surface fills with NaN past vertex 25. That stand-in is gone.
 
-**So the rendered image is not Sony's geometry.** It is Sony's shaders run over a
-second stream that is 26 real entries repeated seven times. The pixel count is
-real and the stages executing is real; the shape is not trustworthy, and the
-picture should not be read as the PS5's wave.
+The ring cannot be a per-vertex attribute of this mesh on its own terms: it is 13
+angular control points - ten spans closed with the cubic degree's three - while
+the lattice is `165 = 3 x 5 x 11`. **13 does not divide 165.** The two are not
+samples of one grid; the ring is construction data for a ten-fold periodic
+angular sweep.
 
-### Why the ring is not that stream
+Reading the second stream from the **lattice's own 165 entries** gives a complete
+mesh with **no NaN at all** - 128 of 128 control points finite over eight patches
+- using only seed-block bytes at their natural length, nothing repeated and
+nothing invented. That is now the default.
 
-The ring is 13 angular control points - ten spans closed with the cubic degree's
-three - while the lattice is 165 = 3 x 5 x 11. **13 does not divide 165**, so the
-two are not samples of one mesh. The ring is construction data for the angular
-sweep; the per-vertex second stream is something the host computes, and it is
-neither of the two tables the seed block provides.
+**What is verified and what is chosen.** Verified: both streams are fetched at
+one index; the stream affects position; the lattice length removes every NaN.
+Chosen: that the host points both streams at one buffer. A fetch shader reading
+one buffer twice is unusual, and the alternative - one interleaved buffer of
+32-byte vertices, position and direction - is not ruled out. The patch tiling
+remains unestablished separately.
 
-`0xc2a30` is not the producer either. Its stack frame and its cross-product tail
+`0xc2a30` is not the mesh producer. Its stack frame and cross-product tail
 (`vshufps 0xc9` / `0x49`, with degenerate fallbacks) make it
 `evaluatePointAndNormal(u, v, knots, 15, 11, lattice, out)` - a **single** point
-per call, and it is called four times at the seed site. That is bounds or corner
-probing, not mesh generation.
-
-**Open, and now precisely stated:** the local section needs a second per-vertex
-stream the same length as the lattice. Neither seed table is it, and the host
-routine that would build it has not been found. Until it is, the wave's shape
-cannot be claimed as recovered.
-
-### The surface rasterises, on data that is not Sony's
-
-645,939 pixels of 921,600, from `fw_flow_vl` + `fw_flow_h` + `fw_flow_dv`
-executing. Both the patch tiling and the second vertex stream underneath it are
-unestablished - see above - so this demonstrates the stages run end to end and
-nothing about the shape. The geometry is the console's; the colour is a
-placeholder fragment shader, because `fw_oit_p` is not wired yet.
-
-What had been blocking it was **not** the tiling and not the addressing.
-
-The local section fetches the boundary ring with the same vertex index as the
-lattice, and the seed block's ring is **26 entries** where the lattice is 165.
-Every vertex past index 25 read out of range, returned zero, and turned into NaN
-the moment the hull normalised it. The signature was exact: with eight patches,
-26 control points were finite and 102 were NaN.
-
-The diagnosis was separated from the data by feeding a lattice whose entries
-repeat the first sixteen. The NaN count did not move - 26 finite either way - so
-the fault was the index bound, not the values. Widening the ring's record count
-removes the NaN entirely and the surface appears.
+per call, called four times at the seed site. That is bounds or corner probing.
 
 ### fw_oit_p executes
 
