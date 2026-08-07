@@ -220,6 +220,37 @@ ten-second entrance envelope. The likely cause is upstream: the domain's exports
 depend on the vertex stream arrangement, which is still a host choice rather
 than a recovered one.
 
+### What the domain actually exports
+
+Instrumenting the five parameter outputs *after* they are written (they follow
+the position store, so probing before it reads all zeros) gives real data:
+
+| location | instance 0 | reading |
+|---|---|---|
+| 0 | `(0.863, -0.276, -0.422, 1)` | unit normal - length 1 |
+| 1 | `(2681.4, -129.7, -2448.6, 1)` | world position |
+| 2 | `(1, 0, 0, 1)` | `(v13, 0, 0, 1)` - the shader builds those zeros itself |
+| 3 | `(0.862, -0.284, -0.420, 1)` | neighbouring normal |
+| 4 | `(0.861, -0.274, -0.429, 1)` | neighbouring normal |
+
+So four of the five carry proper geometry. Location 2 is **not** a collapsed
+channel: the domain constructs it as `(v13, 0, 0, 1)` with literal zeros, by
+design.
+
+`fw_oit_p`'s `v11` - the factor that drives its alpha to 1e-6 - is fed by
+**Location 2, component 0**, which the domain sets to `v13`. Instance 0 exports
+`1.0` there; instance 5 exports NaN.
+
+### The domain's NaN is a stride mismatch, not bad geometry
+
+The hull's ring is **fully finite at 96 patches** - 1,536 of 1,536 control points,
+no NaN at any patch count tested. The NaN appears only in the domain, which steps
+its ring slot by **512** bytes while the hull's patches are spaced **1024**
+apart, so odd instances read the half the hull never fills.
+
+Matching the two strides does not make `fw_oit_p` capture, so the mismatch is
+real but is not the whole story. The counter stays at zero either way.
+
 This was found by bisecting EXEC - instrumenting all 27 writes to it showed the
 fragment alive through three and dead at the fourth.
 
