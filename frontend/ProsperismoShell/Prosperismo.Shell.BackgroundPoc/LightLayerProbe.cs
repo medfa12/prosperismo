@@ -84,8 +84,16 @@ internal static class LightLayerProbe
 
         var volatileCb = new byte[0x100];
         BitConverter.TryWriteBytes(volatileCb.AsSpan(0x00, 4), time);
-        BitConverter.TryWriteBytes(volatileCb.AsSpan(0x04, 4), 1f);            // opacity
-        BitConverter.TryWriteBytes(volatileCb.AsSpan(0x08, 4), 1f);            // intensity
+        // intensity = ease(obj+0xD0) * obj+0xD4. The constructor seeds
+        // (+0xD0, +0xD4) = (1, 0) and the light-start path at 0xB80D7 sets
+        // +0xD4 to 1.0, so a lit frame is ease(1) * 1 = 1. opacity is obj+0x58,
+        // whose writer has not been found; 1 is the assumption.
+        BitConverter.TryWriteBytes(
+            volatileCb.AsSpan(0x04, 4),
+            float.TryParse(Environment.GetEnvironmentVariable("LIGHT_OPACITY"), out var o) ? o : 1f);
+        BitConverter.TryWriteBytes(
+            volatileCb.AsSpan(0x08, 4),
+            float.TryParse(Environment.GetEnvironmentVariable("LIGHT_INTENSITY"), out var n) ? n : 1f);
         BitConverter.TryWriteBytes(
             volatileCb.AsSpan(0x0C, 4), particleRgba is null ? 0f : 1f);       // particleAlpha
 
@@ -204,40 +212,50 @@ internal static class LightLayerProbe
     }
 
     /// <summary>
-    /// Reads a GNF blob's base level.
+    /// Reads a GNF blob's base level and untiles it.
     ///
     /// <para>The blob is <c>0x4100</c> bytes with a <c>0xF8</c> header, and the
     /// payload starts at the next 256-byte boundary — <c>0x100</c> — which is
-    /// exactly <c>0x4000</c> bytes, the 128×128 single-channel base level the
-    /// descriptor declares.</para>
+    /// exactly <c>0x4000</c>, the 128×128 single-channel base level the
+    /// descriptor declares. Reading from <c>0xF8</c> instead scrambles every
+    /// untiling attempt, which is what made this look unsolvable.</para>
     ///
-    /// <para><b>The tile order is unresolved.</b> The descriptor's
-    /// <c>sw_mode</c> is 1 (<c>SW_256B_S</c>), so the payload is swizzled in
-    /// 256-byte tiles rather than linear. A total-variation search over the
-    /// in-tile bit orderings puts <c>x</c> in the low four address bits, which
-    /// is the 16×16 tile that mode implies, and that is what this uses — but it
-    /// has not been confirmed against a reference decode, so the detail inside
-    /// each tile may be wrong.</para>
+    /// <para>The descriptor's <c>sw_mode</c> is 1 (<c>SW_256B_S</c>), so the
+    /// payload is 256-byte tiles — 16×16 texels at one byte each. Two orderings
+    /// were recovered by searching each space and scoring total variation,
+    /// because the correct untiling is the one that makes neighbouring texels
+    /// agree: inside a tile the address is <c>y | (x &lt;&lt; 4)</c>, and the
+    /// tiles themselves are indexed by interleaving
+    /// <c>tx0, ty0, tx1, ty1, ty2, tx2</c>. The result is a coherent
+    /// volumetric shaft and floor pool rather than banding, which is the
+    /// confirmation.</para>
     /// </summary>
     private static byte[] ReadGnf(byte[] image, int blob)
     {
         var payload = new byte[GnfPayloadLength];
         Array.Copy(image, blob + GnfPayloadOffset, payload, 0, GnfPayloadLength);
 
-        var linear = new byte[GnfPayloadLength];
         const int tile = 16;
-        var tilesPerRow = TextureSize / tile;
-        for (var ty = 0; ty < tilesPerRow; ty++)
+        var tiles = TextureSize / tile;
+        var linear = new byte[GnfPayloadLength];
+        for (var ty = 0; ty < tiles; ty++)
         {
-            for (var tx = 0; tx < tilesPerRow; tx++)
+            for (var tx = 0; tx < tiles; tx++)
             {
-                var basis = ((ty * tilesPerRow) + tx) * tile * tile;
+                var index =
+                    (tx & 1) |
+                    ((ty & 1) << 1) |
+                    (((tx >> 1) & 1) << 2) |
+                    (((ty >> 1) & 1) << 3) |
+                    (((ty >> 2) & 1) << 4) |
+                    (((tx >> 2) & 1) << 5);
+                var basis = index * tile * tile;
                 for (var y = 0; y < tile; y++)
                 {
                     for (var x = 0; x < tile; x++)
                     {
                         linear[(((ty * tile) + y) * TextureSize) + (tx * tile) + x] =
-                            payload[basis + (y * tile) + x];
+                            payload[basis + (y | (x << 4))];
                     }
                 }
             }

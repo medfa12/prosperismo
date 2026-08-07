@@ -211,7 +211,19 @@ internal static class ParticleDrawProbe
                     return 1;
                 }
 
-                rgba = runner.RenderParticleFrame([lightDraw], width, height);
+                // With a plate present the light layer accumulates over it;
+                // alone it replaces the clear. The firmware's own order between
+                // fw_background_p and light_p is not recovered, so this is
+                // selectable rather than asserted.
+                if (plate is { } under && Environment.GetEnvironmentVariable("LIGHT_OVER_PLATE") == "1")
+                {
+                    rgba = runner.RenderParticleFrame(
+                        [under, lightDraw with { Additive = true }], width, height);
+                }
+                else
+                {
+                    rgba = runner.RenderParticleFrame([lightDraw], width, height);
+                }
             }
 
             var path = Path.Combine(outputDirectory, $"{frame:D5}.png");
