@@ -22,7 +22,7 @@ PROBE_BASE = int(os.environ.get("PROBE_BASE", "2048"))
 src = open(f"{S}/dom.txt").read()
 
 have = set(re.findall(r"(%uint_\d+) = OpConstant %uint", src))
-want = [f"%uint_{i}" for i in (0, 1, 2, 3, 4, 5, 8, 1000)] + [f"%uint_{PROBE_BASE}"]
+want = [f"%uint_{i}" for i in (0, 1, 2, 3, 4, 5, 6, 8, 15, 16)] + [f"%uint_{PROBE_BASE}"]
 extra = "".join(f"\n {n} = OpConstant %uint {n.split('_')[1]}"
                 for n in want if n not in have)
 anchor = re.search(r"^\s+(%\w+) = OpConstant %float 1\n", src, re.M)
@@ -42,8 +42,12 @@ out, i = [], 91000
 out.append(f"      %{i} = OpLoad %uint %gl_VertexIndex"); vraw = i; i += 1
 out.append(f"      %{i} = OpLoad %uint %gl_InstanceIndex"); inst = i; i += 1
 # one slot per (instance, vertex): instance-major so patches stay separable
-out.append(f"      %{i} = OpIMul %uint %{inst} %uint_1000"); im = i; i += 1
-out.append(f"      %{i} = OpIAdd %uint %{im} %{vraw}"); vid = i; i += 1
+# Compact slots: 16 samples per instance, spread across the patch, so a
+# large patch count still fits the scratch region.
+out.append(f"      %{i} = OpIMul %uint %{inst} %uint_16"); im = i; i += 1
+out.append(f"      %{i} = OpShiftRightLogical %uint %{vraw} %uint_6"); sh = i; i += 1
+out.append(f"      %{i} = OpBitwiseAnd %uint %{sh} %uint_15"); sm = i; i += 1
+out.append(f"      %{i} = OpIAdd %uint %{im} %{sm}"); vid = i; i += 1
 out.append(f"      %{i} = OpIMul %uint %{vid} %uint_8"); off = i; i += 1
 out.append(f"      %{i} = OpIAdd %uint %{off} %uint_{PROBE_BASE}"); base = i; i += 1
 

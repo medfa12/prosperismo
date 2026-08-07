@@ -213,12 +213,14 @@ internal static class WaveSurfaceProbe
                 // giving it a ring address of patch*512 + point*32 - the
                 // 32-byte stride fw_flow_dv reads sixteen control points at.
                 mergedWaveSeeding: new Gen5MergedWaveVgprSeeding(
-                    VertexIndexVgpr: 2,
+                    VertexIndexVgpr: uint.TryParse(
+                        Environment.GetEnvironmentVariable("LS_INDEX_VGPR"), out var lv) ? lv : 2,
                     LdsSlotVgpr: 3,
                     LdsSlotStride: 16,   // patches are 16 control points apart in LDS
                     PackedIdVgpr: 1,
                     PatchId: 0,
                     PatchesPerGroup: PatchesPerGroup,
+                    PatchIdFromWorkgroup: PatchesPerGroup == 1,
                     LatticeRowLength: uint.TryParse(
                         Environment.GetEnvironmentVariable("LATTICE_ROW"), out var lr) ? lr : 0,
                     OffchipOffsetSgpr: 2,
@@ -439,8 +441,11 @@ internal static class WaveSurfaceProbe
                 state, evaluation, out var compiled, out error,
                 requiredVertexOutputCount: 5,
                 domainSeeding: new Gen5TessellationDomainSeeding(
-                    UVgpr: 5, VVgpr: 6, PatchVgpr: 7, Segments: Segments, PatchId: 0,
-                    PatchIdFromInstance: true,
+                    UVgpr: 5, VVgpr: 6, PatchVgpr: 7, Segments: Segments,
+                    PatchId: uint.TryParse(
+                        Environment.GetEnvironmentVariable("DOMAIN_PATCH_ID"), out var dp) ? dp : 0,
+                    PatchIdFromInstance:
+                        Environment.GetEnvironmentVariable("DOMAIN_PATCH_ID") is null,
                     OffchipOffsetSgpr: uint.TryParse(
                         Environment.GetEnvironmentVariable("DOMAIN_OFFCHIP_SGPR"), out var ds)
                         ? ds

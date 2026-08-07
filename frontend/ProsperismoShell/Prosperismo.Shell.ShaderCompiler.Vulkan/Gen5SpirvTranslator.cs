@@ -2368,37 +2368,49 @@ public static partial class Gen5SpirvTranslator
                     // section writes through, and the packed patch/control-point
                     // id the hull section unpacks.
                     var flat = LoadV(0);
+                    var stride = UInt(seeding.LdsSlotStride);
 
-                    // VGT_LS_HS_CONFIG.NUM_PATCHES puts several patches in one
-                    // threadgroup: invocation i is control point
-                    // i % HS_NUM_INPUT_CP of patch i / HS_NUM_INPUT_CP.
-                    uint control, patch;
+                    // Two different patch indices are in play and conflating
+                    // them double-counts the offset. The packed id the hull
+                    // unpacks addresses the offchip ring *within* this
+                    // threadgroup - the group's base arrives separately in an
+                    // SGPR - while the vertex index the local section fetches
+                    // through is the patch's position in the whole draw.
+                    uint control, withinGroup;
                     if (seeding.PatchesPerGroup > 1)
                     {
-                        var stride = UInt(seeding.LdsSlotStride);
                         control = _module.AddInstruction(
                             SpirvOp.UMod, _uintType, flat, stride);
-                        patch = _module.AddInstruction(
+                        withinGroup = _module.AddInstruction(
                             SpirvOp.UDiv, _uintType, flat, stride);
-                    }
-                    else if (seeding.PatchIdFromWorkgroup)
-                    {
-                        control = flat;
-                        patch = _module.AddInstruction(
-                            SpirvOp.CompositeExtract,
-                            _uintType,
-                            Load(_uvec3Type, _workGroupIdInput),
-                            0u);
                     }
                     else
                     {
                         control = flat;
-                        patch = UInt(seeding.PatchId);
+                        withinGroup = UInt(0);
                     }
 
-                    // The local section fetches through the vertex descriptor by
-                    // a running index; LDS is threadgroup-local so the slot is
-                    // the raw invocation.
+                    var globalPatch = withinGroup;
+                    if (seeding.PatchIdFromWorkgroup)
+                    {
+                        var group = _module.AddInstruction(
+                            SpirvOp.CompositeExtract,
+                            _uintType,
+                            Load(_uvec3Type, _workGroupIdInput),
+                            0u);
+                        globalPatch = IAdd(
+                            withinGroup,
+                            _module.AddInstruction(
+                                SpirvOp.IMul,
+                                _uintType,
+                                group,
+                                UInt(seeding.PatchesPerGroup)));
+                    }
+                    else if (seeding.PatchId != 0)
+                    {
+                        globalPatch = IAdd(withinGroup, UInt(seeding.PatchId));
+                    }
+
                     uint vertexIndex;
                     if (seeding.LatticeRowLength > 0)
                     {
@@ -2406,32 +2418,30 @@ public static partial class Gen5SpirvTranslator
                         var patchCols = UInt(seeding.LatticeRowLength - 3);
                         var four = UInt(4);
                         var row = IAdd(
-                            _module.AddInstruction(SpirvOp.UDiv, _uintType, patch, patchCols),
+                            _module.AddInstruction(
+                                SpirvOp.UDiv, _uintType, globalPatch, patchCols),
                             _module.AddInstruction(SpirvOp.UDiv, _uintType, control, four));
                         var column = IAdd(
-                            _module.AddInstruction(SpirvOp.UMod, _uintType, patch, patchCols),
+                            _module.AddInstruction(
+                                SpirvOp.UMod, _uintType, globalPatch, patchCols),
                             _module.AddInstruction(SpirvOp.UMod, _uintType, control, four));
                         vertexIndex = IAdd(
                             _module.AddInstruction(SpirvOp.IMul, _uintType, row, width),
                             column);
                     }
-                    else if (seeding.PatchIdFromWorkgroup)
-                    {
-                        vertexIndex = IAdd(
-                            flat,
-                            _module.AddInstruction(
-                                SpirvOp.IMul, _uintType, patch, UInt(seeding.LdsSlotStride)));
-                    }
                     else
                     {
-                        vertexIndex = flat;
+                        vertexIndex = IAdd(
+                            control,
+                            _module.AddInstruction(
+                                SpirvOp.IMul, _uintType, globalPatch, stride));
                     }
 
                     StoreV(seeding.VertexIndexVgpr, vertexIndex, guardWithExec: false);
                     StoreV(seeding.LdsSlotVgpr, flat, guardWithExec: false);
                     StoreV(
                         seeding.PackedIdVgpr,
-                        BitwiseOr(ShiftLeftLogical(control, UInt(8)), patch),
+                        BitwiseOr(ShiftLeftLogical(control, UInt(8)), withinGroup),
                         guardWithExec: false);
                 }
             }

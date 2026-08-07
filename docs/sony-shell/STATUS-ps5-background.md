@@ -78,10 +78,28 @@ the fifteen patches of a console threadgroup are split one per group. With `s2`
 carrying the base this is equivalent, and it is the only host-shaped
 accommodation in the chain.
 
+### Two patch indices, not one
+
+The hull addresses the offchip ring with the patch index *within its
+threadgroup* - the group's base arrives separately in `s2` - while the local
+section fetches lattice entries by the patch's position in the whole draw.
+Applying the global index to both double-counts it: patch 1 then writes at
+1536, inside patch 1's slot but past the 512 bytes the hull fills, so it reads
+back as empty.
+
+This was verified rather than reasoned. Patching the hull's SPIR-V to publish
+the byte address its lattice fetch resolves to shows workgroup *p* reading
+entries `16p..16p+15` only once the two indices are separated; before that,
+every workgroup read entries 0-15 and every patch in the ring held identical
+control points.
+
+The same probe retired an earlier assumption: sweeping every candidate VGPR for
+the local section's fetch index changed nothing, because the index was never the
+problem.
+
 ### The blocker
 
-Nothing rasterises, and it is not the tiling: at 96 patches, every patch is
-still outside the frustum. The projection at constant-buffer `+0x80` is
+Nothing rasterises. The projection at constant-buffer `+0x80` is
 
 ```
 1.71677        0        0        0
@@ -90,16 +108,24 @@ still outside the frustum. The projection at constant-buffer `+0x80` is
       0        0  519.381  900.450
 ```
 
-so `w = 900.45 - z`, putting the camera plane at `z = 900.45`. The evaluated
-surface spans `z` from about 0 to 1630 - it passes through the eye, with `w`
-running from `-1123` to `+434` inside a single patch. Either the lattice is
-being scaled into the wrong space before the hull displaces it, or these
-constants are not the frame the wave is drawn in.
+so `w = 900.45 - z` and the camera sits at world `(0, 0, 900.45)` - which the
+buffer states outright at `+0x100`. The near plane is `z = 505.7`. Control
+points run to `z = 1950`, behind the eye, and to `x = 2685` where the frustum
+half-width at that depth is 524.
 
-Still unrecovered: the draw's index buffer, i.e. how a patch maps to lattice
-entries. Both readings tested - patch `p` taking entries `16p..16p+15`, and a
-sliding 4x4 window over the lattice - leave the surface off screen, so neither
-is asserted.
+**How a patch maps to lattice entries is still unrecovered**, and it is host
+draw state rather than shader code. Two readings have been tested against the
+executing stages:
+
+| reading | result |
+|---|---|
+| patch `p` takes entries `16p..16p+15` | patches 0 and 1 evaluate; patch 2 on is NaN, and the NaN follows the lattice entries rather than the grouping |
+| a sliding 4x4 window over an 11-wide lattice | all 96 patches produce control points, but the domain then emits half zeroes and half NaN - no usable geometry |
+
+Neither is asserted. The consecutive reading degenerates almost immediately and
+the sliding window produces nothing the domain can evaluate, so the real mapping
+is something else - most likely the index buffer the host builds from the seed
+table, which the seed-block note already warns is *not* itself one patch.
 
 ### Tooling added
 
