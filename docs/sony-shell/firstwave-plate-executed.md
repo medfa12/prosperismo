@@ -73,11 +73,40 @@ per-pixel, in the OIT resolve*, they are a Schlick Fresnel term (`F0 = 1.0203e-4
 IOR exactly 50/49) evaluated in `fw_oit_p` on the tessellated wave surface, then
 spread by the radially-masked 13-tap Gaussian in `fw_blurh_p`/`fw_blurv_p`.
 
-That needs the surface, and the surface needs the tessellation pipeline:
-`fw_flow_vl` (local) tail-calls `fw_flow_h` (hull) — they are one merged
-program in hardware — and `fw_flow_dv` is the domain stage.
-`Gen5SpirvTranslator` currently emits Vertex, Pixel and Compute only, so the
-two tessellation stages have to be added before Sony's surface can run. That is
-work in our translator, not a gap in the recovered firmware data: the control
-lattice (11×15), the boundary ring and the uniform 12×12 tessellation factors
-are all already recovered.
+That needs the surface. What is settled about it:
+
+- **The merged program decodes.** `TryDecodeMergedProgram` concatenates
+  `fw_flow_vl` and `fw_flow_h` and lets the tail call fall through: 366
+  instructions, 325 local + 41 hull, and the hull's four `v_cvt_f32_i32` read
+  their inline constant as **12** — the uniform 12×12 subdivision, confirmed
+  from the decode rather than quoted.
+- **Its inputs are known.** The local section reads `time` at `+0x184`, applies
+  the cubic entrance envelope (`0.4·e³ + 0.16`, with `e = 1 − 0.1·t`), fetches
+  from two vertex buffers through V#s at `s[12:13] + 0x8`, scales by `2000.0`
+  and writes 32 bytes per control point to LDS. The hull copies LDS to the
+  patch ring and writes the six factors.
+- **Its vertex data is recovered**: the 11×15 control lattice and the 13-pair
+  boundary ring, with exact IEEE-754 words, in
+  `evidence/firstwave-host-constants-12.40.json`.
+
+What is missing is host capability, not firmware data:
+
+1. **VGPR seeding for a local/hull wave.** The local section reads `v2` as the
+   vertex index and `v3` as the LDS slot (`cpIndex·16 + patchId`, which is
+   exactly the hull's `cpIndex·512 + patchId·32` addressing shifted by five),
+   and `v1` carries the packed patch/control-point id for the hull. The compute
+   path seeds `v0`–`v2` from the local invocation id, which is a different
+   contract. The SPI's per-wave VGPR distribution is fixed-function hardware, so
+   supplying those three from a host buffer is emulation, not reimplementation —
+   but the emitter has to grow that seeding first.
+2. **The tessellator.** Fixed-function hardware, quad domain, uniform 12×12.
+3. **`fw_flow_dv` as a stage that receives `(u, v)`.**
+4. **OIT.** `fw_oit_p` uses `buffer_atomic_add` and a per-pixel linked list;
+   `fw_comp_oit_p` resolves it. The runner has atomics through storage buffers
+   already.
+5. **Image and sampler bindings.** `fw_blurh_p`/`fw_blurv_p` (14
+   `image_sample` each) and `fw_fxaa_p` (28 image ops) read render targets as
+   textures. The runner binds storage buffers only — it has never bound an
+   image — so multi-pass targets and samplers are the largest single gap.
+
+Nothing on that list needs another firmware recovery pass.
