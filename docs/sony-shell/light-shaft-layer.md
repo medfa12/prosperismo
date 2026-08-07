@@ -55,33 +55,96 @@ composite                   rect_uv_vv + light_p
 The two layers this repository already executes are inputs to `light_p`, not
 siblings of it.
 
-## The blocking unknown: where `texVolume` and `texFloor` come from
+## Where `texVolume` and `texFloor` come from — solved
 
-They are **not shipped assets.** The complete set of asset paths in the 12.40
-eboot contains exactly two BGLayer textures —
-`Sce.Vsh.ShellUI.BGLayer.Particle0.gnf` and `…Particle1.gnf` — and both are the
-large-particle sprites. There is no `texVolume` or `texFloor` file, in the
-eboot's string table or anywhere in the 12.40 or 3.20 filesystem dumps.
+They are **Sony's own GNF textures, embedded in the eboot**, not files.
 
-So they are produced at runtime. **Which pass produces them is not recovered**,
-and this note does not guess. Recording the candidates and what would settle
-each:
+`createIesTex` at `0xE9670` builds both. Its two calls are literal:
 
-- The FirstWave chain (`fw_flow_vl`/`_h`/`_dv` → `fw_oit_p` → `fw_comp_oit_p` →
-  `fw_blurh_p`/`fw_blurv_p` → `fw_fxaa_p`) renders *something* into *some*
-  target, and [`firstwave-decoded-passes.md`](firstwave-decoded-passes.md)
-  describes its output as a Fresnel glint that the radially-masked blur "spreads
-  into visible rays". A blurred glint is a plausible `texVolume`. **Not proven:**
-  no code path has been traced from the FirstWave output to `light_p`'s texture
-  binding.
-- `fbm_tex_p` (`0x11EFA00`) is a procedural fBm texture generator taking
-  `origin`, `progress`, `ratio`. Plausible for `noise`, which `light_p` names as
-  a `ColorCb` scalar rather than a texture — so probably **not** the source of
-  either texture.
+```
+lea rdx, [rip+…]  -> 0x1006AE0     mov ecx, 0x4100    lea rsi, [rbx + 0x80]   ; texFloor
+lea rdx, [rip+…]  -> 0x10029E0     mov ecx, 0x4100    lea rsi, [rbx + 0x88]   ; texVolume
+```
 
-Settling this needs the code that binds `light_p`'s texture descriptors —
-the same search that is still open for `colorPatternFlag`'s value and the
-`WaveColourPreset` colour mapping.
+Both blobs begin with the magic `GNF `, carry a `0xF8` header and `0x4000`
+bytes of payload, and share an identical texture descriptor:
+
+```
+T# = 00000000 C010000C 801FC01F 90500204 00000000 00700000 00000000 00004000
+```
+
+They are genuinely different images — 16,059 of 16,640 bytes differ. The
+descriptor words are recorded verbatim rather than decoded into width and
+height, which would be inference.
+
+**IES** is the photometric light-profile format (IES LM-63), so the name says
+what these are: light distribution profiles. That is the shape of the shaft.
+
+This is why every asset-path search came up empty. The eboot's asset string
+table lists exactly two BGLayer textures, both large-particle sprites, and both
+filesystem dumps agree — because these two are not files. Looking for them as
+files was the wrong question, the same mistake as searching for the shader
+descriptor table's pointers as values.
+
+## The layer's constant buffers, recovered from the builder
+
+The draw path at `0xEA390`–`0xEA55B` builds both buffers field by field.
+
+**`ColorCb`** — the object field on the left, the constant-buffer offset on the
+right, in the reflection's declaration order:
+
+| CB offset | source | member |
+|---|---|---|
+| `0x00` | obj `+0xF0` | `lightCol` |
+| `0x10` | obj `+0x100` | `lightColOnFloor` |
+| `0x20` | obj `+0x110` | `light2Col` |
+| `0x30` | obj `+0x120` | `light2ColOnFloor` |
+| `0x40` | obj `+0x130` | `pointLightCol` |
+| `0x50` | obj `+0x140` | `pointLightAmbCol` |
+| `0x60` | obj `+0x170` | `themedColor` |
+| `0x70` | obj `+0x160` | `gamma`, `gintensity` |
+| `0x78` | obj `+0x168` | `noise` |
+
+`themedColor` at obj `+0x170` is confirmed twice over:
+`SetThemedLightColorNative` (native fn `0xD3110`, reached through `0xE9CC0`)
+writes a `float4` to exactly that offset and sets a dirty flag at `+0xDD`, which
+this builder tests before rebuilding.
+
+**`VolatileCB`:**
+
+| CB offset | member | source |
+|---|---|---|
+| `0x00` | `time` | obj `+0xCC` |
+| `0x04` | `opacity` | obj `+0x58` |
+| `0x08` | `intensity` | eased curve of obj `+0xD0`, scaled by obj `+0xD4` |
+| `0x0C` | `particleAlpha` | obj `+0xD8`, **or zero when obj `+0xB0` is null** |
+
+The easing is explicit in the instructions: with `t = obj+0xD0`, the shader
+receives `0.5 · (2t)²` for `t < 0.5` and `0.5 · (2 − (2 − 2t)²)` for `t ≥ 0.5`,
+then multiplied by obj `+0xD4`. A quadratic ease-in-out, read rather than fitted.
+
+## Texture bindings, and why the particles vanish in settings
+
+Three binds, through the same helper at `0xC222A0(context, slot, texture)`:
+
+| slot | source | texture |
+|---|---|---|
+| 0 | obj `+0x80` | `texFloor` |
+| 1 | obj `+0x88` | `texVolume` |
+| 2 | obj `+0xB0`, **falling back to obj `+0x80`** | `texP` |
+
+Samplers follow at `0xC21DA0`, slot 0 from obj `+0x98` and slot 1 from obj
+`+0xA0`.
+
+Obj `+0xB0` is the **particle render target**, and it is the same field that
+gates `particleAlpha`. When it is null the shader gets `particleAlpha = 0` and
+slot 2 is bound to `texFloor` as a harmless stand-in.
+
+That is the mechanism behind `GlobalBackgroundState.NoParticle`
+([`bglayer-background-states.md`](bglayer-background-states.md)): with no
+particle target the light layer still draws, with its particle contribution
+scaled to zero. The observation that the particles disappear in settings while
+the shafts remain is now explained by the code, not by watching a capture.
 
 ## The full shader inventory
 
