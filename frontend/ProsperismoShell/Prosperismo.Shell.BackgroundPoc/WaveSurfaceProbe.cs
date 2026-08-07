@@ -696,8 +696,11 @@ internal static class WaveSurfaceProbe
 
         var allBuffers = oitBuffers.Length > 0 ? [.. buffers, .. oitBuffers] : buffers;
 
-        const uint width = 1280;
-        const uint height = 720;
+        // The constant buffer's screenDim at +0x190 is 3840 x 2160 as unsigned
+        // ints; fw_oit_p addresses its node list per pixel, so the target should
+        // match what the shaders are told the screen is.
+        var width = uint.TryParse(Environment.GetEnvironmentVariable("WAVE_W"), out var ww) ? ww : 1280u;
+        var height = uint.TryParse(Environment.GetEnvironmentVariable("WAVE_H"), out var wh) ? wh : 720u;
         using var runner = new ParticleComputeRunner();
         Console.WriteLine($"device  : {runner.DeviceName}");
         // DOMAIN_VS swaps in a patched module so the clip output can be read

@@ -272,6 +272,40 @@ Four things were tested against the discard and none revive it:
 | wave lane count 32 and 64 | no change |
 | ring stride 512 matched to the domain's step | no change |
 
+### The discard decoded: a radial edge fade
+
+Bisecting `v11` across its five writes before the alpha test gives
+`1 -> 1 -> 1 -> 0.05 -> 9.3e-06`, and the two writes that collapse it decode
+exactly:
+
+```
+v11 = v11 * v11 - 0.95                     (literal 0xBF733333-ish, measured -0.95)
+v11 = clamp(-20 * v11 + 1, 0, 1)           (literals 0xC1A00000 = -20, 0x3F800000 = 1)
+```
+
+So the surface's alpha is
+
+```
+alpha = clamp(1 - 20 * (r*r - 0.95), 0, 1)
+```
+
+which is **zero exactly when `r` reaches 1.0** and full for `r` below about
+0.9999. `r` is `Location 2.x`, which the domain builds as `v13`, and `v13`'s
+final write is `v13 += v15 * v5` - linear in a coordinate.
+
+This is a **radial edge fade**: the wave is a disc that fades out at its rim.
+That fits the boundary ring being a ten-fold periodic circle of unit directions:
+the angular direction closes on itself and the radial direction fades.
+
+Probing `v13` per vertex confirms it varies - vertices 0, 1, 7 and 100 give
+`0`, vertices 431 and 863 give `1.0` - so the geometry does carry a radial
+coordinate, and fragments near the centre should survive with `alpha = 1`.
+
+They do not: the OIT counter stays at zero for every fragment at every patch
+count and resolution tried. So the radius reaching the fragment stage is pinned
+at the rim even though the domain computes both extremes. That is the specific
+question to answer next, and it is much narrower than "the shading is wrong".
+
 ### The domain's NaN is a stride mismatch, not bad geometry
 
 The hull's ring is **fully finite at 96 patches** - 1,536 of 1,536 control points,
